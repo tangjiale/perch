@@ -90,7 +90,7 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
       - name: 清理其他平台的解析器运行时
-        run: rm -rf src-tauri/resources/parser/jre
+        run: node --input-type=module -e "import { rm } from 'node:fs/promises'; await rm('src-tauri/resources/parser/jre', { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });"
       - name: 准备并校验随包文档解析运行时
         run: node scripts/prepare-parser.mjs
       - name: 前端测试与构建
@@ -100,7 +100,7 @@ jobs:
       - name: Rust 测试与静态检查
         working-directory: src-tauri
         run: |
-          cargo test --locked --lib
+          cargo test --locked --lib -- --test-threads=1
           cargo clippy --locked --lib -- -D warnings
       - name: 生成此仓库的在线更新配置
         env:
