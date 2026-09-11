@@ -27,6 +27,7 @@ fn prepare_resource_cache(path: &std::path::Path) -> std::io::Result<()> {
                     permissions.set_mode(permissions.mode() | 0o200);
                 }
                 #[cfg(not(unix))]
+                #[allow(clippy::permissions_set_readonly_false)]
                 permissions.set_readonly(false);
                 std::fs::set_permissions(entry.path(), permissions)?;
             }
