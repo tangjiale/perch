@@ -89,6 +89,8 @@ jobs:
           key: ${{ matrix.target }}
       - name: 安装前端依赖
         run: npm ci
+      - name: 清理其他平台的解析器运行时
+        run: rm -rf src-tauri/resources/parser/jre
       - name: 准备并校验随包文档解析运行时
         run: node scripts/prepare-parser.mjs
       - name: 前端测试与构建

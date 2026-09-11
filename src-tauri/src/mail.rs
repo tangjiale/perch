@@ -574,7 +574,8 @@ fn decode_folder_name(name: &str) -> String {
                     .decode(encoded.replace(',', "/"));
                 if let Ok(bytes) = bytes {
                     let words: Vec<u16> = bytes
-                        .chunks_exact(2)
+                        .chunks(2)
+                        .filter(|b| b.len() == 2)
                         .map(|b| u16::from_be_bytes([b[0], b[1]]))
                         .collect();
                     result.push_str(&String::from_utf16_lossy(&words));

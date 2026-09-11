@@ -21,7 +21,7 @@
 运行 `node scripts/prepare-parser.mjs` 按当前构建主机准备运行时，下载地址、
 版本和 SHA-256 固定在 `scripts/parser-runtime.json`。脚本校验下载包后解压，
 支持 macOS ARM64 和 Windows x64；不支持的平台直接失败。已有 Tika 文件会
-重新校验 SHA-256，已有 JRE 校验 release 版本、平台、架构和 Java/许可目录，
+重新校验 SHA-256，已有 JRE 校验 release 版本、平台、架构和 Java/许可目录；发布工作流在每个平台下载前清理 CI 工作目录中其他平台的生成运行时，
 不匹配时拒绝覆盖；需要更换时在全新检出目录构建。临时下载保留在系统临时目录。
 
 `node scripts/prepare-parser.mjs --check` 仅验证已准备资源。`jre` 和 `tika-app.jar`
