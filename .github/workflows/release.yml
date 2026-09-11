@@ -125,11 +125,22 @@ jobs:
           PERCH_RELEASE_REPOSITORY: ${{ github.repository }}
           TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
         run: node scripts/configure-updater.mjs
+      - name: 规范化更新签名密钥
+        env:
+          PERCH_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PERCH_SIGNING_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          node --input-type=module -e '
+            import { appendFileSync } from "node:fs";
+            const clean = (value) => (value ?? "").trimEnd().replace(/%$/, "");
+            appendFileSync(process.env.GITHUB_ENV, `TAURI_SIGNING_PRIVATE_KEY<<PERCH_KEY\n${clean(process.env.PERCH_SIGNING_KEY)}\nPERCH_KEY\n`);
+            appendFileSync(process.env.GITHUB_ENV, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD<<PERCH_PASSWORD\n${clean(process.env.PERCH_SIGNING_PASSWORD)}\nPERCH_PASSWORD\n`);
+          '
       - name: 构建安装包和签名更新包
         uses: tauri-apps/tauri-action@v0
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
           includeUpdaterJson: false
