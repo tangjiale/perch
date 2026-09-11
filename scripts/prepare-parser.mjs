@@ -36,7 +36,11 @@ async function verifyJava(path) {
     const index = line.indexOf("=");
     return [line.slice(0, index), line.slice(index + 1).replace(/^"|"$/g, "")];
   }));
-  if (values.SEMANTIC_VERSION !== manifest.jre.version || values.OS_NAME !== runtime.osName || values.OS_ARCH !== runtime.osArch) {
+  const expectedVersion = manifest.jre.version.split("+")[0];
+  const actualVersion = values.SEMANTIC_VERSION?.split("+")[0];
+  const architectureMatches = values.OS_ARCH === runtime.osArch ||
+    (runtime.osArch === "amd64" && values.OS_ARCH === "x86_64");
+  if (actualVersion !== expectedVersion || values.OS_NAME !== runtime.osName || !architectureMatches) {
     throw new Error("已有 JRE 的版本或架构不匹配；请在全新检出目录构建，脚本不会覆盖已有运行时");
   }
   await access(join(home, runtime.java));
