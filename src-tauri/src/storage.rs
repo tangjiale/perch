@@ -1516,10 +1516,12 @@ mod tests {
             r#"{"workspaceId":"01a07c49-45ee-7810-9256-f0f6148f33cf","generationId":"01a07c49-45ee-7810-9256-f104dd4c47ad"}"#,
         )
         .unwrap();
-        fs::write(
-            legacy.join("bootstrap.json"),
-            format!(r#"{{"configVersion":1,"dataRoot":"{}","workspaceId":"01a07c49-45ee-7810-9256-f0f6148f33cf"}}"#, legacy.display()),
-        )
+        let bootstrap = serde_json::json!({
+            "configVersion": 1,
+            "dataRoot": legacy,
+            "workspaceId": "01a07c49-45ee-7810-9256-f0f6148f33cf"
+        });
+        fs::write(legacy.join("bootstrap.json"), serde_json::to_vec(&bootstrap).unwrap())
         .unwrap();
         migrate_legacy_default(&legacy, &default).unwrap();
         assert!(!legacy.exists());
