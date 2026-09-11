@@ -1,0 +1,523 @@
+.message {
+  font-size: var(--chat-font-size, 14px);
+}
+.message pre,
+.message table {
+  font-size: 0.875em;
+}
+.message th {
+  font-size: inherit;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  color: #ededf0;
+  background: #202123;
+  --text: #ededf0;
+  --muted: #b0b1b8;
+  --line: rgba(224, 227, 231, 0.13);
+  --surface: rgba(48, 49, 52, 0.76);
+  --command: #80c0d0;
+  --glass: rgba(65, 67, 71, 0.6);
+  --glass-strong: rgba(52, 54, 58, 0.94);
+  --glass-edge: rgba(255, 255, 255, 0.14);
+  --glass-shadow:
+    0 5px 16px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --theme-hover: rgba(255, 255, 255, 0.08);
+  --theme-accent: #9bd5e1;
+  --theme-accent-surface: rgba(108, 180, 198, 0.15);
+  --theme-blue: #a5c4ff;
+  --theme-green: #8bd4ad;
+  --theme-amber: #e6c186;
+  --theme-red: #f2a3a3;
+}
+html[data-theme="dark"] body {
+  background: linear-gradient(125deg, #252629, #202123 54%, #252a29);
+}
+html[data-theme="dark"] * {
+  scrollbar-color: #62656a transparent;
+}
+html[data-theme="dark"] ::selection {
+  background: #3a6670;
+  color: #fff;
+}
+html[data-theme="dark"] .sidebar {
+  background: rgba(38, 40, 43, 0.76);
+  border-right-color: var(--line);
+  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.16);
+}
+html[data-theme="dark"] .workspace {
+  background: rgba(28, 29, 31, 0.26);
+}
+html[data-theme="dark"] .topbar,
+html[data-theme="dark"] .statusbar,
+html[data-theme="dark"] .chat-main > header {
+  background: rgba(41, 42, 45, 0.72);
+  border-color: var(--line);
+}
+html[data-theme="dark"] .brand small,
+html[data-theme="dark"] .brand-title > span,
+html[data-theme="dark"] .sidebar nav a,
+html[data-theme="dark"] .sidebar-bottom > a,
+html[data-theme="dark"] .resource-card-top > svg {
+  color: var(--muted);
+}
+html[data-theme="dark"] .brand-title > span,
+html[data-theme="dark"] .identity,
+html[data-theme="dark"] .identity > span,
+html[data-theme="dark"] .card-actions,
+html[data-theme="dark"] .card-bottom {
+  border-color: var(--line);
+}
+html[data-theme="dark"] .sidebar nav a small {
+  background: rgba(255, 255, 255, 0.07);
+}
+html[data-theme="dark"] .sidebar nav a:hover,
+html[data-theme="dark"] .sidebar-bottom > a:hover {
+  background: var(--theme-hover);
+}
+html[data-theme="dark"] .sidebar nav a.active,
+html[data-theme="dark"] .sidebar-bottom > a.active {
+  color: var(--text);
+  background: var(--glass);
+}
+html[data-theme="dark"] .sidebar nav a.active svg,
+html[data-theme="dark"] .sidebar-bottom > a.active svg {
+  color: var(--theme-accent);
+}
+html[data-theme="dark"] .global-search {
+  color: var(--muted);
+  background: rgba(25, 26, 28, 0.4);
+  border-color: var(--line);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+html[data-theme="dark"] button {
+  color: var(--text);
+  border-color: var(--glass-edge);
+  background: rgba(63, 65, 69, 0.7);
+}
+html[data-theme="dark"] button:hover:not(:disabled) {
+  background: rgba(79, 82, 87, 0.78);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+}
+html[data-theme="dark"] button.primary {
+  background: linear-gradient(160deg, #a0d5df, #78b7c7);
+  color: #152b31;
+  border-color: rgba(175, 232, 242, 0.4);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    0 3px 8px rgba(0, 0, 0, 0.16);
+}
+html[data-theme="dark"] button.primary:hover:not(:disabled) {
+  background: #a2d8e3;
+}
+html[data-theme="dark"] button.icon-button {
+  color: var(--muted);
+  background: transparent;
+}
+html[data-theme="dark"] button.icon-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--theme-hover);
+}
+html[data-theme="dark"] input,
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] select {
+  color: var(--text);
+  background: rgba(29, 30, 32, 0.6);
+  border-color: rgba(224, 227, 231, 0.19);
+  caret-color: var(--theme-accent);
+  accent-color: #95cbd7;
+}
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: #95969e;
+  opacity: 1;
+}
+html[data-theme="dark"] input:focus,
+html[data-theme="dark"] textarea:focus,
+html[data-theme="dark"] select:focus,
+html[data-theme="dark"] button:focus-visible,
+html[data-theme="dark"] a:focus-visible {
+  outline-color: #9bd5e1;
+}
+html[data-theme="dark"] .global-search input,
+html[data-theme="dark"] .chat-composer textarea {
+  background: transparent;
+}
+html[data-theme="dark"] .form-grid label {
+  color: var(--muted);
+}
+html[data-theme="dark"] .form-grid input,
+html[data-theme="dark"] .form-grid textarea,
+html[data-theme="dark"] .form-grid .glass-select-trigger {
+  color: var(--text);
+}
+html[data-theme="dark"] .segmented,
+html[data-theme="dark"] .wb-calendar-segmented {
+  background: rgba(17, 18, 20, 0.3);
+  border-color: var(--line);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+html[data-theme="dark"] .segmented button,
+html[data-theme="dark"] .tabs button,
+html[data-theme="dark"] .wb-calendar-segmented button {
+  background: transparent;
+  color: var(--muted);
+}
+html[data-theme="dark"] .segmented button.active,
+html[data-theme="dark"] .wb-calendar-segmented button.is-active {
+  color: var(--text);
+  background: #45484d;
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 0 0 1px var(--glass-edge);
+}
+html[data-theme="dark"] .tabs button.active,
+html[data-theme="dark"] .settings-tabs button.active {
+  color: var(--theme-accent);
+  border-bottom-color: var(--theme-accent);
+}
+html[data-theme="dark"] .metrics button,
+html[data-theme="dark"] .text-link,
+html[data-theme="dark"] .task-title,
+html[data-theme="dark"] .add-task {
+  background: transparent;
+}
+html[data-theme="dark"] .text-link:hover,
+html[data-theme="dark"] .task-title:hover {
+  color: var(--theme-accent);
+  background: transparent;
+}
+html[data-theme="dark"] .task-card,
+html[data-theme="dark"] .app-card,
+html[data-theme="dark"] .resource-card {
+  color: var(--text);
+  background: rgba(52, 54, 57, 0.74);
+  border-color: var(--line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+html[data-theme="dark"] .task-card:hover,
+html[data-theme="dark"] .app-card:hover,
+html[data-theme="dark"] .resource-card:hover {
+  background: rgba(60, 62, 66, 0.94);
+  border-color: rgba(224, 227, 231, 0.22);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+html[data-theme="dark"] .board-column {
+  background: rgba(42, 43, 46, 0.65);
+}
+html[data-theme="dark"] .drop-over {
+  outline-color: var(--theme-accent);
+}
+html[data-theme="dark"] thead,
+html[data-theme="dark"] th,
+html[data-theme="dark"] .chat-history {
+  background: rgba(47, 49, 52, 0.54);
+}
+html[data-theme="dark"] .app-logo {
+  background: #414347;
+}
+html[data-theme="dark"] .tag {
+  color: #c4c5cc;
+  background: rgba(187, 190, 202, 0.1);
+}
+html[data-theme="dark"] .todo,
+html[data-theme="dark"] .closed {
+  color: #b7b8c1;
+}
+/* 原有状态类使用 important，深色语义色只在对应类上覆盖。 */
+html[data-theme="dark"] .doing,
+html[data-theme="dark"] .metrics .doing svg {
+  color: var(--theme-blue) !important;
+}
+html[data-theme="dark"] .done,
+html[data-theme="dark"] .metrics .done svg {
+  color: var(--theme-green) !important;
+}
+html[data-theme="dark"] .error,
+html[data-theme="dark"] .danger {
+  color: var(--theme-red) !important;
+}
+html[data-theme="dark"] .favorite {
+  color: var(--theme-amber) !important;
+}
+html[data-theme="dark"] .tag.doing {
+  background: rgba(106, 153, 236, 0.14);
+}
+html[data-theme="dark"] .tag.done {
+  background: rgba(90, 178, 131, 0.14);
+}
+html[data-theme="dark"] .tag.warning {
+  color: var(--theme-amber);
+  background: rgba(210, 160, 75, 0.14);
+}
+html[data-theme="dark"] .source-remote {
+  color: var(--theme-amber);
+}
+html[data-theme="dark"] .empty > svg {
+  color: #989aa3;
+}
+html[data-theme="dark"] .error-panel,
+html[data-theme="dark"] .wb-calendar-error {
+  color: var(--theme-red);
+}
+html[data-theme="dark"] .preview-notice {
+  color: #e0c799;
+  background: #353229;
+  border-bottom-color: #514a3b;
+}
+html[data-theme="dark"] .modal {
+  color: var(--text);
+  background: rgba(42, 44, 47, 0.95);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+html[data-theme="dark"] .modal::backdrop {
+  background: rgba(8, 9, 11, 0.5);
+}
+html[data-theme="dark"] .toast {
+  color: var(--text);
+  background: rgba(63, 66, 70, 0.96);
+  border-color: var(--glass-edge);
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+}
+html[data-theme="dark"] .message.user {
+  background: rgba(86, 102, 109, 0.28);
+}
+html[data-theme="dark"] .message pre {
+  background: #1c1d20;
+  color: #e4e5e9;
+  border: 1px solid var(--line);
+}
+html[data-theme="dark"] .message :not(pre) > code {
+  color: #c2e5ed;
+  background: rgba(163, 194, 207, 0.09);
+  border-radius: 4px;
+  padding: 0.1em 0.25em;
+}
+html[data-theme="dark"] .message blockquote {
+  color: #c1c3cb;
+  border-left: 3px solid #697a80;
+  padding-left: 1em;
+  margin-left: 0;
+}
+html[data-theme="dark"] .message hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+html[data-theme="dark"] .message a {
+  color: var(--theme-accent);
+}
+html[data-theme="dark"] .conversation-list button {
+  background: transparent;
+}
+html[data-theme="dark"] .conversation-list button.active {
+  background: var(--glass);
+  box-shadow: var(--glass-shadow);
+}
+html[data-theme="dark"] .chat-composer {
+  background: rgba(52, 54, 58, 0.9);
+  border-color: var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+}
+html[data-theme="dark"] .citation-preview {
+  background: #2b2d31;
+}
+
+html[data-theme="dark"] .glass-select-trigger {
+  color: var(--text);
+  background: linear-gradient(
+    180deg,
+    rgba(70, 73, 77, 0.9),
+    rgba(48, 50, 54, 0.76)
+  );
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: var(--glass-shadow);
+}
+html[data-theme="dark"] .glass-select-trigger:hover:not(:disabled),
+html[data-theme="dark"] .glass-select-trigger[data-state="open"] {
+  background: rgba(75, 80, 84, 0.96);
+  border-color: rgba(163, 219, 230, 0.46);
+  box-shadow: var(--glass-shadow);
+}
+html[data-theme="dark"] .glass-select-trigger:focus-visible {
+  outline-color: var(--theme-accent);
+}
+html[data-theme="dark"] .glass-select-leading,
+html[data-theme="dark"] .glass-select-chevron,
+html[data-theme="dark"] .glass-select-scroll,
+html[data-theme="dark"] .glass-select-empty {
+  color: var(--muted);
+}
+html[data-theme="dark"] .glass-select-content {
+  color: var(--text);
+  background: rgba(47, 49, 53, 0.96);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 12px 36px rgba(0, 0, 0, 0.4);
+}
+html[data-theme="dark"] .glass-select-item[data-selected] {
+  color: #b6e6ee;
+  background: var(--theme-accent-surface);
+}
+html[data-theme="dark"] .glass-select-item[data-highlighted] {
+  color: #f5fcff;
+  background: #356778;
+}
+
+html[data-theme="dark"] .wb-calendar button.wb-calendar-icon:hover {
+  color: var(--text);
+  background: var(--theme-hover);
+}
+html[data-theme="dark"] .wb-calendar button.wb-calendar-mini-day {
+  color: #d5d6dd;
+  background: transparent;
+}
+html[data-theme="dark"] .wb-calendar button.wb-calendar-mini-day:hover {
+  background: var(--theme-hover);
+}
+html[data-theme="dark"] .wb-calendar button.wb-calendar-mini-day.is-outside {
+  color: #81838c;
+}
+html[data-theme="dark"] .wb-calendar button.wb-calendar-mini-day.is-today {
+  color: var(--theme-accent);
+}
+html[data-theme="dark"] .wb-calendar button.wb-calendar-mini-day.is-selected {
+  color: #182c32;
+  background: #9bcfdb;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+html[data-theme="dark"] .wb-calendar-mini-day i {
+  background: var(--theme-accent);
+}
+html[data-theme="dark"] .wb-calendar-mini-day.is-selected i {
+  background: #294d56;
+}
+html[data-theme="dark"] .wb-calendar-sources input[aria-label="个人任务"] { accent-color:var(--theme-blue); }
+html[data-theme="dark"] .wb-calendar-sources input[aria-label="禅道执行"] { accent-color:var(--theme-amber); }
+html[data-theme="dark"] .wb-calendar-sources input[aria-label="钉钉日历"] { accent-color:#15975b; }
+html[data-theme="dark"] .wb-calendar-source-dot.local {
+  background: var(--theme-blue);
+}
+html[data-theme="dark"] .wb-calendar-source-dot.zentao {
+  background: var(--theme-amber);
+}
+html[data-theme="dark"] .wb-calendar-unscheduled button {
+  color: var(--text);
+  background: var(--surface);
+  border-color: rgba(224, 227, 231, 0.24);
+}
+html[data-theme="dark"] .wb-calendar-unscheduled button svg {
+  color: var(--muted);
+}
+html[data-theme="dark"] .wb-calendar button.wb-calendar-today {
+  color: var(--text);
+  background: var(--glass);
+  border-color: var(--glass-edge);
+  box-shadow: var(--glass-shadow);
+}
+html[data-theme="dark"] .wb-calendar .fc {
+  --fc-border-color: rgba(224, 227, 231, 0.14);
+  --fc-button-bg-color: #3b3d41;
+  --fc-button-text-color: #ededf0;
+  --fc-button-border-color: #55585e;
+  --fc-button-hover-bg-color: #4a4d52;
+  --fc-button-hover-border-color: #72767d;
+  --fc-button-active-bg-color: #356778;
+  --fc-button-active-border-color: #80b9c8;
+  --fc-today-bg-color: rgba(134, 195, 209, 0.07);
+  --fc-neutral-bg-color: #323438;
+  --fc-neutral-text-color: #b0b1b8;
+  --fc-highlight-color: rgba(134, 195, 209, 0.13);
+  --fc-page-bg-color: #2c2e32;
+  --fc-list-event-hover-bg-color: #3b3e43;
+  --fc-event-bg-color: #334458;
+  --fc-event-border-color: #7b9dbf;
+  --fc-event-text-color: #d9e9ff;
+  --fc-more-link-bg-color: #35383d;
+  --fc-more-link-text-color: #c6d7e9;
+  --fc-now-indicator-color: #f2a3a3;
+}
+html[data-theme="dark"] .wb-calendar .fc-theme-standard .fc-scrollgrid {
+  background: rgba(39, 41, 44, 0.56);
+}
+html[data-theme="dark"] .wb-calendar .fc .fc-col-header-cell {
+  background: rgba(50, 52, 56, 0.82);
+  color: #c1c3cb;
+}
+html[data-theme="dark"] .wb-calendar .fc .fc-day-today .fc-daygrid-day-number {
+  color: inherit;
+  background: transparent;
+}
+html[data-theme="dark"] .wb-calendar .fc .fc-day-today .wb-day-number {
+  color: #182c32;
+  background: #9bcfdb;
+}
+html[data-theme="dark"] .wb-calendar .fc .fc-day-sat:not(.fc-day-today),
+html[data-theme="dark"] .wb-calendar .fc .fc-day-sun:not(.fc-day-today) {
+  background: rgba(255, 255, 255, 0.02);
+}
+html[data-theme="dark"] .wb-calendar .fc .wb-calendar-event-local {
+  background: #303e55;
+  color: #b3ceff;
+  border-color: #82a7e2;
+}
+html[data-theme="dark"] .wb-calendar .fc .wb-calendar-event-zentao {
+  background: #463d2f;
+  color: #edce98;
+  border-color: #b89b69;
+}
+html[data-theme="dark"] .wb-calendar .fc .wb-calendar-event-done {
+  background: #34373b;
+  color: #a9afb8;
+  border-color: #666d77;
+}
+html[data-theme="dark"] .wb-calendar .fc .fc-daygrid-more-link,
+html[data-theme="dark"] .wb-calendar .fc .fc-timegrid-slot-label {
+  color: #b8becb;
+}
+html[data-theme="dark"] .wb-calendar .fc .fc-list-empty {
+  background: rgba(39, 41, 44, 0.56);
+  color: var(--muted);
+}
+html[data-theme="dark"] .wb-calendar .fc .fc-popover {
+  color: var(--text);
+  background: #303237;
+  border-color: var(--glass-edge);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+}
+html[data-theme="dark"] .wb-calendar .fc .fc-popover-header,
+html[data-theme="dark"] .wb-calendar .fc .fc-list-day-cushion {
+  background: #3b3d42;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html[data-theme="dark"] .sidebar,
+  html[data-theme="dark"] .topbar,
+  html[data-theme="dark"] .statusbar,
+  html[data-theme="dark"] .chat-main > header,
+  html[data-theme="dark"] .chat-history,
+  html[data-theme="dark"] .modal,
+  html[data-theme="dark"] .glass-select-content,
+  html[data-theme="dark"] .glass-select-trigger,
+  html[data-theme="dark"] .chat-composer {
+    background: #303236;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+@media (prefers-contrast: more) {
+  html[data-theme="dark"] {
+    --line: #73767c;
+    --glass-edge: #85888f;
+    --muted: #d0d1d7;
+  }
+  html[data-theme="dark"] .glass-select-trigger,
+  html[data-theme="dark"] .glass-select-content {
+    border-color: #989da4;
+    background: #292b2e;
+  }
+}

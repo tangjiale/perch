@@ -1,0 +1,15 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><title>钉钉日历隔离验证</title></head><body><div id="root"></div><script>
+window.isTauri=true;window.dingCalls=[];window.dingListeners=[];
+const today=new Date().toLocaleDateString('en-CA');const tomorrow=new Date();tomorrow.setDate(tomorrow.getDate()+2);
+window.dingState={config:{revision:1,serverUrl:'https://calendar.example.test/',username:'fixture-user',calendarUrl:'https://calendar.example.test/my/',calendarName:'我的日历',enabled:true,syncIntervalMinutes:5,hasCredential:true},calendars:[{url:'https://calendar.example.test/my/',name:'我的日历'}],events:[{id:'meeting',title:'钉钉日程 · 设计评审',description:'会议说明\n<script>window.unsafeDing=true<\/script>',location:'第一会议室',start:today+'T09:00:00+08:00',end:today+'T10:00:00+08:00',allDay:false},{id:'allday',title:'钉钉日程 · 跨日活动',description:'',location:'',start:today,end:tomorrow.toLocaleDateString('en-CA'),allDay:true}],lastSync:new Date().toISOString()};
+let callbackId=0;const callbacks={};
+window.__TAURI_INTERNALS__={transformCallback:(fn)=>{callbacks[++callbackId]=fn;return callbackId;},unregisterCallback:(id)=>delete callbacks[id],invoke:async(name,args)=>{
+window.dingCalls.push({name,args});
+if(name==='dingtalk_calendar_state')return structuredClone(window.dingState);
+if(name==='dingtalk_calendar_sync'){if(!window.dingState.calendars.length)window.dingState.calendars=[{url:'https://calendar.example.test/my/',name:'我的日历'}];return structuredClone(window.dingState);}
+if(name==='dingtalk_calendar_save'){window.dingState.config={...args.config,revision:args.config.revision+1,hasCredential:true};return structuredClone(window.dingState);}
+if(name==='plugin:event|listen'){window.dingListeners.push(args.handler);return window.dingListeners.length;}
+if(name==='plugin:event|unlisten')return;
+throw Error('未预期IPC '+name);}};
+window.emitDing=()=>window.dingListeners.forEach(id=>callbacks[id]?.({event:'dingtalk-calendar-updated',payload:{workspaceId:'fixture'},id}));
+</script><script type="module" src="/tests/DingtalkCalendarFixture.tsx"></script></body></html>

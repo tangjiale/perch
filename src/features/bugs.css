@@ -1,0 +1,232 @@
+.bugs-actions,
+.bugs-toolbar,
+.bugs-status-filters,
+.bugs-pagination,
+.bugs-detail-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.bugs-toolbar {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.bugs-status-filters button {
+  background: transparent;
+  border-color: transparent;
+}
+.bugs-status-filters button[aria-pressed="true"] {
+  color: var(--command);
+  background: var(--surface);
+  border-color: var(--line);
+  font-weight: 600;
+}
+.bugs-status-filters button span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bugs-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.bugs-search .glass-select-trigger {
+  max-width: 240px;
+}
+.bugs-search input {
+  width: 260px;
+  max-width: 100%;
+}
+.bugs-scope {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 20px;
+}
+.bugs-table-wrap {
+  overflow-x: auto;
+  border-block: 1px solid var(--line);
+}
+.bugs-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  text-align: left;
+}
+.bugs-table th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 12px;
+}
+.bugs-table td {
+  padding: 16px 12px;
+  border-top: 1px solid var(--line);
+  vertical-align: middle;
+}
+.bugs-table td:first-child {
+  width: 32%;
+}
+.bugs-table small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.bugs-table time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bugs-title {
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  justify-content: flex-start;
+  align-items: flex-start;
+  flex-direction: column;
+  box-shadow: none;
+  width: 100%;
+}
+.bugs-title:hover {
+  background: transparent;
+  color: var(--command);
+}
+html[data-theme="dark"] .bugs-title,
+html[data-theme="dark"] .bugs-title:hover:not(:disabled) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.bugs-title span {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.bugs-title strong {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.bug-status {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  background: var(--surface);
+  color: var(--muted);
+}
+.bug-status-active {
+  color: #a44724;
+  background: #fbeee7;
+}
+.bug-status-resolved {
+  color: #247050;
+  background: #e9f4ed;
+}
+.bugs-urgent {
+  color: #bd3044;
+  font-weight: 600;
+}
+[data-theme="dark"] .bug-status-active {
+  color: #f5b497;
+  background: #442e26;
+}
+[data-theme="dark"] .bug-status-resolved {
+  color: #8ed0aa;
+  background: #243c31;
+}
+[data-theme="dark"] .bugs-urgent {
+  color: #ff9daa;
+}
+.bugs-pagination {
+  justify-content: flex-end;
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.bugs-pagination > span {
+  margin-right: auto;
+}
+.bugs-full {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.bugs-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.bugs-form > footer {
+  grid-column: 1 / -1;
+}
+.bugs-detail-bar {
+  justify-content: space-between;
+}
+.bugs-steps {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  max-height: 340px;
+  overflow: auto;
+  padding: 12px 0;
+}
+.bugs-steps > :first-child {
+  margin-top: 0;
+}
+.bugs-steps table {
+  border-collapse: collapse;
+}
+.bugs-steps td,
+.bugs-steps th {
+  border: 1px solid var(--line);
+  padding: 6px;
+}
+.bugs-steps pre {
+  white-space: pre-wrap;
+}
+.bugs-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.bugs-detail-footer {
+  flex-wrap: wrap;
+}
+@media (max-width: 760px) {
+  .bugs-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bugs-actions {
+    margin-top: 12px;
+  }
+  .bugs-search,
+  .bugs-search input {
+    width: 100%;
+  }
+}
+
+.bugs-table .bugs-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 2px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+.bugs-table .bugs-sort-button:hover,
+.bugs-table .bugs-sort-button[data-active="true"] {
+  color: var(--command);
+  background: var(--surface);
+}
+.bugs-sort-button:focus-visible {
+  outline: 2px solid var(--command);
+  outline-offset: 2px;
+}

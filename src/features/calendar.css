@@ -1,0 +1,434 @@
+.wb-calendar {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.wb-calendar-sidebar {
+  padding-right: 20px;
+  border-right: 1px solid var(--line, #e2e5ea);
+  min-height: 680px;
+}
+.wb-calendar-mini-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 36px;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.wb-calendar-mini-heading strong {
+  white-space: nowrap;
+  font-size: 12px;
+}
+.wb-calendar-mini-heading > div {
+  display: flex;
+}
+.wb-calendar button.wb-calendar-icon {
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  background: transparent;
+  color: var(--muted, #6c7484);
+  flex-shrink: 0;
+}
+.wb-calendar button.wb-calendar-icon:hover {
+  background: rgba(116, 128, 147, 0.1);
+  color: #273548;
+}
+.wb-calendar-mini {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px 0;
+}
+.wb-calendar-weekday {
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: var(--muted, #6c7484);
+}
+.wb-calendar button.wb-calendar-mini-day {
+  position: relative;
+  border: 0;
+  padding: 0;
+  min-height: 25px;
+  height: 25px;
+  border-radius: 6px;
+  font-size: 10px;
+  background: transparent;
+  color: #343c48;
+}
+.wb-calendar button.wb-calendar-mini-day:hover {
+  background: #edf1f6;
+}
+.wb-calendar button.wb-calendar-mini-day.is-outside {
+  color: #9aa2ae;
+}
+.wb-calendar button.wb-calendar-mini-day.is-today {
+  color: #2b61d9;
+  font-weight: 700;
+}
+.wb-calendar button.wb-calendar-mini-day.is-selected {
+  color: white;
+  background: #3568dc;
+  box-shadow:
+    inset 0 1px 0 #ffffff38,
+    0 2px 5px #3469dd1c;
+}
+.wb-calendar-mini-day i {
+  position: absolute;
+  bottom: 1px;
+  left: calc(50% - 1px);
+  width: 2px;
+  height: 2px;
+  background: #3568dc;
+  border-radius: 50%;
+}
+.wb-calendar-mini-day.is-selected i {
+  background: #fff;
+}
+.wb-calendar-sources {
+  margin-top: 30px;
+}
+.wb-calendar-sidebar h3 {
+  font-size: 12px;
+  margin: 0 0 15px;
+  font-weight: 600;
+}
+.wb-calendar-sources label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 2px;
+  font-size: 12px;
+}
+.wb-calendar-sources input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  accent-color: #4775dc;
+}
+.wb-calendar-source-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-left: auto;
+}
+.wb-calendar-source-dot.local {
+  background: #4775dc;
+}
+.wb-calendar-source-dot.zentao {
+  background: #bd8b3e;
+}
+.wb-calendar-unscheduled {
+  margin-top: 28px;
+}
+.wb-calendar-unscheduled h3 span {
+  font-weight: 400;
+  color: var(--muted, #6c7484);
+}
+.wb-calendar-unscheduled > p {
+  font-size: 11px;
+  color: var(--muted, #6c7484);
+}
+.wb-calendar-unscheduled button {
+  width: 100%;
+  max-width: 100%;
+  padding: 9px 7px;
+  margin-bottom: 8px;
+  justify-content: flex-start;
+  background: rgba(255, 255, 255, 0.44);
+  border: 1px dashed #cdd4e0;
+  border-radius: 6px;
+  font-size: 11px;
+  text-align: left;
+}
+.wb-calendar-unscheduled button svg {
+  flex-shrink: 0;
+  color: #828c9c;
+}
+.wb-calendar-unscheduled button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-calendar-main {
+  min-width: 0;
+}
+.wb-calendar-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  min-height: 36px;
+}
+.wb-calendar-navigation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.wb-calendar-navigation h2 {
+  margin: 0 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.wb-calendar button.wb-calendar-today {
+  background: rgba(255, 255, 255, 0.65);
+  border-color: rgba(186, 197, 213, 0.48);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px #23344504;
+  padding: 6px 13px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.wb-calendar-segmented {
+  display: flex;
+  padding: 3px;
+  border-radius: 8px;
+  background: rgba(222, 228, 236, 0.5);
+  border: 1px solid rgba(200, 210, 224, 0.32);
+  box-shadow: inset 0 1px 2px #23344506;
+  flex-shrink: 0;
+  backdrop-filter: blur(16px);
+}
+.wb-calendar-segmented button {
+  min-width: 34px;
+  min-height: 27px;
+  height: 27px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 5px;
+  color: #677386;
+  background: transparent;
+  font-size: 12px;
+}
+.wb-calendar-segmented button.is-active {
+  color: #25344a;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 1px 4px #23344514,
+    inset 0 1px 0 white;
+}
+.wb-calendar-error {
+  font-size: 12px;
+  color: #af3e39;
+  margin: 0 0 12px;
+}
+.wb-calendar .fc {
+  --fc-border-color: rgba(204, 213, 224, 0.66);
+  --fc-today-bg-color: rgba(75, 119, 222, 0.045);
+  --fc-neutral-bg-color: rgba(233, 238, 246, 0.4);
+  --fc-highlight-color: rgba(58, 110, 214, 0.1);
+  --fc-page-bg-color: #fff;
+  font-size: 12px;
+}
+.wb-calendar .fc-theme-standard .fc-scrollgrid {
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.5);
+}
+.wb-calendar .fc .fc-col-header-cell {
+  background: rgba(234, 239, 246, 0.44);
+  font-weight: 400;
+  color: #647087;
+}
+.wb-calendar .fc .fc-col-header-cell-cushion {
+  padding: 9px 5px;
+  font-size: 11px;
+  text-decoration: none;
+}
+.wb-calendar .fc .fc-dayGridMonth-view .fc-daygrid-day-frame {
+  min-height: 126px;
+}
+.wb-calendar .fc .fc-daygrid-day-number {
+  padding: 5px 8px;
+  font-size: 11px;
+  text-decoration: none;
+}
+.wb-calendar .fc .fc-daygrid-day-top {
+  flex-direction: row;
+  padding: 4px 3px 0;
+}
+.wb-calendar .fc .fc-day-today .fc-daygrid-day-number {
+  color: inherit;
+  background: transparent;
+  border-radius: 6px;
+  margin-bottom: 3px;
+  min-width: 25px;
+  text-align: center;
+}
+.wb-calendar-day-heading,
+.wb-day-almanac {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.wb-day-number { white-space: nowrap; }
+.wb-lunar-label { color: var(--muted); font-size: 10px; font-weight: 400; }
+.wb-calendar .fc-day-today .wb-day-number {
+  background: #3568dc;
+  color: white;
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+.wb-holiday-mark { font-size: 10px; font-weight: 600; white-space: nowrap; }
+.wb-holiday-mark.is-rest { color: #188554; }
+.wb-holiday-mark.is-work { color: #b65d15; }
+html[data-theme="dark"] .wb-holiday-mark.is-rest { color: #60d49b; }
+html[data-theme="dark"] .wb-holiday-mark.is-work { color: #ffb367; }
+.wb-mini-almanac { position: absolute; right: 0; top: -3px; line-height: 1; }
+.wb-mini-almanac .wb-holiday-mark { font-size: 8px; }
+.wb-calendar-mini-day.is-selected .wb-holiday-mark { color: white; }
+.wb-almanac-legend { color: var(--muted); font-size: 11px; line-height: 1.8; }
+.wb-calendar .fc .fc-day-sat:not(.fc-day-today),
+.wb-calendar .fc .fc-day-sun:not(.fc-day-today) {
+  background: rgba(238, 241, 246, 0.2);
+}
+.wb-calendar .fc .fc-daygrid-event {
+  border: 0;
+  border-radius: 3px;
+  margin: 3px 5px;
+  padding: 2px 4px;
+  font-size: 10px;
+  font-weight: 400;
+  overflow: hidden;
+}
+.wb-calendar .fc .fc-daygrid-event-dot {
+  display: none;
+}
+.wb-calendar .fc .fc-event-time {
+  font-weight: 400;
+}
+.wb-calendar .fc .fc-event-title {
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wb-calendar .fc .wb-calendar-event-local {
+  background: #edf2fd;
+  color: #3764b8;
+  border-color: #6288d4;
+}
+.wb-calendar .fc .wb-calendar-event-zentao {
+  background: #faf1e2;
+  color: #94601e;
+  border-color: #c59952;
+}
+.wb-calendar .fc .wb-calendar-event-done {
+  background: #eef0f2;
+  color: #747b85;
+  border-color: #adb3bb;
+}
+.wb-calendar .fc .fc-event-main {
+  color: inherit;
+}
+.wb-calendar .fc .fc-daygrid-more-link {
+  color: #62738c;
+  font-size: 10px;
+  font-weight: 400;
+}
+.wb-calendar .fc .fc-timegrid-slot {
+  height: 28px;
+}
+.wb-calendar .fc .fc-timegrid-slot-label {
+  font-size: 11px;
+  color: #7e899a;
+}
+.wb-calendar .fc .fc-timegrid-event {
+  border-width: 0 0 0 2px;
+  border-radius: 3px;
+}
+.wb-calendar .fc .fc-list-event-dot {
+  border-color: currentColor;
+}
+.wb-calendar .fc .fc-list-empty {
+  background: rgba(255, 255, 255, 0.4);
+  color: #7e899a;
+}
+@media (max-width: 1100px) {
+  .wb-calendar {
+    grid-template-columns: 166px minmax(0, 1fr);
+    gap: 18px;
+  }
+  .wb-calendar-sidebar {
+    padding-right: 14px;
+  }
+  .wb-calendar-navigation {
+    gap: 4px;
+  }
+  .wb-calendar-navigation h2 {
+    font-size: 15px;
+    margin-left: 4px;
+  }
+}
+@media (max-width: 760px) {
+  .wb-calendar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .wb-calendar-sidebar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 18px;
+    border: 0;
+    padding: 0 0 16px;
+    min-height: 0;
+    border-bottom: 1px solid var(--line, #e2e5ea);
+  }
+  .wb-calendar-mini-heading,
+  .wb-calendar-mini {
+    grid-column: 1;
+  }
+  .wb-calendar-sources {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    margin-top: 4px;
+  }
+  .wb-calendar-unscheduled {
+    grid-column: 1 / -1;
+    margin-top: 18px;
+  }
+  .wb-calendar-unscheduled h3 {
+    margin-bottom: 8px;
+  }
+  .wb-calendar-toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .wb-calendar .fc .fc-dayGridMonth-view .fc-daygrid-day-frame {
+    min-height: 90px;
+  }
+  .wb-calendar .fc .fc-daygrid-event {
+    margin: 2px 1px;
+    padding: 1px 2px;
+  }
+  .wb-calendar .fc .fc-daygrid-day-number {
+    padding: 3px 5px;
+  }
+}
+
+.wb-calendar-source-dot.dingtalk { background:#15975b; }
+.wb-calendar-sources input[aria-label="钉钉日历"] { accent-color:#15975b; }
+.wb-calendar .fc .wb-calendar-event-dingtalk { background:rgba(21,151,91,.13); border-color:rgba(21,151,91,.3); color:#176b44; }
+html[data-theme="dark"] .wb-calendar .fc .wb-calendar-event-dingtalk { background:rgba(78,194,130,.15); border-color:rgba(78,194,130,.32); color:#9ee5b7; }
+.wb-ding-detail h3 { margin:16px 0; overflow-wrap:anywhere; }
+.wb-ding-detail dl { display:grid; grid-template-columns:80px minmax(0,1fr); gap:12px; font-size:13px; }
+.wb-ding-detail dt { color:var(--muted); }
+.wb-ding-detail dd { margin:0; overflow-wrap:anywhere; }
+.wb-ding-description { white-space:pre-wrap; max-height:280px; overflow:auto; }
+
+.wb-calendar-event-done .wb-calendar-event-title,
+.wb-calendar-unscheduled-done span { text-decoration:line-through; text-decoration-thickness:1px; }
+.wb-calendar-unscheduled button.wb-calendar-unscheduled-done { color:var(--muted); background:var(--surface); border-color:var(--line); }
+.wb-calendar .fc .wb-calendar-event-done .fc-list-event-dot { border-color:#adb3bb; }
+
+.wb-calendar-sources input[aria-label="禅道执行"] { accent-color:#bd8b3e; }

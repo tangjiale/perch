@@ -1,0 +1,44 @@
+name: 代码检查
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 中文提交与前端检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: 校验中文提交
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [[ "$BASE_SHA" =~ ^0+$ || -z "$BASE_SHA" ]]; then
+            node scripts/check-commit-message.mjs --range "$HEAD_SHA"
+          else
+            node scripts/check-commit-message.mjs --range "$BASE_SHA..$HEAD_SHA"
+          fi
+      - run: npm run release:check
+      - run: npm run test:release
+      - run: npm test
+      - run: npm run build

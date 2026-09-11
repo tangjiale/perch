@@ -1,0 +1,28 @@
+{
+  "tika": {
+    "version": "3.2.3",
+    "url": "https://repo.maven.apache.org/maven2/org/apache/tika/tika-app/3.2.3/tika-app-3.2.3.jar",
+    "sha256": "80c20c085e2c0976bbd55969e5bf90dda2b7155db31068639fbc871d0369e7e7"
+  },
+  "jre": {
+    "version": "21.0.12.1+1",
+    "platforms": {
+      "darwin-arm64": {
+        "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jre_aarch64_mac_hotspot_21.0.12.1_1.tar.gz",
+        "sha256": "dec50fc6f9fcd4fe3ae8cabf5a5fa68f6afc48841f7698e468e9aa5d54beed84",
+        "home": "Contents/Home",
+        "java": "bin/java",
+        "osName": "Darwin",
+        "osArch": "aarch64"
+      },
+      "win32-x64": {
+        "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jre_x64_windows_hotspot_21.0.12.1_1.zip",
+        "sha256": "d35f31e712f0fcf6ac5a093edc90204fbff22f720ba3950bd09d331d5e621636",
+        "home": ".",
+        "java": "bin/java.exe",
+        "osName": "Windows",
+        "osArch": "amd64"
+      }
+    }
+  }
+}

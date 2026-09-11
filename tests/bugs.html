@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BUG 页面隔离测试</title>
+  </head>
+  <body>
+    <div id="bugs-test-root" style="padding: 32px"></div>
+    <script>
+      globalThis.isTauri = true;
+      window.__bugCalls = [];
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (name, args) => {
+          window.__bugCalls.push({ name, args });
+          if (window.__bugFail) throw "模拟：禅道权限不足";
+          if (name === "zentao_bugs_sync") return "已同步测试 BUG";
+          return {
+            ...(args.value || {}),
+            id: args.id || args.value?.id,
+            revision: 2,
+          };
+        },
+      };
+    </script>
+    <script type="module" src="/tests/BugsFixture.tsx"></script>
+  </body>
+</html>

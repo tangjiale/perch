@@ -1,0 +1,387 @@
+:root {
+  --glass: rgba(255, 255, 255, 0.62);
+  --glass-strong: rgba(255, 255, 255, 0.88);
+  --glass-edge: rgba(255, 255, 255, 0.92);
+  --glass-shadow:
+    0 5px 16px rgba(35, 52, 64, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  --line: rgba(77, 99, 112, 0.14);
+  --muted: #626b74;
+  --surface: rgba(248, 251, 253, 0.7);
+  --command: #286d84;
+  color: #29333c;
+  background: #eaf0f3;
+}
+.settings-panel > .page-heading {
+  margin-bottom: 22px;
+}
+.settings-panel > .page-heading h2 {
+  font-size: 18px;
+}
+.settings-tabs {
+  scroll-margin-top: 16px;
+}
+.settings-tabs button {
+  flex-shrink: 0;
+}
+.mcp-table {
+  min-width: 590px;
+}
+.mcp-table td:first-child {
+  max-width: 320px;
+}
+.mcp-endpoint {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.row-actions,
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.modal-actions {
+  margin-top: 24px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+body {
+  background: linear-gradient(125deg, #e8eef4 0%, #f6f8f9 48%, #e6f0ed 100%);
+}
+.app-shell {
+  background: transparent;
+}
+.sidebar {
+  background: rgba(238, 244, 248, 0.57);
+  backdrop-filter: blur(28px) saturate(145%);
+  -webkit-backdrop-filter: blur(28px) saturate(145%);
+  border-right: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 1px 0 0 rgba(59, 82, 102, 0.05);
+}
+.brandmark {
+  width: 42px;
+  height: 42px;
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+.brandmark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.brand-title {
+  font-size: 14px;
+}
+.brand small {
+  color: #687783;
+}
+.sidebar nav a,
+.sidebar-bottom > a {
+  border-radius: 12px;
+  color: #5c6975;
+  transition:
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.sidebar nav a.active,
+.sidebar-bottom > a.active {
+  color: #285b70;
+  background: var(--glass);
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 0 0 1px var(--glass-edge);
+}
+.sidebar nav a:hover,
+.sidebar-bottom > a:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+.sidebar nav a.active svg {
+  color: #357e96;
+}
+.workspace {
+  background: rgba(255, 255, 255, 0.47);
+}
+.topbar,
+.statusbar,
+.chat-main > header {
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+}
+.topbar {
+  border-bottom-color: rgba(255, 255, 255, 0.8);
+}
+.global-search {
+  background: rgba(255, 255, 255, 0.48);
+  border-color: rgba(111, 136, 153, 0.14);
+  border-radius: 18px;
+  box-shadow: inset 0 1px 2px rgba(49, 77, 96, 0.035);
+}
+.global-search:focus-within {
+  outline: 2px solid var(--theme-accent, #5597ac);
+  outline-offset: 2px;
+}
+.topbar-clock {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.topbar-clock-date,
+.topbar-clock-lunar {
+  color: var(--muted);
+}
+.topbar-clock-weekday {
+  font-weight: 500;
+}
+.topbar-clock-divider {
+  height: 12px;
+  width: 1px;
+  background: var(--line);
+}
+.topbar-clock time {
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.topbar-clock + .global-search {
+  margin-left: 8px;
+  min-width: 100px;
+}
+@media (max-width: 1100px) {
+  .topbar > span { display: none; }
+  .topbar-clock { gap: 8px; }
+}
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 94px;
+    padding-block: 8px;
+  }
+  .topbar-clock {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+  .topbar-clock + .global-search {
+    flex: 1;
+    width: auto;
+    margin-left: 0;
+  }
+}
+.global-search input:focus {
+  outline: none;
+  box-shadow: none;
+}
+button {
+  border-color: rgba(90, 115, 132, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.74);
+  transition:
+    background 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+button:hover {
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 3px 10px rgba(42, 70, 88, 0.07);
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+button.primary {
+  background: linear-gradient(160deg, #43899e, #28697e);
+  border: 1px solid rgba(20, 80, 100, 0.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    0 3px 8px rgba(38, 93, 112, 0.16);
+  color: #fff;
+}
+button.primary:hover {
+  background: #28697e;
+}
+button.icon-button {
+  border-radius: 50%;
+  color: #5d6e7b;
+}
+button.icon-button:hover {
+  background: rgba(255, 255, 255, 0.8);
+}
+input,
+select,
+textarea {
+  border-radius: 9px;
+  border-color: rgba(81, 108, 125, 0.19);
+  background: rgba(255, 255, 255, 0.76);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid #5597ac;
+  outline-offset: 2px;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid #397e96;
+  outline-offset: 3px;
+}
+.segmented {
+  border-radius: 13px;
+  background: rgba(126, 151, 168, 0.1);
+  box-shadow: inset 0 1px 3px rgba(32, 58, 76, 0.06);
+  padding: 4px;
+}
+.segmented button {
+  border-radius: 10px;
+}
+.segmented button.active {
+  color: #245b70;
+  background: var(--glass-strong);
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 0 0 1px #fff;
+}
+.metrics button {
+  background: transparent;
+}
+.task-card,
+.app-card,
+.resource-card {
+  background: rgba(255, 255, 255, 0.74);
+  border-color: rgba(112, 137, 152, 0.15);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 3px 10px rgba(38, 62, 78, 0.025);
+}
+.task-card:hover,
+.app-card:hover,
+.resource-card:hover {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 6px 18px rgba(38, 62, 78, 0.08);
+}
+.board-column {
+  background: rgba(222, 232, 238, 0.29);
+}
+thead,
+th,
+.chat-history {
+  background: rgba(229, 237, 242, 0.38);
+}
+.settings-tabs {
+  border-bottom-color: var(--line);
+}
+.settings-tabs button {
+  background: transparent;
+}
+.settings-tabs button.active {
+  color: #25677e;
+  border-bottom-color: #3f859a;
+}
+.modal {
+  background: rgba(249, 252, 254, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.96);
+  border-radius: 20px;
+  /* WebKit 中 backdrop-filter 会改变 fixed 子元素的坐标参照；
+     模糊放在独立背景层，避免 dialog 内 Radix 菜单重复叠加弹窗偏移。 */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow:
+    0 24px 80px rgba(24, 49, 68, 0.21),
+    inset 0 1px 0 #fff;
+}
+.modal::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  backdrop-filter: blur(32px) saturate(145%);
+  -webkit-backdrop-filter: blur(32px) saturate(145%);
+}
+.modal::backdrop {
+  background: rgba(45, 66, 82, 0.18);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+.message.user {
+  background: rgba(222, 234, 241, 0.62);
+  border-radius: 12px;
+}
+.conversation-list button.active {
+  background: var(--glass-strong);
+  box-shadow: var(--glass-shadow);
+}
+.chat-composer {
+  background: var(--glass-strong);
+  border-radius: 18px;
+  border-color: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 7px 26px rgba(39, 65, 83, 0.09),
+    inset 0 1px 0 #fff;
+}
+.chat-composer textarea {
+  background: transparent;
+}
+.toast {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  background: rgba(37, 59, 71, 0.92);
+}
+::selection {
+  background: #c3e3ed;
+  color: #1d4958;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #b9c7ce transparent;
+}
+input,
+textarea {
+  caret-color: #286d84;
+}
+@media (prefers-reduced-transparency: reduce) {
+  .sidebar,
+  .topbar,
+  .statusbar,
+  .modal,
+  .chat-main > header {
+    background: #f4f7f9;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .modal::before {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  button,
+  .sidebar nav a {
+    transition: none;
+  }
+  button:active:not(:disabled) {
+    transform: none;
+  }
+}

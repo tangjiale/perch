@@ -1,0 +1,59 @@
+.ding-calendar-settings {
+  max-width: 680px;
+}
+
+.ding-calendar-help {
+  color: var(--muted);
+  margin: 0 0 14px;
+  overflow-wrap: anywhere;
+}
+
+.ding-calendar-fields {
+  padding: 0;
+  margin: 22px 0 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ding-calendar-fields > label:not(.ding-calendar-check) {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ding-calendar-fields input:not([type="checkbox"]) {
+  width: 100%;
+  min-width: 0;
+}
+
+.ding-calendar-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 0;
+  overflow-wrap: anywhere;
+}
+
+.ding-calendar-check input {
+  flex-shrink: 0;
+}
+
+.ding-calendar-selection {
+  margin-top: 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.ding-calendar-selection h3 {
+  margin: 0 0 6px;
+}
+
+.ding-calendar-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}

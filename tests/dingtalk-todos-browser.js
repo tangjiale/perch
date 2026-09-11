@@ -1,0 +1,21 @@
+(async()=>{
+  if(location.pathname!='/tests/dingtalk-calendar.html')throw Error('仅允许隔离验证');
+  const wait=()=>new Promise(resolve=>setTimeout(resolve,300));
+  const results=[];const check=(name,value)=>{if(!value)throw Error(name);results.push(name);};
+  const button=text=>[...document.querySelectorAll('button')].find(e=>e.textContent===text);
+  await wait();
+  window.dingState.config.todoCalendarUrl='https://calendar.example.test/todos/';
+  window.dingState.config.todoCalendarName='我的待办';
+  window.dingState.todos=[{id:'todo:due',title:'旧版钉钉待办',description:'内容',location:'',start:new Date().toLocaleDateString('en-CA'),allDay:true,status:'done'}];
+  window.emitDing();await wait();
+  check('旧待办缓存不进入日历',![...document.querySelectorAll('.fc-event')].some(e=>e.textContent.includes('旧版钉钉待办')));
+  check('未排期不显示钉钉待办',!document.querySelector('.wb-calendar-unscheduled').textContent.includes('钉钉待办'));
+  button('查看设置').click();await wait();
+  check('设置页不再提供待办选择',!document.querySelector('[aria-label="钉钉待办选择"]'));
+  button('保存设置').click();await wait();
+  const saved=window.dingCalls.findLast(c=>c.name==='dingtalk_calendar_save');
+  check('保存会清理旧待办配置',saved.args.config.todoCalendarUrl===''&&saved.args.config.todoCalendarName==='');
+  button('手动同步').click();await wait();
+  check('同步回执只报告日程',document.body.textContent.includes('本次读取：日程 2 条')&&!document.body.textContent.includes('待办 1 条'));
+  return results;
+})();

@@ -1,0 +1,157 @@
+name: 构建并发布栖点
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: 校验版本与发布配置
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 安装发布校验依赖
+        run: npm ci --ignore-scripts
+      - name: 检查发布工具
+        run: npm run test:release
+      - name: 校验公开仓库与更新签名
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          node --input-type=module -e '
+            if (process.env.REPOSITORY_PRIVATE !== "false") throw new Error("在线更新当前要求公开 GitHub 仓库");
+            if (!process.env.TAURI_UPDATER_PUBLIC_KEY?.trim()) throw new Error("缺少仓库变量 TAURI_UPDATER_PUBLIC_KEY");
+            if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) throw new Error("缺少仓库密钥 TAURI_SIGNING_PRIVATE_KEY");
+          '
+      - name: 校验稳定 Tag 和版本一致性
+        run: node scripts/release.mjs check --tag "$GITHUB_REF_NAME"
+      - name: 汇总本次多个提交的中文更新说明
+        run: node scripts/release.mjs notes --tag "$GITHUB_REF_NAME" --output release-notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: 构建 ${{ matrix.label }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple Silicon
+            os: macos-15
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - label: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+      - name: 安装前端依赖
+        run: npm ci
+      - name: 准备并校验随包文档解析运行时
+        run: node scripts/prepare-parser.mjs
+      - name: 前端测试与构建
+        run: |
+          npm test
+          npm run build
+      - name: Rust 测试与静态检查
+        working-directory: src-tauri
+        run: |
+          cargo test --locked --lib
+          cargo clippy --locked --lib -- -D warnings
+      - name: 生成此仓库的在线更新配置
+        env:
+          PERCH_RELEASE_REPOSITORY: ${{ github.repository }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: node scripts/configure-updater.mjs
+      - name: 构建安装包和签名更新包
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+          includeUpdaterJson: false
+      - name: 保存已签名产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.target }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: 统一发布安装包与更新清单
+    needs: [validate, build]
+    concurrency:
+      group: perch-release-publish
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: artifacts
+      - name: 全平台成功后发布 Release 和 latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: node scripts/publish-release.mjs

@@ -1,0 +1,1 @@
+{"main":{"identifier":"main","description":"工作台主窗口","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-set-theme","dialog:allow-open","dialog:allow-save",{"identifier":"opener:allow-open-url","allow":[{"url":"http://*"},{"url":"https://*"}]},"opener:allow-reveal-item-in-dir","updater:default","process:allow-restart"]}}

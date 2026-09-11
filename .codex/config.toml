@@ -1,0 +1,10 @@
+# 项目级设置；不覆盖全局认证、沙箱或审批策略。
+model = "gpt-5.6-terra"
+tool_output_token_limit = 3000
+project_root_markers = [".git", ".codex"]
+
+# 保留当前推理强度和模型默认表达方式。
+# 不压低 project_doc_max_bytes，避免截断必要规则。
+[agents]
+max_concurrent_threads_per_session = 2
+max_depth = 1

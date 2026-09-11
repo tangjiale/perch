@@ -1,0 +1,24 @@
+# 补充确认规则，不授予新的执行权限，也不替代沙箱。
+prefix_rule(
+    pattern = ["git", "reset", "--hard"],
+    decision = "prompt",
+    justification = "硬重置会丢弃未提交改动，需要明确授权。",
+    match = ["git reset --hard HEAD"],
+    not_match = ["git status", "git reset --soft HEAD~1"],
+)
+
+prefix_rule(
+    pattern = ["git", "clean", ["-f", "-fd", "-df", "-fx", "-fdx", "--force"]],
+    decision = "prompt",
+    justification = "强制清理可能删除未跟踪工作，请先核对范围。",
+    match = ["git clean -fd", "git clean -fdx"],
+    not_match = ["git clean -nd", "git clean --dry-run"],
+)
+
+prefix_rule(
+    pattern = [["npm", "cargo"], "publish"],
+    decision = "prompt",
+    justification = "向软件仓库发布版本需要明确授权。",
+    match = ["npm publish", "cargo publish"],
+    not_match = ["npm run build", "cargo test --lib"],
+)

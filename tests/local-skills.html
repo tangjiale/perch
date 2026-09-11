@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><title>本机技能隔离测试</title></head><body><div id="root"></div><script>
+window.isTauri=true;window.skillRows=[];window.skillCalls=[];
+window.__TAURI_INTERNALS__={invoke:async(name,args)=>{
+window.skillCalls.push({name,args});
+if(name==='local_skills_import'){const added=window.skillRows.length===0?1:0;if(added)window.skillRows.push({id:'fixture-local',name:'本机测试技能',description:'用于验证读取和启停',content:'测试正文',enabled:false,revision:1,sourcePath:'/fixture/skills/demo/SKILL.md',sourceGroup:'codex'});return {added,existing:added?0:1,skipped:0,warnings:[]};}
+if(name==='local_skills_set_enabled'){window.skillRows=window.skillRows.map(row=>args.skills.some(skill=>skill.id===row.id)?{...row,enabled:args.enabled,revision:row.revision+1}:row);return null;}
+if(name==='save_skill'){window.skillRows=[{...args.value,revision:args.value.revision+1}];return window.skillRows[0];}
+throw Error('未预期的测试命令');}};
+</script><script type="module" src="/tests/LocalSkillsFixture.tsx"></script></body></html>

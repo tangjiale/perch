@@ -1,0 +1,44 @@
+html .model-status-switch,
+html[data-theme="dark"] .model-status-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  white-space: nowrap;
+}
+.model-switch-track {
+  display: inline-flex;
+  align-items: center;
+  width: 36px;
+  height: 22px;
+  padding: 3px;
+  border-radius: 12px;
+  background: #777f88;
+}
+.model-status-switch[aria-checked="true"] .model-switch-track {
+  background: var(--command);
+}
+.model-switch-track > span {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 140ms ease;
+}
+.model-status-switch[aria-checked="true"] .model-switch-track > span {
+  transform: translateX(14px);
+}
+.model-status-switch:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+@media (prefers-reduced-motion: reduce) {
+  .model-switch-track > span {
+    transition: none;
+  }
+}

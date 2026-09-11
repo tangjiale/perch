@@ -1,0 +1,25 @@
+.task-rich-text { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:hidden; }
+.task-rich-toolbar { display:flex; gap:4px; padding:6px 8px; border-bottom:1px solid var(--line); align-items:center; flex-wrap:wrap; }
+.task-rich-toolbar button { min-height:28px; width:30px; padding:5px; border:0; background:transparent; }
+.task-rich-text .tiptap { min-height:180px; max-height:440px; overflow:auto; padding:12px 14px; outline:none; color:inherit; overflow-wrap:anywhere; }
+.task-rich-text:focus-within { outline:2px solid var(--theme-accent,#5597ac); outline-offset:2px; }
+.task-rich-text .tiptap p { margin:0 0 8px; }
+.task-rich-text .tiptap table { border-collapse:collapse; width:100%; }
+.task-rich-text .tiptap td, .task-rich-text .tiptap th { border:1px solid var(--line); padding:6px; }
+.task-rich-text .tiptap pre { overflow:auto; padding:10px; background:var(--surface); white-space:pre-wrap; }
+.task-rich-text .tiptap blockquote { border-left:3px solid var(--line); padding-left:12px; margin-left:0; }
+.task-rich-image { margin:8px 0; border:2px solid transparent; border-radius:6px; }
+.task-rich-image.is-selected { border-color:var(--theme-accent,#5597ac); }
+.task-rich-image img { display:block; max-width:100%; height:auto; }
+.task-rich-image-placeholder { padding:16px; border:1px dashed var(--line); color:var(--muted); display:flex; flex-direction:column; align-items:flex-start; gap:8px; }
+.task-rich-hint { padding:0 12px; color:var(--muted); font-size:11px; }
+.task-rich-text > .error { padding:0 12px; }
+
+.task-rich-image img { cursor:zoom-in; }
+.task-rich-image img:focus-visible { outline:2px solid var(--theme-accent,#5597ac); outline-offset:2px; }
+.task-image-preview-layer .modal.wide { width:min(1200px,94vw); max-width:94vw; }
+.task-image-preview-actions { display:flex; align-items:center; gap:12px; padding-bottom:12px; font-size:12px; }
+.task-image-preview-stage { height: min(72vh,900px); overflow:auto; display:flex; align-items:center; justify-content:center; background:var(--surface); border:1px solid var(--line); border-radius:10px; }
+.task-image-preview-stage img { display:block; width:100%; height:100%; object-fit:contain; }
+.task-image-preview-stage.original-size { display:block; }
+.task-image-preview-stage.original-size img { width:auto; height:auto; max-width:none; max-height:none; margin:auto; }

@@ -1,0 +1,10 @@
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {TaskEditor} from '../src/features/Work';
+import {emptySnapshot} from '../src/lib/api';
+import '../src/styles.css';
+import '../src/glass.css';
+import '../src/theme.css';
+const task = {id:'rich-task',revision:1,title:'富文本测试执行',notes:'<p><span>撤销接口增加不同状态的撤销规则</span><img src="{708.png}" alt="index.php?m=file&amp;f=read&amp;t=png&amp;fileID=708" /></p><script>window.unsafeRich=true</script>',source:'zentao' as const,remoteId:'370',remoteType:'execution',remoteStatus:'doing',connectionId:'c',status:'doing' as const,priority:'normal' as const,sortOrder:0,schedule:{kind:'all_day' as const,start:'2026-09-11',end:'2026-09-12',timezone:'Asia/Shanghai'}};
+document.getElementById('root')!.dataset.originalNotes = task.notes;
+createRoot(document.getElementById('root')!).render(<TaskEditor task={task} data={{...emptySnapshot,tasks:[task],connections:[{id:'c',revision:1,name:'测试',baseUrl:'https://example.test',apiVersion:'v1',managementEnabled:true,enabled:true}]}} onClose={()=>{}} refresh={async()=>{}} notify={()=>{}}/>);

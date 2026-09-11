@@ -1,0 +1,117 @@
+.general-settings {
+  max-width: 720px;
+}
+.general-settings h2 {
+  margin-bottom: 26px;
+}
+.appearance-field {
+  margin: 0;
+  padding: 0 0 20px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.appearance-field legend {
+  padding: 0;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.appearance-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+.appearance-choice {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+.appearance-choice input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+.appearance-choice-surface {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  height: 86px;
+  padding: 12px 6px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--glass);
+  color: inherit;
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
+}
+.appearance-choice:hover .appearance-choice-surface {
+  background: var(--glass-strong);
+}
+.appearance-choice input:checked + .appearance-choice-surface {
+  border-color: var(--muted);
+  background: var(--glass-strong);
+}
+.appearance-choice input:focus-visible + .appearance-choice-surface {
+  outline: 2px solid var(--command);
+  outline-offset: 3px;
+}
+.general-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+.general-setting-row p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.font-size-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+}
+.font-size-control input {
+  width: 76px;
+  text-align: center;
+}
+.font-size-control > span {
+  color: var(--muted);
+}
+.close-behavior-row {
+  align-items: flex-start;
+}
+.close-behavior-select {
+  min-width: 228px;
+  flex-shrink: 0;
+}
+.general-setting-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  margin-top: 12px;
+}
+@media (max-width: 1050px) {
+  .close-behavior-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .close-behavior-select {
+    width: 100%;
+    min-width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .appearance-choice-surface {
+    transition: none;
+  }
+}

@@ -1,0 +1,23 @@
+(async () => {
+  if(location.pathname !== '/tests/local-skills.html') throw Error('仅允许隔离技能测试');
+  const wait = () => new Promise(resolve => setTimeout(resolve, 200));
+  const assert = (value, message) => { if(!value) throw Error(message); };
+  [...document.querySelectorAll('button')].find(button=>button.textContent.includes('读取本机技能')).click();
+  await wait();
+  const group = [...document.querySelectorAll('.skill-source-group')].find(el=>el.textContent.includes('Codex'));
+  assert(group.textContent.includes('1 个技能'), '应按Codex来源分组');
+  assert(!group.querySelector('.resource-card'), '默认折叠');
+  group.querySelector('.skill-source-expand').click(); await wait();
+  assert(group.querySelectorAll('.resource-card').length===1, '可展开技能');
+  const toggle = group.querySelector('[role=switch]'); toggle.click(); await wait();
+  assert(toggle.getAttribute('aria-checked')==='true', '整组启用');
+  assert(window.skillCalls.at(-1).name==='local_skills_set_enabled', '调用批量领域IPC');
+  assert(document.querySelector('.skill-catalog-summary').textContent.includes('1 个已启用'), '启用数量实时更新');
+  toggle.click(); await wait();
+  assert(toggle.getAttribute('aria-checked')==='false', '整组停用');
+  const input=document.querySelector('[aria-label="搜索技能名称或描述"]');
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'没有这个技能');
+  input.dispatchEvent(new Event('input',{bubbles:true})); await wait();
+  assert(document.querySelector('.skill-catalog-groups').textContent.includes('没有匹配'), '搜索空结果');
+  return {grouping:true,expand:true,groupEnable:true,groupDisable:true,counts:true,search:true};
+})();

@@ -1,0 +1,200 @@
+.chat-image-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+.chat-image-tools input[hidden] {
+  display: none;
+}
+.chat-image-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+}
+.chat-image-gallery figure {
+  position: relative;
+  width: 132px;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 12px;
+}
+.chat-image-gallery img {
+  display: block;
+  width: 100%;
+  height: 104px;
+  object-fit: contain;
+  border-radius: 7px;
+}
+.chat-image-gallery figcaption {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 6px 2px 0;
+}
+html .chat-image-gallery .icon-button,
+html[data-theme="dark"] .chat-image-gallery .icon-button {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  background: var(--glass-strong);
+  color: var(--text, #29333c);
+  border: 1px solid var(--line);
+}
+.chat-image-hint {
+  display: block;
+  color: var(--muted);
+  margin: 8px 0;
+}
+
+/* 输入区域与底部工具栏独立排布，长名称和窄窗口允许换行。 */
+.chat-composer textarea {
+  display: block;
+  margin-bottom: 10px;
+}
+.chat-composer .composer-bottom {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.chat-composer .chat-image-tools {
+  flex: 1 1 280px;
+}
+.chat-composer .chat-image-tools > small {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-composer .chat-image-tools .chat-knowledge-select {
+  flex: 0 1 210px;
+  width: 210px;
+  min-width: 0;
+}
+.chat-composer .composer-bottom > button {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* 助手回复直接排版；自己的消息保留右侧紧凑气泡。 */
+.chat-layout .messages .message {
+  width: 100%;
+  max-width: 900px;
+  min-width: 0;
+  margin: 0 auto 24px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+  text-align: left;
+}
+.chat-layout .messages .message.user {
+  position: relative;
+  width: fit-content;
+  max-width: min(84%, 800px);
+  min-width: 0;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 3%);
+  margin-left: auto;
+  margin-right: 0;
+  border-radius: 16px 16px 5px 16px;
+  background: color-mix(
+    in srgb,
+    var(--accent, #398498) 12%,
+    var(--glass-strong)
+  );
+}
+.chat-layout .message-heading {
+  gap: 24px;
+  margin-bottom: 4px;
+  color: var(--muted);
+}
+.chat-layout .message-heading .icon-button {
+  flex-shrink: 0;
+}
+.chat-layout .message > :last-child {
+  margin-bottom: 0;
+}
+.chat-layout .message table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.chat-layout .message pre {
+  max-width: 100%;
+}
+.chat-layout .message .citations button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1000px) {
+  .chat-layout .messages .message.user {
+    max-width: 92%;
+    padding: 10px 13px;
+  }
+}
+
+/* 自己的短消息只保留正文，复制操作浮在气泡外，不参与气泡尺寸计算。 */
+.chat-layout .message.user .message-heading {
+  position: absolute;
+  right: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.chat-layout .message.user:hover .message-heading,
+.chat-layout .message.user:focus-within .message-heading {
+  opacity: 1;
+  pointer-events: auto;
+}
+.chat-layout .message.user .message-heading::after {
+  content: "";
+  position: absolute;
+  left: 100%;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+}
+.chat-layout .message.user > p:first-of-type {
+  margin-top: 0;
+}
+@media (hover: none) {
+  .chat-layout .message.user .message-heading {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.chat-layout .chat-message-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-message-footer > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-layout .chat-message-footer .icon-button {
+  color: var(--muted);
+  min-height: 28px;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+}

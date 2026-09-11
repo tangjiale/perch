@@ -1,0 +1,24 @@
+(async () => {
+  if(location.pathname !== '/tests/task-rich-text.html') throw Error('仅允许隔离富文本测试');
+  const wait=()=>new Promise(resolve=>setTimeout(resolve,200));
+  const assert=(value,message)=>{if(!value)throw Error(message);};
+  await wait();
+  const area=document.querySelector('.tiptap');
+  assert(area.textContent.includes('撤销接口') && !area.textContent.includes('<p>'), '富文本应显示正文');
+  assert(!window.unsafeRich && !area.querySelector('script'), '不执行不可信HTML');
+  assert(area.querySelector('img')?.naturalWidth===600, '占位图片应通过IPC正常回显');
+  assert(window.richCalls.some(call=>call.name==='zentao_task_image_read' && call.args.source==='{708.png}'), '保留原始图片引用读取');
+  area.focus(); const selection=window.getSelection(); selection.selectAllChildren(area); selection.collapseToEnd();
+  const bytes=Uint8Array.from(atob(window.richPng.split(',')[1]),c=>c.charCodeAt(0));
+  const transfer=new DataTransfer();transfer.items.add(new File([bytes],'新增.png',{type:'image/png'}));
+  const input=document.querySelector('.task-rich-text input[type=file]');input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+  await wait();
+  assert(window.richCalls.some(call=>call.name==='zentao_task_image_upload'),'上传使用独立IPC');
+  assert(area.querySelectorAll('img').length===2,'原图片与新图片同时回显');
+  document.querySelector('dialog form').requestSubmit();await wait();
+  const saved=window.richCalls.findLast(call=>call.name==='save_task');
+  assert(saved,'保存继续使用任务领域IPC');
+  const notes=saved.args.value.notes;
+  assert(notes.includes('{708.png}') && notes.includes('{709.png}') && !notes.includes('data:image') && !notes.includes('script'),'保存引用不保存临时图片或危险脚本');
+  return {richText:true,images:true,upload:true,preserveOriginalReference:true,safeHtml:true,saveTask:true};
+})();

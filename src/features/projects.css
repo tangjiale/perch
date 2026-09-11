@@ -1,0 +1,321 @@
+.projects-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.projects-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  text-align: left;
+}
+.project-main-col {
+  width: 32%;
+}
+.project-date-col {
+  width: 20%;
+}
+.project-progress-col {
+  width: 20%;
+}
+.project-bug-col {
+  width: 20%;
+}
+.project-actions-col {
+  width: 8%;
+}
+.projects-table th {
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.projects-table td {
+  padding: 17px 14px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--line);
+}
+.projects-table tbody tr:hover {
+  background: var(--theme-hover, rgba(100, 120, 130, 0.035));
+}
+.project-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+.project-identity > svg {
+  flex: 0 0 auto;
+  margin-top: 3px;
+}
+.project-copy {
+  min-width: 0;
+}
+.project-name-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 10px;
+}
+.project-name {
+  display: block;
+  padding: 0;
+  min-width: 0;
+  border: none;
+  box-shadow: none;
+  background: none;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.project-name:hover {
+  background: transparent;
+  color: var(--command);
+}
+.project-name-line .tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 2px 6px;
+}
+.project-copy > small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.project-description {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.project-dates {
+  display: grid;
+  gap: 7px;
+  color: var(--text);
+  font-size: 12px;
+}
+.project-dates > span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+}
+.project-dates > span > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.project-dates time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.project-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+.project-progress:hover {
+  background: transparent;
+  color: var(--command);
+}
+.project-progress-heading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.project-progress-heading strong {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+.project-progress-track {
+  display: flex;
+  height: 5px;
+  gap: 2px;
+  background: var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.project-progress-track > span {
+  height: 100%;
+}
+.project-progress-todo {
+  background: var(--theme-amber, #ae863c);
+}
+.project-progress-doing {
+  background: var(--theme-blue, #6489c5);
+}
+.project-progress-done {
+  background: var(--theme-green, #438766);
+}
+.project-progress-closed {
+  background: var(--muted);
+  opacity: 0.45;
+}
+.project-bug-active {
+  background: var(--theme-red, #bf6871);
+}
+.project-bug-resolved {
+  background: var(--theme-green, #438766);
+}
+.project-bug-closed {
+  background: var(--muted);
+  opacity: 0.45;
+}
+.project-task-breakdown {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.projects-table .project-name,
+.projects-table .project-progress,
+.projects-table .project-name:hover:not(:disabled),
+.projects-table .project-progress:hover:not(:disabled) {
+  background: transparent;
+  box-shadow: none;
+}
+.project-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+@media (max-width: 1100px) {
+  .project-main-col {
+    width: 31%;
+  }
+  .project-date-col {
+    width: 21%;
+  }
+  .project-progress-col {
+    width: 20%;
+  }
+  .project-actions-col {
+    width: 8%;
+  }
+  .projects-table th,
+  .projects-table td {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .project-identity {
+    gap: 8px;
+  }
+  .project-identity > svg {
+    display: none;
+  }
+  .project-row-actions {
+    gap: 0;
+    flex-direction: column;
+    align-items: center;
+  }
+}
+
+.task-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.board-slot {
+  height: 0;
+  border-radius: 7px;
+}
+.board-slot.dragging {
+  min-height: 12px;
+  margin-bottom: 2px;
+}
+.board-slot.insertion {
+  height: 64px;
+  margin-bottom: 10px;
+  border: 1px dashed var(--accent, #398498);
+  background: color-mix(in srgb, var(--accent, #398498) 10%, transparent);
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  font-size: 12px;
+}
+.drag-preview {
+  box-shadow: 0 12px 30px #0003;
+  cursor: grabbing;
+  pointer-events: none;
+}
+.drag-preview strong {
+  display: block;
+  margin-top: 10px;
+}
+.drag-preview small {
+  color: var(--muted);
+}
+
+.task-project-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.task-project-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.task-project-label .icon-button {
+  min-height: 24px;
+  width: 24px;
+  height: 24px;
+  padding: 3px;
+  color: var(--muted);
+}
+.task-project-help {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.task-card .task-card-dates {
+  align-items: flex-start;
+  gap: 7px;
+}
+.task-card-dates > svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.task-card-dates > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.task-card-dates > div > span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.task-card-dates > div > span > span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+.task-card-dates > small {
+  flex-shrink: 0;
+}

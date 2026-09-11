@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><title>任务富文本隔离测试</title></head><body><div id="root"></div><script>
+window.isTauri=true;window.richCalls=[];
+const canvas=document.createElement('canvas');canvas.width=600;canvas.height=180;const ctx=canvas.getContext('2d');ctx.fillStyle='#d9edf2';ctx.fillRect(0,0,600,180);ctx.fillStyle='#276d84';ctx.font='24px sans-serif';ctx.fillText('任务说明图片 · 上传与回显测试',30,95);window.richPng=canvas.toDataURL('image/png');
+window.__TAURI_INTERNALS__={invoke:async(name,args)=>{
+window.richCalls.push({name,args});
+if(name==='zentao_task_image_read')return {dataUrl:window.richPng};
+if(name==='zentao_task_image_upload')return {source:'{709.png}',dataUrl:window.richPng,fileId:'709'};
+if(name==='save_task'){
+if(new URLSearchParams(location.search).has('retry'))throw Error('模拟保存失败，保留草稿');
+return {...args.value,revision:2};
+}
+throw Error('未预期命令 '+name);}};
+</script><script type="module" src="/tests/TaskRichTextFixture.tsx"></script></body></html>
