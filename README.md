@@ -30,6 +30,17 @@ npm run tauri build -- --bundles app,dmg
 
 macOS 安装包在 `src-tauri/target/release/bundle/dmg/`，App 在 `src-tauri/target/release/bundle/macos/`。目前没有 Developer ID 签名或公证。版本号已接入检查、下载和安装更新；正式更新源由 Tag 工作流注入，普通本地构建未配置更新源。
 
+### macOS 首次打开未签名版本
+
+当前 macOS 安装包尚未配置 Apple Developer ID 签名和公证。首次从浏览器下载后，系统可能提示“栖点.app 已损坏，无法打开”。请确认安装包来源可信，然后将应用拖入“应用程序”目录，在终端执行：
+
+```bash
+xattr -cr "/Applications/栖点.app"
+open "/Applications/栖点.app"
+```
+
+也可以在 Finder 中右键点击应用，选择“打开”，并在系统提示中确认。正式发布版本配置 Developer ID 签名和公证后，不需要执行上述操作。
+
 推送 `vX.Y.Z` Tag 后自动构建 macOS Apple Silicon 和 Windows x64，并在双平台成功后统一发布 Release。中文提交约定、多个 commit 的更新说明汇总、首次签名配置见 [发布与在线更新](docs/RELEASE.md)。
 
 默认数据位置为 `~/.perch`。在设置的“数据与备份”中更改路径、备份和恢复。API 密钥与禅道令牌存在系统钥匙串，不包含在备份中；换电脑后需要重新配置凭据。
