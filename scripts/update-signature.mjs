@@ -1,7 +1,24 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 
+export function normalizePublicKey(publicKey) {
+  let value = publicKey?.trim();
+  for (let attempt = 0; attempt < 3 && value; attempt += 1) {
+    if (value.startsWith("untrusted comment:") && value.includes("\n")) {
+      return Buffer.from(value + (value.endsWith("\n") ? "" : "\n")).toString(
+        "base64",
+      );
+    }
+    const decoded = Buffer.from(value, "base64").toString("utf8");
+    if (!decoded || decoded === value) break;
+    value = decoded.trim();
+  }
+  throw Error(
+    "更新公钥格式无效，请使用 tauri signer generate 生成的 .pub 文件内容",
+  );
+}
+
 export function verifyUpdaterSignature(bytes, signature, publicKey) {
-  const keyLines = Buffer.from(publicKey.trim(), "base64")
+  const keyLines = Buffer.from(normalizePublicKey(publicKey), "base64")
     .toString("utf8")
     .trim()
     .split(/\r?\n/);

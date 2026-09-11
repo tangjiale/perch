@@ -1,7 +1,10 @@
 import { readFile, readdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { verifyUpdaterSignature } from "./update-signature.mjs";
+import {
+  normalizePublicKey,
+  verifyUpdaterSignature,
+} from "./update-signature.mjs";
 
 async function filesAt(root) {
   const result = [];
@@ -48,13 +51,15 @@ export async function publish() {
   const repository = process.env.GITHUB_REPOSITORY;
   const tag = process.env.GITHUB_REF_NAME;
   const token = process.env.GITHUB_TOKEN;
-  const publicKey = process.env.TAURI_UPDATER_PUBLIC_KEY;
+  const configuredPublicKey = process.env.TAURI_UPDATER_PUBLIC_KEY;
   if (
     !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || "") ||
     !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag || "")
   )
     throw Error("仓库或稳定版本 Tag 无效");
-  if (!token || !publicKey) throw Error("缺少发布凭据或更新签名公钥");
+  if (!token || !configuredPublicKey)
+    throw Error("缺少发布凭据或更新签名公钥");
+  const publicKey = normalizePublicKey(configuredPublicKey);
   const version = tag.slice(1);
   const notes = await readFile("release-notes.md", "utf8");
   if (!notes.startsWith(`# 栖点 ${tag}\n`) || !/\p{Script=Han}/u.test(notes))

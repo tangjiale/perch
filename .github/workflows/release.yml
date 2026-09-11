@@ -89,7 +89,19 @@ jobs:
           key: ${{ matrix.target }}
       - name: 安装前端依赖
         run: npm ci
-      - name: 清理其他平台的解析器运行时
+      - name: 清理其他平台的解析器运行时（Windows）
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $parserJre = Join-Path $env:GITHUB_WORKSPACE 'src-tauri/resources/parser/jre'
+          if (Test-Path -LiteralPath $parserJre) {
+            Remove-Item -LiteralPath $parserJre -Recurse -Force -ErrorAction Stop
+          }
+          if (Test-Path -LiteralPath $parserJre) {
+            throw '无法清理 Windows 解析器运行时目录'
+          }
+      - name: 清理其他平台的解析器运行时（macOS）
+        if: runner.os != 'Windows'
         run: |
           node --input-type=module -e '
             import { rm } from "node:fs/promises";

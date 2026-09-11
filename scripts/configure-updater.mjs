@@ -1,18 +1,14 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizePublicKey } from "./update-signature.mjs";
 
 export function updaterConfig(repository, publicKey) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || ""))
     throw Error("请设置 PERCH_RELEASE_REPOSITORY=所有者/仓库名");
-  const key = publicKey?.trim();
-  if (!key)
+  if (!publicKey?.trim())
     throw Error("请设置 TAURI_UPDATER_PUBLIC_KEY，不能跳过更新签名校验");
-  const decoded = Buffer.from(key, "base64").toString("utf8");
-  if (!decoded.startsWith("untrusted comment:") || !decoded.includes("\n"))
-    throw Error(
-      "更新公钥格式无效，请使用 tauri signer generate 生成的 .pub 文件内容",
-    );
+  const key = normalizePublicKey(publicKey);
   return {
     bundle: { createUpdaterArtifacts: true },
     plugins: {
