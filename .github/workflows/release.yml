@@ -108,6 +108,8 @@ jobs:
             await rm("src-tauri/resources/parser/jre", { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
           '
       - name: 准备并校验随包文档解析运行时
+        env:
+          PERCH_REPLACE_MISMATCHED_RUNTIME: '1'
         run: node scripts/prepare-parser.mjs
       - name: 前端测试与构建
         run: |

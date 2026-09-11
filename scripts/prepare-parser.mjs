@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
-import { access, copyFile, cp, mkdir, mkdtemp, readFile, readdir } from "node:fs/promises";
+import { access, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,9 +54,17 @@ await mkdir(root, { recursive: true });
 const jar = join(root, "tika-app.jar");
 const jre = join(root, "jre");
 const hasJar = await exists(jar);
-const hasJre = await exists(jre);
+let hasJre = await exists(jre);
 if (hasJar && await checksum(jar) !== manifest.tika.sha256) throw new Error("已有 Tika SHA-256 不匹配，脚本不会覆盖该文件");
-if (hasJre) await verifyJava(jre);
+if (hasJre) {
+  try {
+    await verifyJava(jre);
+  } catch (error) {
+    if (process.env.PERCH_REPLACE_MISMATCHED_RUNTIME !== "1") throw error;
+    await rm(jre, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    hasJre = false;
+  }
+}
 if (checkOnly && (!hasJar || !hasJre)) throw new Error("运行时缺失，请先运行 node scripts/prepare-parser.mjs");
 
 if (!hasJar || !hasJre) {
