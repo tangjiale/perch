@@ -12,6 +12,8 @@ import {
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { command, native } from "../lib/api";
 import "./update-popover.css";
 
@@ -27,6 +29,16 @@ type Phase =
 interface UpdaterStatus {
   configured: boolean;
   releasesUrl: string | null;
+}
+
+function errorDetail(error: unknown) {
+  const value =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : JSON.stringify(error);
+  return value?.replace(/\s+/g, " ").trim().slice(0, 240) || "未知错误";
 }
 
 export default function UpdatePopover({ version }: { version: string }) {
@@ -91,9 +103,9 @@ export default function UpdatePopover({ version }: { version: string }) {
       update.current = next;
       setLatest(next ? { version: next.version, body: next.body } : null);
       setPhase(next ? "available" : "current");
-    } catch {
+    } catch (error) {
       if (active()) {
-        setError("暂时无法检查更新，请检查网络连接后重试。");
+        setError(`检查更新失败。原因：${errorDetail(error)}`);
         setPhase("error");
       }
     } finally {
@@ -101,6 +113,16 @@ export default function UpdatePopover({ version }: { version: string }) {
       if (!mounted.current) await releaseUpdate();
     }
   }
+
+  useEffect(() => {
+    if (!native || started.current) return;
+    started.current = true;
+    void checkUpdate();
+    const timer = window.setInterval(() => {
+      void checkUpdate();
+    }, 30 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   async function installUpdate() {
     const next = update.current;
@@ -127,13 +149,12 @@ export default function UpdatePopover({ version }: { version: string }) {
       );
       if (mounted.current) setPhase("ready");
       await releaseUpdate();
-    } catch {
+    } catch (error) {
       if (mounted.current) {
-        setError(
-          prepared
-            ? "更新未完成，请检查网络及磁盘空间后重试。"
-            : "暂时不能更新，请等待正在运行的会话结束后重试。",
-        );
+        const prefix = prepared
+          ? "更新未完成，请检查网络及磁盘空间后重试。"
+          : "暂时不能更新，请等待正在运行的会话结束后重试。";
+        setError(`${prefix} 原因：${errorDetail(error)}`);
         setPhase("error");
       }
     } finally {
@@ -197,10 +218,6 @@ export default function UpdatePopover({ version }: { version: string }) {
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (next && !started.current) {
-          started.current = true;
-          void checkUpdate();
-        }
       }}
     >
       <Popover.Trigger asChild>
@@ -290,10 +307,14 @@ export default function UpdatePopover({ version }: { version: string }) {
               </p>
             )}
             {latest?.body && (
-              <details className="update-notes">
-                <summary>本次更新内容</summary>
-                <div>{latest.body}</div>
-              </details>
+              <section className="update-notes" aria-label="本次更新内容">
+                <div className="update-notes-title">本次更新内容</div>
+                <div className="update-markdown">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {latest.body}
+                  </ReactMarkdown>
+                </div>
+              </section>
             )}
             {phase === "ready" ? (
               <button

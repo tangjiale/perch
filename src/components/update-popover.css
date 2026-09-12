@@ -161,14 +161,46 @@
 .update-notes summary {
   cursor: pointer;
 }
-.update-notes > div {
-  max-height: 180px;
+.update-notes-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.update-markdown {
+  max-height: 220px;
   overflow: auto;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 20px;
   margin-top: 9px;
+}
+.update-markdown > :first-child {
+  margin-top: 0;
+}
+.update-markdown > :last-child {
+  margin-bottom: 0;
+}
+.update-markdown h1,
+.update-markdown h2,
+.update-markdown h3 {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 19px;
+  margin: 12px 0 5px;
+}
+.update-markdown p,
+.update-markdown ul,
+.update-markdown ol {
+  margin: 6px 0;
+}
+.update-markdown ul,
+.update-markdown ol {
+  padding-left: 18px;
+}
+.update-markdown code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 11px;
 }
 .update-progress {
   display: flex;
