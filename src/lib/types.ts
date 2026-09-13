@@ -125,6 +125,8 @@ export interface Document extends Base {
 export interface Conversation extends Base {
   title: string;
   agentId: string;
+  groupId?: string;
+  groupName?: string;
   agentSnapshot?: Agent & {
     model?: Model;
     provider?: Provider;

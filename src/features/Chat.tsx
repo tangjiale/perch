@@ -9,6 +9,13 @@ import {
   MessagesSquare,
   Pencil,
   Trash2,
+  ChevronDown,
+  ChevronRight,
+  FolderInput,
+  FolderPlus,
+  Folder,
+  FolderOpen,
+  MoreHorizontal,
   Library,
   Bot,
   ImagePlus,
@@ -17,6 +24,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import GlassSelect from "../components/GlassSelect";
+import Modal from "../components/Modal";
 import { api, command } from "../lib/api";
 import type {
   PageProps,
@@ -28,6 +36,29 @@ import ChatMessageFooter from "../components/ChatMessageFooter";
 import { newChatConversation } from "../lib/chat-conversation";
 import { readChatImages } from "../lib/chat-images";
 import "./chat-images.css";
+
+interface ChatGroup {
+  id: string;
+  name: string;
+  collapsed?: boolean;
+}
+
+const CHAT_GROUPS_KEY = "perch-chat-groups";
+
+function loadChatGroups(): ChatGroup[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(CHAT_GROUPS_KEY) || "[]");
+    return Array.isArray(value)
+      ? value.filter(
+          (item): item is ChatGroup =>
+            !!item && typeof item.id === "string" && typeof item.name === "string",
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function Chat({ data, refresh, notify }: PageProps) {
   const [params, setParams] = useSearchParams();
   const id = params.get("conversation") || data.conversations[0]?.id;
@@ -37,6 +68,14 @@ export default function Chat({ data, refresh, notify }: PageProps) {
     data.conversations.find((c) => c.id === id) ||
     (createdConversation?.id === id ? createdConversation : undefined);
   const [creating, setCreating] = useState(false);
+  const [groups, setGroups] = useState<ChatGroup[]>(loadChatGroups);
+  const [movingConversation, setMovingConversation] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | undefined>();
+  const [ungroupedCollapsed, setUngroupedCollapsed] = useState(false);
+  const [newGroupOpen, setNewGroupOpen] = useState(false);
+  const [groupNameDraft, setGroupNameDraft] = useState("");
+  const [contextGroupId, setContextGroupId] = useState<string | null>(null);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const submitting = useRef(false);
   const [draft, setDraft] = useState(""),
     [agent, setAgent] = useState(data.agents.find((a) => a.enabled)?.id || ""),
@@ -59,6 +98,88 @@ export default function Chat({ data, refresh, notify }: PageProps) {
   const currentModel = data.models.find((m) => m.id === currentAgent?.modelId);
   const canUseImages =
     currentModel?.capability === "vision" && currentModel.enabled;
+  function persistGroups(next: ChatGroup[]) {
+    setGroups(next);
+    localStorage.setItem(CHAT_GROUPS_KEY, JSON.stringify(next));
+  }
+  function groupFor(id?: string) {
+    return groups.find((group) => group.id === id);
+  }
+  function createGroup() {
+    const name = groupNameDraft.trim();
+    if (!name) return;
+    if (groups.some((group) => group.name === name)) {
+      notify("已有同名项目");
+      return;
+    }
+    persistGroups([...groups, { id: crypto.randomUUID(), name }]);
+    setGroupNameDraft("");
+    setNewGroupOpen(false);
+  }
+  function renameGroup(group: ChatGroup) {
+    const name = groupNameDraft.trim();
+    if (!name || name === group.name) {
+      setEditingGroupId(null);
+      return;
+    }
+    if (groups.some((item) => item.id !== group.id && item.name === name)) {
+      notify("已有同名项目");
+      return;
+    }
+    persistGroups(groups.map((item) => item.id === group.id ? { ...item, name } : item));
+    void Promise.all(
+      data.conversations
+        .filter((conversation) => conversation.groupId === group.id)
+        .map((conversation) => api.save("conversation", { ...conversation, groupName: name })),
+    ).then(() => refresh()).catch((error) => notify((error as Error).message));
+    setEditingGroupId(null);
+    setContextGroupId(null);
+    setGroupNameDraft("");
+  }
+  async function deleteGroup(group: ChatGroup) {
+    if (!confirm(`删除项目“${group.name}”？会话将移到未归入项目`)) return;
+    try {
+      await Promise.all(
+        data.conversations
+          .filter((conversation) => conversation.groupId === group.id)
+          .map((conversation) => api.save("conversation", {
+            ...conversation,
+            groupId: undefined,
+            groupName: undefined,
+          })),
+      );
+      persistGroups(groups.filter((item) => item.id !== group.id));
+      await refresh();
+    } catch (error) {
+      notify((error as Error).message);
+    }
+  }
+  function toggleGroup(group: ChatGroup) {
+    persistGroups(groups.map((item) => item.id === group.id ? { ...item, collapsed: !item.collapsed } : item));
+  }
+  async function moveConversation(conversation: Conversation, group?: ChatGroup) {
+    try {
+      await api.save("conversation", {
+        ...conversation,
+        groupId: group?.id,
+        groupName: group?.name,
+      });
+      setMovingConversation(null);
+      await refresh();
+    } catch (error) {
+      notify((error as Error).message);
+    }
+  }
+  async function deleteConversation(conversation: Conversation) {
+    if (!confirm(`删除会话“${conversation.title}”及其消息？`)) return;
+    try {
+      await api.remove("conversation", conversation.id, conversation.revision);
+      if (conversation.id === id) setParams({});
+      await refresh();
+    } catch (error) {
+      notify((error as Error).message);
+    }
+  }
   useEffect(
     () => () => {
       if (activeRun.current)
@@ -96,9 +217,14 @@ export default function Chat({ data, refresh, notify }: PageProps) {
     }
   }
   async function createConversation() {
+    const group = groupFor(selectedGroupId);
     const c = await api.save(
       "conversation",
-      newChatConversation(data, agent, knowledge, crypto.randomUUID()),
+      {
+        ...newChatConversation(data, agent, knowledge, crypto.randomUUID()),
+        groupId: group?.id,
+        groupName: group?.name,
+      },
     );
     setCreatedConversation(c);
     setParams({ conversation: c.id });
@@ -192,6 +318,63 @@ export default function Chat({ data, refresh, notify }: PageProps) {
       }
     }
   }
+  const sortedConversations = data.conversations
+    .slice()
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  function renderConversation(conversation: Conversation) {
+    return (
+      <div className="conversation-row" key={conversation.id}>
+        <button
+          type="button"
+          disabled={!!run || creating}
+          className={conversation.id === id ? "active" : ""}
+          onClick={() => setParams({ conversation: conversation.id })}
+        >
+          <MessagesSquare size={15} />
+          <span
+            ref={(element) => {
+              if (element && element.scrollWidth > element.clientWidth)
+                element.dataset.overflow = "true";
+            }}
+          >
+            {conversation.title}
+          </span>
+        </button>
+        <button
+          type="button"
+          className="conversation-move"
+          disabled={!!run || creating}
+          title="移动到项目"
+          aria-label={`移动会话“${conversation.title}”到项目`}
+          onClick={() => setMovingConversation((value) => value === conversation.id ? null : conversation.id)}
+        >
+          <FolderInput size={14} />
+        </button>
+        <button
+          type="button"
+          className="conversation-delete"
+          disabled={!!run || creating}
+          title="删除会话"
+          aria-label={`删除会话“${conversation.title}”`}
+          onClick={() => void deleteConversation(conversation)}
+        >
+          <Trash2 size={14} />
+        </button>
+        {movingConversation === conversation.id && (
+          <div className="conversation-move-menu" role="menu">
+            <button type="button" role="menuitem" onClick={() => void moveConversation(conversation)}>
+              未归入项目
+            </button>
+            {groups.map((group) => (
+              <button type="button" key={group.id} role="menuitem" onClick={() => void moveConversation(conversation, group)}>
+                {group.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="chat-layout">
       <aside className="chat-history">
@@ -209,25 +392,117 @@ export default function Chat({ data, refresh, notify }: PageProps) {
               .map((a) => ({ value: a.id, label: a.name })),
           ]}
         />
-        <button onClick={() => void create()} disabled={!!run || creating}>
+        {groups.length > 0 && (
+          <GlassSelect
+            aria-label="新会话项目"
+            icon={<FolderInput size={16} />}
+            value={selectedGroupId || ""}
+            disabled={!!run || creating}
+            onValueChange={(value) => setSelectedGroupId(value || undefined)}
+            options={[
+              { value: "", label: "新会话不归入项目" },
+              ...groups.map((group) => ({ value: group.id, label: group.name })),
+            ]}
+          />
+        )}
+        <button type="button" onClick={() => void create()} disabled={!!run || creating}>
           <Plus size={15} />
           新会话
         </button>
+        <div className="conversation-groups-toolbar">
+          <span>会话记录 / 项目</span>
+          <button type="button" className="icon-button" title="新建项目" aria-label="新建项目" onClick={() => { setNewGroupOpen(true); setGroupNameDraft(""); }}>
+            <FolderPlus size={15} />
+          </button>
+        </div>
+        {newGroupOpen && (
+          <Modal title="创建项目" onClose={() => setNewGroupOpen(false)}>
+            <form className="chat-group-modal-form" onSubmit={(event) => { event.preventDefault(); createGroup(); }}>
+              <label htmlFor="chat-project-name">项目名称</label>
+              <input id="chat-project-name" autoFocus value={groupNameDraft} placeholder="输入项目名称" onChange={(event) => setGroupNameDraft(event.target.value)} />
+              <div className="chat-group-modal-actions">
+                <button type="button" onClick={() => setNewGroupOpen(false)}>取消</button>
+                <button type="submit" className="primary" disabled={!groupNameDraft.trim()}>创建项目</button>
+              </div>
+            </form>
+          </Modal>
+        )}
         <div className="conversation-list">
-          {data.conversations
-            .slice()
-            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-            .map((c) => (
+          {groups.map((group) => {
+            const conversations = sortedConversations.filter((conversation) => conversation.groupId === group.id);
+            return (
+              <section className="conversation-group" key={group.id}>
+                <header onContextMenu={(event) => { event.preventDefault(); setContextGroupId(group.id); }}>
+                  {editingGroupId === group.id ? (
+                    <input
+                      className="conversation-group-name-input"
+                      autoFocus
+                      value={groupNameDraft}
+                      onChange={(event) => setGroupNameDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") renameGroup(group);
+                        if (event.key === "Escape") setEditingGroupId(null);
+                      }}
+                      onBlur={() => renameGroup(group)}
+                    />
+                  ) : (
+                  <button type="button" className="conversation-group-toggle" onClick={() => toggleGroup(group)}>
+                    {group.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    {group.collapsed ? <Folder size={15} /> : <FolderOpen size={15} />}
+                    <span>{group.name}</span>
+                    <small>{conversations.length}</small>
+                  </button>
+                  )}
+                  <div className="conversation-group-actions">
+                    <button
+                      type="button"
+                      className="icon-button project-more-button"
+                      title="项目操作"
+                      aria-label={`项目操作：${group.name}`}
+                      aria-expanded={contextGroupId === group.id}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setContextGroupId((value) => value === group.id ? null : group.id);
+                      }}
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                  </div>
+                  {contextGroupId === group.id && editingGroupId !== group.id && (
+                    <div className="conversation-group-context" role="menu">
+                      <button type="button" onClick={() => { setEditingGroupId(group.id); setGroupNameDraft(group.name); setContextGroupId(null); }}>重命名项目</button>
+                      <button type="button" onClick={() => { setContextGroupId(null); void deleteGroup(group); }}>删除项目</button>
+                    </div>
+                  )}
+                </header>
+                {!group.collapsed && (
+                  conversations.length ? conversations.map(renderConversation) : (
+                    <p className="conversation-group-empty">暂无会话</p>
+                  )
+                )}
+              </section>
+            );
+          })}
+          <section className="conversation-group">
+            <header>
               <button
-                disabled={!!run || creating}
-                className={c.id === id ? "active" : ""}
-                key={c.id}
-                onClick={() => setParams({ conversation: c.id })}
+                type="button"
+                className="conversation-group-toggle"
+                onClick={() => setUngroupedCollapsed((value) => !value)}
+                aria-expanded={!ungroupedCollapsed}
               >
-                <MessagesSquare size={15} />
-                <span>{c.title}</span>
+                {ungroupedCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                {ungroupedCollapsed ? <Folder size={15} /> : <FolderOpen size={15} />}
+                <span>未归入项目</span>
+                <small>{sortedConversations.filter((conversation) => !conversation.groupId).length}</small>
               </button>
-            ))}
+            </header>
+            {!ungroupedCollapsed && (
+              sortedConversations.filter((conversation) => !conversation.groupId).length
+                ? sortedConversations.filter((conversation) => !conversation.groupId).map(renderConversation)
+                : <p className="conversation-group-empty">暂无会话</p>
+            )}
+          </section>
         </div>
       </aside>
       <section className="chat-main">
