@@ -137,7 +137,9 @@ export async function publish() {
     if (artifact.platform)
       platforms[artifact.platform] = {
         signature: artifact.signature,
-        url: asset.browser_download_url,
+        // GitHub 在草稿 Release 上传阶段可能返回 untagged 临时路径；
+        // 发布后该路径会失效，更新清单必须使用稳定的 Tag 下载地址。
+        url: `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(artifact.name)}`,
       };
   }
   const manifest = {
