@@ -6,6 +6,8 @@
 
 主页源码位于 `docs/`，推送到 `master` 后由 GitHub Actions 自动部署到 GitHub Pages，也支持在 Actions 中手动运行“发布宣传主页”。仓库 Settings → Pages 的 Source 选择 **GitHub Actions** 即可启用，无需购买域名。自定义域名可在 Pages 设置中绑定，后续只需按 GitHub 提供的 DNS 记录配置即可。
 
+主页产品截图由当前 Tauri React 应用界面生成，使用匿名示例数据，不包含个人工作空间信息。更新截图时应从当前 `src/` 界面重新截取，不使用 `ui/` 下的历史原型图片。
+
 本地预览宣传主页：
 
 ```sh
