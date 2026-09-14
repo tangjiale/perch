@@ -2,7 +2,7 @@
 
 ## 宣传主页
 
-栖点宣传主页：<https://tangjiale.github.io/perch/>。主页介绍产品能力并提供最新 macOS 与 Windows 下载入口；下载信息从 Release 自带的 `latest.json` 静态清单读取，不依赖 GitHub API 访客额度，清单暂时不可用时仍可直接打开 Release 页面。
+栖点宣传主页：<https://tangjiale.github.io/perch/>。主页介绍产品能力并提供最新 macOS 与 Windows 下载入口；下载信息从 Pages 同源的 `docs/latest.json` 静态清单读取，不依赖 GitHub API 访客额度或 Release 资产跨域，清单暂时不可用时仍可直接打开 Release 页面。每次正式 Release 完成后，发布工作流会同步更新该清单。
 
 主页源码位于 `docs/`，推送到 `master` 后由 GitHub Actions 自动部署到 GitHub Pages，也支持在 Actions 中手动运行“发布宣传主页”。仓库 Settings → Pages 的 Source 选择 **GitHub Actions** 即可启用，无需购买域名。自定义域名可在 Pages 设置中绑定，后续只需按 GitHub 提供的 DNS 记录配置即可。
 

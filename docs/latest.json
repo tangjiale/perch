@@ -1,0 +1,15 @@
+{
+  "version": "0.1.14",
+  "notes": "# 栖点 v0.1.14\n\n## 问题修复\n\n- 修复：使用稳定 Tag 下载地址生成更新清单（7e7b2b8）\n\n## 工程与维护\n\n- 发布：准备栖点 0.1.14（3e5c5d0）\n",
+  "pub_date": "2026-09-13T14:15:50.874Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRR0xjSGx1REM5cDZnS3NjNFhqV2JvTTZWcmhzb3oyTm5od2xxSGVUYStkQXRhQnpPeWJXQ0JETC9QeEMxNDdnVEFuaUNqWFlpOFM4UXhuVjB2b29QTHRueU9oZkVSUGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MzA4NDg2CWZpbGU65qCW54K5LmFwcC50YXIuZ3oKLzAzZHdnVEUwdXFhS1daSUx0cG43MzFDV3VlZk5CZUlscVIwYmthREFIL3czZG5hUEsrN295OEsrdElTWnpoamdqakhVdEdZY2pYYi9nT0V2SVowRHc9PQo=",
+      "url": "https://github.com/tangjiale/perch/releases/download/v0.1.14/Perch_0.1.14_aarch64.app.tar.gz"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRR0xjSGx1REM5cHl0d2I3NU9hWjBOSnBMTDVkcWkwcGdabzJDZWY4aDNrSmcraVRhY1FxdjlMYy9oc3NNZUhMV1MzZ01zekNPS28xbUN1azdQMUVPQXJHc3ZSak0xU1EwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MzA4ODEyCWZpbGU65qCW54K5XzAuMS4xNF94NjQtc2V0dXAuZXhlCnNEZnhjM1RaWkdzRHU0NnViamlrbHgzSDhrcDZ5NkNzSFllTUVZQ1FoRDcydHBkZys5M1I1UG5FcDhDd21MNEFRbUVUK2tjbXZkOXR0a1ZlWHVDNEFBPT0K",
+      "url": "https://github.com/tangjiale/perch/releases/download/v0.1.14/Perch_0.1.14_x64-setup.exe"
+    }
+  }
+}
