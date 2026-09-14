@@ -1,5 +1,19 @@
 # 栖点 / Perch
 
+## 宣传主页
+
+栖点宣传主页：<https://tangjiale.github.io/perch/>。主页介绍产品能力并提供最新 macOS 与 Windows 下载入口；下载信息会从 GitHub Releases 自动读取，接口暂时不可用时仍可直接打开 Release 页面。
+
+主页源码位于 `docs/`，推送到 `master` 后由 GitHub Actions 自动部署到 GitHub Pages，也支持在 Actions 中手动运行“发布宣传主页”。仓库 Settings → Pages 的 Source 选择 **GitHub Actions** 即可启用，无需购买域名。自定义域名可在 Pages 设置中绑定，后续只需按 GitHub 提供的 DNS 记录配置即可。
+
+本地预览宣传主页：
+
+```sh
+python3 -m http.server 4173 --directory docs
+```
+
+然后打开 <http://127.0.0.1:4173>。修改 `docs/index.html`、`docs/styles.css` 或 `docs/main.js` 后重新刷新页面即可。
+
 ## 产品介绍
 
 栖点（Perch）是一款面向个人工作的桌面工作台，把每天要做的事、项目推进、禅道执行与 BUG、日历、邮件和常用工具放在同一处管理。它帮助你快速确认今天该做什么、事项卡在哪里，以及下一步应该打开哪个工作入口。
