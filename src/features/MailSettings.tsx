@@ -143,7 +143,7 @@ export default function MailSettings() {
       </div>
       <p className="mail-settings-note">
         <ShieldCheck size={16} />
-        使用加密连接；密码或邮箱授权码保存在系统钥匙串。
+        使用加密连接；邮箱账号、密码和授权码加密保存在本机。
       </p>
       {(error || queryError) && !editing && (
         <p className="error" role="alert">

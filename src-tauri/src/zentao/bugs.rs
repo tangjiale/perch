@@ -714,7 +714,7 @@ mod tests {
         let project = store.save("project", json!({"name":"原有项目"})).unwrap();
         let db = store.generation.join("workbench.sqlite3");
         let workspace = store.workspace_id.clone();
-        store.conn.lock().unwrap().execute_batch("DROP TABLE bugs; DELETE FROM schema_migrations WHERE version=4; PRAGMA user_version=3; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        store.conn.lock().unwrap().execute_batch("DROP TABLE provider_credentials; DROP TABLE bugs; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
         drop(store);
         let bytes = std::fs::read(db).unwrap();
         let archive = tmp.path().join("v3.zip");

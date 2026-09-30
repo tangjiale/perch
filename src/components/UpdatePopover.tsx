@@ -42,6 +42,7 @@ function errorDetail(error: unknown) {
 }
 
 export default function UpdatePopover({ version }: { version: string }) {
+  const displayVersion = import.meta.env.DEV ? "dev" : `v${version}`;
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [status, setStatus] = useState<UpdaterStatus | null>(null);
@@ -224,10 +225,10 @@ export default function UpdatePopover({ version }: { version: string }) {
         <button
           className="update-version-trigger"
           type="button"
-          aria-label={`当前版本 v${version}，${hasUpdate ? "有更新，" : ""}检查更新`}
+          aria-label={`当前版本 ${displayVersion}，${hasUpdate ? "有更新，" : ""}检查更新`}
           title="版本与更新"
         >
-          v{version}
+          {displayVersion}
           {hasUpdate && <i className="update-version-dot" aria-hidden="true" />}
         </button>
       </Popover.Trigger>
@@ -258,7 +259,7 @@ export default function UpdatePopover({ version }: { version: string }) {
           </header>
           <div className="update-popover-body">
             <div className="update-current-version">
-              <strong>v{version}</strong>
+              <strong>{displayVersion}</strong>
               <span>
                 当前版本{latest ? ` · 最新版本 v${latest.version}` : ""}
               </span>

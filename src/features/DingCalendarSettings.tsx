@@ -145,7 +145,7 @@ export default function DingCalendarSettings() {
             <label htmlFor="ding-password"><span>CalDAV 专用密码{(!state?.config.hasCredential || form.serverUrl !== state.config.serverUrl || form.username !== state.config.username) && <span className="required-mark" aria-hidden="true">*</span>}</span>
               <input id="ding-password" type="password" value={password} onChange={(event) => { dirty.current = true; setPassword(event.target.value); setMessage(""); }} autoComplete="new-password" placeholder={state?.config.hasCredential ? "已保存密码，留空保留" : "填写钉钉提供的专用密码"} aria-describedby="ding-password-help" />
             </label>
-            <p id="ding-password-help" className="ding-calendar-help">密码保存在系统钥匙串。更换服务器或用户名时，需重新输入专用密码。</p>
+            <p id="ding-password-help" className="ding-calendar-help">账号和密码加密保存在本机。更换服务器或用户名时，需重新输入专用密码。</p>
             <label className="ding-calendar-check"><input type="checkbox" checked={form.enabled} onChange={(event) => update({ enabled: event.target.checked })} />启用钉钉日历同步</label>
             <label htmlFor="ding-interval">自动同步
               <GlassSelect id="ding-interval" disabled={busy} value={String(form.syncIntervalMinutes)} options={intervals.some((item) => item.value === String(form.syncIntervalMinutes)) ? intervals : [...intervals, { value: String(form.syncIntervalMinutes), label: `每 ${form.syncIntervalMinutes} 分钟` }]} onValueChange={(value) => update({ syncIntervalMinutes: Number(value) })} />

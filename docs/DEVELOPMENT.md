@@ -77,7 +77,7 @@ ui/                       # 保留原型与截图作为视觉/行为参考
 | `task_move` | taskId、toStatus、beforeId?、afterId?、expectedRevision | 原子更新状态与顺序；失败回滚乐观 UI |
 | `task_operation_undo` | operationId、expectedRevision | 条件逆操作；已有后续修改时返回冲突 |
 | `projects_*` / `apps_*` / `categories_*` | 领域字段及 revision | CRUD、引用保护、分类迁移事务 |
-| `credential_set` / `credential_clear` | 槽 ID、提交的密钥 | 仅返回已配置状态；无通用明文读取命令 |
+| `save_provider` | 供应商配置、可选新 API Key | 配置与密钥同一 SQLite 事务保存；留空保留，明文不返回前端 |
 | `zentao_sync_start` | connectionId、scope | jobId；异步更新范围进度 |
 | `zentao_operation_prepare` / `confirm` | externalObjectId、action、draft / confirmationId | 有效期内的远端快照、变更确认与结果 |
 | `providers_*` / `models_*` / `agents_*` / `skills_*` | 配置、revision、能力 | 配置历史、连接/能力测试和引用保护 |

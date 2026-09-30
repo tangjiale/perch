@@ -18,7 +18,7 @@ pub fn validate(value: &Value, kind: &str) -> Result<(), String> {
     }
     for key in ["apiKey", "token", "password", "secret", "accessToken"] {
         if value.get(key).is_some() {
-            return Err("凭据必须通过系统钥匙串保存".into());
+            return Err("凭据必须通过专用接口加密保存".into());
         }
     }
     let name_key = if ["tasks", "bugs"].contains(&kind) {

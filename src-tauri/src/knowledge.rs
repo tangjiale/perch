@@ -161,9 +161,13 @@ pub async fn knowledge_index(
     state: State<'_, AppState>,
     knowledge_id: String,
 ) -> Result<String, String> {
-    let (snapshot, workspace) = {
+    let (snapshot, key, workspace) = {
         let s = state.store.lock().map_err(|e| e.to_string())?;
-        (s.snapshot()?, s.workspace_id.clone())
+        let snapshot = s.snapshot()?;
+        let kb = get(&snapshot, "knowledge", &knowledge_id)?;
+        let model = get(&snapshot, "models", text(&kb, "modelId"))?;
+        let key = s.provider_secret(text(&model, "providerId"))?;
+        (snapshot, key, s.workspace_id.clone())
     };
     let kb = get(&snapshot, "knowledge", &knowledge_id)?;
     let model = get(&snapshot, "models", text(&kb, "modelId"))?;
@@ -171,11 +175,6 @@ pub async fn knowledge_index(
         return Err("知识库必须绑定向量模型".into());
     }
     let provider = get(&snapshot, "providers", text(&model, "providerId"))?;
-    let key = match credential(&workspace, text(&provider, "id"))?.get_password() {
-        Ok(key) => key,
-        Err(keyring::Error::NoEntry) => String::new(),
-        Err(_) => return Err("无法读取模型凭据，请检查系统钥匙串".into()),
-    };
     let generation = uuid::Uuid::now_v7().to_string();
     let fingerprint = model_fingerprint(&provider, &model)?;
     let mut dimension = None;

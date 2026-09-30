@@ -37,7 +37,31 @@ macro_rules! commands {
  #[tauri::command] fn $delete(state:State<AppState>,id:String,revision:Option<i64>)->Result<(),String>{state.store.lock().map_err(|e|e.to_string())?.delete($kind,&id,revision)}
  )*};
 }
-commands!(save_project,delete_project,"project";save_app,delete_app,"app";save_category,delete_category,"category";save_provider,delete_provider,"provider";save_model,delete_model,"model";save_agent,delete_agent,"agent";save_knowledge,delete_knowledge,"knowledge";save_document,delete_document,"document";save_conversation,delete_conversation,"conversation";save_message,delete_message,"message");
+commands!(save_project,delete_project,"project";save_app,delete_app,"app";save_category,delete_category,"category";save_model,delete_model,"model";save_agent,delete_agent,"agent";save_knowledge,delete_knowledge,"knowledge";save_document,delete_document,"document";save_conversation,delete_conversation,"conversation";save_message,delete_message,"message");
+#[tauri::command]
+fn save_provider(
+    state: State<AppState>,
+    value: Value,
+    secret: Option<String>,
+) -> Result<Value, String> {
+    state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .save_provider_with_secret(value, secret.as_deref())
+}
+#[tauri::command]
+fn delete_provider(
+    state: State<AppState>,
+    id: String,
+    revision: Option<i64>,
+) -> Result<(), String> {
+    state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .delete("provider", &id, revision)
+}
 #[tauri::command]
 fn save_connection(state: State<AppState>, value: Value) -> Result<Value, String> {
     zentao_auth::save_existing(state, value)
@@ -186,7 +210,6 @@ pub fn run() {
             data_backup,
             storage_move,
             data_restore,
-            integrations::credential_set,
             integrations::provider_test,
             provider_models::provider_models,
             provider_models::provider_models_import,

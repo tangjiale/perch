@@ -84,19 +84,21 @@
     button("配置").click();
     await wait(() => button("保存并拉取模型"));
     fill(doc.querySelector('input[type="url"]'), "http://localhost:9000/v1");
+    fill(doc.querySelector('input[type="password"]'), "fixture-api-key");
     await new Promise((r) => setTimeout(r, 50));
     button("保存并拉取模型").click();
     button("保存并拉取模型")?.click();
     await wait(() => requests.length === 1);
     assert(
-      "保存最新配置且阻止重复提交",
+      "配置与密钥同次提交且阻止重复保存",
       requests[0].name === "save_provider" &&
-        requests[0].args.value.baseUrl === "http://localhost:9000/v1",
+        requests[0].args.value.baseUrl === "http://localhost:9000/v1" &&
+        requests[0].args.secret === "fixture-api-key",
     );
     requests[0].resolve({ ...requests[0].args.value, revision: 2 });
     await wait(() => requests.length === 2);
     assert(
-      "保存后拉取且免密服务不写密钥",
+      "保存成功后继续拉取模型目录",
       requests[1].name === "provider_models" &&
         requests[1].args.providerId === "fixture-provider",
     );

@@ -834,7 +834,7 @@ export default function Work({
       </div>
       {page === "overview" ? (
         <>
-          <div className="metrics">
+          <div className="metrics overview-metrics">
             {(Object.keys(statuses) as Status[]).map((s) => {
               const Icon = statusIcons[s];
               return (
@@ -850,17 +850,19 @@ export default function Work({
               );
             })}
           </div>
-          <section>
-            <div className="section-heading">
-              <h2>今日安排</h2>
-              <button onClick={() => navigate("/calendar")}>
-                <CalendarDays size={15} />
-                日历
-              </button>
-            </div>
-            {taskRows(todayTasks)}
-          </section>
-          <section>
+          <div className="overview-layout">
+            <section className="overview-today">
+              <div className="section-heading">
+                <h2>今日安排</h2>
+                <button onClick={() => navigate("/calendar")}>
+                  <CalendarDays size={15} />
+                  日历
+                </button>
+              </div>
+              {taskRows(todayTasks)}
+            </section>
+            <div className="overview-side">
+          <section className="overview-bugs">
             <div className="section-heading">
               <h2>BUG 修复</h2>
               <button onClick={() => navigate("/bugs")}>
@@ -899,7 +901,7 @@ export default function Work({
               </p>
             )}
           </section>
-          <section>
+          <section className="overview-apps">
             <div className="section-heading">
               <h2>常用应用</h2>
               <button onClick={() => navigate("/apps")}>
@@ -927,6 +929,8 @@ export default function Work({
               <p className="muted">暂无收藏应用</p>
             )}
           </section>
+          </div>
+          </div>
         </>
       ) : page === "calendar" ? (
         <CalendarView

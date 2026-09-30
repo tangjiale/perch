@@ -298,7 +298,7 @@ pub(super) async fn save_new(
     let connection_id = text(&connection, "id");
     let _guard = SyncGuard::acquire(&workspace, connection_id)?;
     let project_id = remote_id(&project["remoteId"])?;
-    // 日期等表单校验在访问钥匙串和网络之前进行。
+    // 日期等表单校验在访问凭据库和网络之前进行。
     payload(&value, &project_id, "validation")?;
     let key = credential(&workspace, connection_id)?
         .get_password()

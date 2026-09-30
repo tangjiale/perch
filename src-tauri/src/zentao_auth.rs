@@ -41,9 +41,6 @@ fn normalize(connection: &Value, snapshot: &Value) -> Result<Value, String> {
         if old["revision"] != connection["revision"] {
             return Err("连接已变化，请关闭弹框并重新打开".into());
         }
-        if base_url(text(old, "baseUrl"))? != base {
-            return Err("已有连接不能改为另一服务地址，请新建连接以保留项目关联".into());
-        }
     } else if connection["revision"].as_i64().is_some_and(|r| r > 0) {
         return Err("连接已删除，请重新添加".into());
     }
@@ -164,10 +161,10 @@ pub(crate) fn login_credential(
     id: &str,
 ) -> Result<crate::credential_vault::Entry, String> {
     crate::credential_vault::entry(workspace, "com.self.workbench.zentao-login", id)
-        .map_err(|_| "系统钥匙串不可用".into())
+        .map_err(|error| error.to_string())
 }
 
-// 登录密码和失败抑制状态只保存在钥匙串，绝不进入工作空间快照或备份。
+// 登录密码和失败抑制状态只进入本地加密凭据库，绝不进入工作空间快照或备份。
 #[derive(serde::Serialize, serde::Deserialize)]
 struct RememberedLogin {
     base: String,
@@ -177,7 +174,7 @@ struct RememberedLogin {
     blocked: bool,
 }
 
-// 只返回界面恢复所需的布尔信息，密码及授权策略仍以钥匙串为准。
+// 只返回界面恢复所需的布尔信息，密码及授权策略仍以加密凭据库为准。
 fn login_preferences(connection: &Value, logins: &impl Secrets) -> Result<Value, String> {
     let saved = logins.read()?;
     let login = saved
@@ -385,8 +382,8 @@ impl Secrets for crate::credential_vault::Entry {
     fn read(&self) -> Result<Option<String>, String> {
         match self.get_password() {
             Ok(secret) => Ok(Some(secret)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(_) => Err("无法读取系统钥匙串，请检查访问权限".into()),
+            Err(crate::credential_vault::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.to_string()),
         }
     }
     fn write(&self, secret: Option<&str>) -> Result<(), String> {
@@ -395,11 +392,33 @@ impl Secrets for crate::credential_vault::Entry {
                 .set_password(secret)
                 .map_err(|_| "无法保存禅道令牌".into()),
             None => match self.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Ok(()) | Err(crate::credential_vault::Error::NoEntry) => Ok(()),
                 Err(_) => Err("无法清除禅道令牌".into()),
             },
         }
     }
+}
+
+fn validate_connection_auth(
+    store: &Store,
+    connection: &Value,
+    secret: Option<&str>,
+) -> Result<(), String> {
+    let snapshot = store.snapshot()?;
+    let normalized = normalize(connection, &snapshot)?;
+    if let Some(secret) = secret {
+        validate_token(secret)?;
+    }
+    let previous = snapshot["connections"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == normalized["id"]));
+    if let Some(previous) = previous {
+        if base_url(text(previous, "baseUrl"))? != text(&normalized, "baseUrl") && secret.is_none()
+        {
+            return Err("修改服务地址后，请重新输入账号密码登录或填写新地址的访问令牌".into());
+        }
+    }
+    Ok(())
 }
 
 fn save_connection(
@@ -408,6 +427,7 @@ fn save_connection(
     secret: Option<&str>,
     secrets: &impl Secrets,
 ) -> Result<Value, String> {
+    validate_connection_auth(store, &connection, secret)?;
     let previous = secrets.read()?;
     let next = secret
         .or(previous.as_deref())
@@ -420,7 +440,7 @@ fn save_connection(
     match store.save("connection", connection) {
         Ok(saved) => Ok(saved),
         Err(error) => {
-            // SQLite 与钥匙串无法共用事务；数据库失败时恢复原凭据。
+            // SQLite 与加密凭据文件无法共用事务；数据库失败时恢复原凭据。
             if secret.is_some() && secrets.write(previous.as_deref()).is_err() {
                 return Err("连接未保存，且原令牌恢复失败；请重新登录此连接".into());
             }
@@ -557,6 +577,8 @@ fn save_with_login(
     tokens: &impl Secrets,
     logins: &impl Secrets,
 ) -> Result<Value, String> {
+    // 迁址必须显式重新认证；在任何凭据写入前检查，避免旧密码或令牌被带到新地址。
+    validate_connection_auth(store, connection, token)?;
     let previous = logins.read()?;
     let next = if remember {
         if let Some(login) = remembered {
@@ -610,7 +632,7 @@ impl Secrets for TestSecrets {
 mod tests {
     use super::*;
     use std::{
-        cell::RefCell,
+        cell::{Cell, RefCell},
         io::{Read, Write},
         net::TcpListener,
     };
@@ -735,14 +757,16 @@ mod tests {
     struct MemorySecrets {
         value: RefCell<Option<String>>,
         fail: bool,
+        writes: Cell<usize>,
     }
     impl Secrets for MemorySecrets {
         fn read(&self) -> Result<Option<String>, String> {
             Ok(self.value.borrow().clone())
         }
         fn write(&self, secret: Option<&str>) -> Result<(), String> {
+            self.writes.set(self.writes.get() + 1);
             if self.fail {
-                return Err("模拟钥匙串故障".into());
+                return Err("模拟加密凭据库故障".into());
             }
             *self.value.borrow_mut() = secret.map(str::to_string);
             Ok(())
@@ -758,6 +782,7 @@ mod tests {
         let secrets = MemorySecrets {
             value: RefCell::new(None),
             fail: false,
+            writes: Cell::new(0),
         };
         let connection = normalize(&draft(), &store.snapshot().unwrap()).unwrap();
         assert!(save_connection(&store, connection.clone(), None, &secrets).is_err());
@@ -784,6 +809,7 @@ mod tests {
         let failing = MemorySecrets {
             value: RefCell::new(None),
             fail: true,
+            writes: Cell::new(0),
         };
         let mut new = draft();
         new["id"] = json!("another");
@@ -921,6 +947,276 @@ mod tests {
         assert!(!saved.to_string().contains("fixture-password"));
     }
 
+    fn tracked_secrets() -> MemorySecrets {
+        MemorySecrets {
+            value: RefCell::new(None),
+            fail: false,
+            writes: Cell::new(0),
+        }
+    }
+
+    fn saved_account_connection(
+        store: &Store,
+        tokens: &impl Secrets,
+        logins: &impl Secrets,
+    ) -> Value {
+        let mut connection = normalize(&draft(), &store.snapshot().unwrap()).unwrap();
+        connection["authMode"] = json!("account");
+        let remembered = RememberedLogin {
+            base: text(&connection, "baseUrl").into(),
+            account: "tester".into(),
+            password: "fixture-old-password".into(),
+            allow_http: true,
+            blocked: false,
+        };
+        save_with_login(
+            store,
+            &mut connection,
+            Some("fixture-old-token"),
+            true,
+            Some(remembered),
+            tokens,
+            logins,
+        )
+        .unwrap()
+    }
+
+    fn moved_connection(store: &Store, saved: &Value) -> Value {
+        let mut changed = saved.clone();
+        changed["baseUrl"] = json!("https://moved.example.test/zentao/");
+        normalize(&changed, &store.snapshot().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn address_change_with_new_token_preserves_connection_and_work_items() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let tokens = tracked_secrets();
+        let logins = tracked_secrets();
+        let saved = saved_account_connection(&store, &tokens, &logins);
+        let project = store
+            .save(
+                "project",
+                json!({
+                    "id":"existing-project", "name":"已有项目", "source":"zentao",
+                    "connectionId":saved["id"], "remoteId":"42"
+                }),
+            )
+            .unwrap();
+        let task = store
+            .save(
+                "task",
+                json!({
+                    "id":"existing-execution", "title":"已有执行", "source":"zentao",
+                    "projectId":project["id"], "connectionId":saved["id"],
+                    "remoteId":"84", "remoteType":"execution"
+                }),
+            )
+            .unwrap();
+        let mut changed = moved_connection(&store, &saved);
+        changed["authMode"] = json!("token");
+        let updated = save_with_login(
+            &store,
+            &mut changed,
+            Some("fixture-new-token"),
+            false,
+            None,
+            &tokens,
+            &logins,
+        )
+        .unwrap();
+        assert_eq!(updated["id"], saved["id"]);
+        assert_eq!(updated["revision"], 2);
+        assert_eq!(updated["baseUrl"], "https://moved.example.test/zentao");
+        assert_eq!(updated["authMode"], "token");
+        assert_eq!(updated["rememberCredentials"], false);
+        assert_eq!(tokens.read().unwrap().as_deref(), Some("fixture-new-token"));
+        assert!(logins.read().unwrap().is_none());
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot["connections"], json!([updated]));
+        assert_eq!(snapshot["projects"], json!([project]));
+        assert_eq!(snapshot["tasks"], json!([task]));
+    }
+
+    #[test]
+    fn address_change_with_account_login_saves_only_new_login_preferences() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let tokens = tracked_secrets();
+        let logins = tracked_secrets();
+        let saved = saved_account_connection(&store, &tokens, &logins);
+        let previous_login = logins.read().unwrap();
+        let mut changed = moved_connection(&store, &saved);
+        // 即使提供了新令牌，也不能复用绑定旧地址的密码或 HTTP 许可。
+        assert!(save_with_login(
+            &store,
+            &mut changed,
+            Some("fixture-new-token"),
+            true,
+            None,
+            &tokens,
+            &logins,
+        )
+        .unwrap_err()
+        .contains("不匹配"));
+        assert_eq!(logins.read().unwrap(), previous_login);
+        assert_eq!(tokens.read().unwrap().as_deref(), Some("fixture-old-token"));
+        assert_eq!(tokens.writes.get(), 1);
+        assert_eq!(logins.writes.get(), 1);
+        let remembered = RememberedLogin {
+            base: text(&changed, "baseUrl").into(),
+            account: "tester".into(),
+            password: "fixture-new-password".into(),
+            allow_http: false,
+            blocked: false,
+        };
+        let updated = save_with_login(
+            &store,
+            &mut changed,
+            Some("fixture-new-token"),
+            true,
+            Some(remembered),
+            &tokens,
+            &logins,
+        )
+        .unwrap();
+        assert_eq!(updated["id"], saved["id"]);
+        assert_eq!(updated["baseUrl"], "https://moved.example.test/zentao");
+        assert_eq!(updated["rememberCredentials"], true);
+        let remembered: RememberedLogin =
+            serde_json::from_str(&logins.read().unwrap().unwrap()).unwrap();
+        assert_eq!(remembered.base, text(&updated, "baseUrl"));
+        assert_eq!(remembered.password, "fixture-new-password");
+        assert!(!remembered.allow_http);
+        assert_eq!(
+            login_preferences(&updated, &logins).unwrap(),
+            json!({"hasSavedPassword":true, "allowInsecureHttp":false})
+        );
+        assert_eq!(tokens.read().unwrap().as_deref(), Some("fixture-new-token"));
+        assert!(!store.snapshot().unwrap().to_string().contains("fixture-"));
+    }
+
+    #[test]
+    fn address_change_without_new_credentials_rejects_before_secret_writes() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let tokens = tracked_secrets();
+        let logins = tracked_secrets();
+        let saved = saved_account_connection(&store, &tokens, &logins);
+        let previous_login = logins.read().unwrap();
+        let mut changed = moved_connection(&store, &saved);
+        assert!(save_connection(&store, changed.clone(), None, &tokens)
+            .unwrap_err()
+            .contains("修改服务地址后"));
+        for remember in [false, true] {
+            assert!(
+                save_with_login(&store, &mut changed, None, remember, None, &tokens, &logins,)
+                    .unwrap_err()
+                    .contains("修改服务地址后")
+            );
+        }
+        assert!(save_with_login(
+            &store,
+            &mut changed,
+            Some("  "),
+            false,
+            None,
+            &tokens,
+            &logins,
+        )
+        .is_err());
+        assert_eq!(tokens.writes.get(), 1);
+        assert_eq!(logins.writes.get(), 1);
+        assert_eq!(tokens.read().unwrap().as_deref(), Some("fixture-old-token"));
+        assert_eq!(logins.read().unwrap(), previous_login);
+        assert_eq!(store.snapshot().unwrap()["connections"], json!([saved]));
+    }
+
+    #[test]
+    fn equivalent_address_preserves_existing_credentials_without_login() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let tokens = tracked_secrets();
+        let logins = tracked_secrets();
+        let saved = saved_account_connection(&store, &tokens, &logins);
+        let previous_login = logins.read().unwrap();
+        let mut changed = saved.clone();
+        changed["baseUrl"] = json!(" HTTPS://EXAMPLE.TEST:443/zentao/// ");
+        let mut changed = normalize(&changed, &store.snapshot().unwrap()).unwrap();
+        let updated =
+            save_with_login(&store, &mut changed, None, true, None, &tokens, &logins).unwrap();
+        assert_eq!(updated["baseUrl"], saved["baseUrl"]);
+        assert_eq!(tokens.read().unwrap().as_deref(), Some("fixture-old-token"));
+        assert_eq!(logins.read().unwrap(), previous_login);
+        assert_eq!(tokens.writes.get(), 1);
+    }
+
+    #[test]
+    fn address_change_conflict_and_storage_failure_preserve_old_credentials() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let tokens = tracked_secrets();
+        let logins = tracked_secrets();
+        let saved = saved_account_connection(&store, &tokens, &logins);
+        let previous_login = logins.read().unwrap();
+        let mut changed = moved_connection(&store, &saved);
+        changed["revision"] = json!(0);
+        assert!(save_with_login(
+            &store,
+            &mut changed,
+            Some("fixture-new-token"),
+            false,
+            None,
+            &tokens,
+            &logins,
+        )
+        .unwrap_err()
+        .contains("连接已变化"));
+        assert_eq!(tokens.writes.get(), 1);
+        assert_eq!(logins.writes.get(), 1);
+        assert_eq!(logins.read().unwrap(), previous_login);
+        assert_eq!(tokens.read().unwrap().as_deref(), Some("fixture-old-token"));
+        assert_eq!(
+            store.snapshot().unwrap()["connections"],
+            json!([saved.clone()])
+        );
+
+        // 模拟凭据已更新后 SQLite 拒绝提交，验证两个命名空间都恢复旧值。
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_connection_update BEFORE UPDATE ON connections \
+             BEGIN SELECT RAISE(ABORT, 'fixture storage failure'); END;",
+            )
+            .unwrap();
+        let mut changed = moved_connection(&store, &saved);
+        let remembered = RememberedLogin {
+            base: text(&changed, "baseUrl").into(),
+            account: "tester".into(),
+            password: "fixture-new-password".into(),
+            allow_http: false,
+            blocked: false,
+        };
+        assert!(save_with_login(
+            &store,
+            &mut changed,
+            Some("fixture-new-token"),
+            true,
+            Some(remembered),
+            &tokens,
+            &logins,
+        )
+        .unwrap_err()
+        .contains("fixture storage failure"));
+        assert_eq!(tokens.writes.get(), 3);
+        assert_eq!(logins.writes.get(), 3);
+        assert_eq!(tokens.read().unwrap().as_deref(), Some("fixture-old-token"));
+        assert_eq!(logins.read().unwrap(), previous_login);
+        assert_eq!(store.snapshot().unwrap()["connections"], json!([saved]));
+    }
+
     #[test]
     fn refresh_rejects_different_base_account_and_previous_failure() {
         let logins = TestSecrets::default();
@@ -945,15 +1241,16 @@ mod tests {
     }
 
     #[test]
-    fn changed_address_revision_and_secret_fields_are_rejected() {
+    fn address_changes_are_normalized_while_stale_revision_and_secrets_are_rejected() {
         let saved = json!({"id":"test-connection","name":"原连接","baseUrl":"https://example.test/zentao","apiVersion":"v1","revision":3});
         let snapshot = json!({"connections":[saved.clone()]});
         assert!(normalize(&draft(), &snapshot).is_err());
         let mut changed = saved.clone();
         changed["baseUrl"] = json!("https://another.test");
-        assert!(normalize(&changed, &snapshot)
-            .unwrap_err()
-            .contains("新建连接"));
+        assert_eq!(
+            normalize(&changed, &snapshot).unwrap()["baseUrl"],
+            "https://another.test"
+        );
         changed = saved;
         changed["password"] = json!("fixture-password");
         assert!(normalize(&changed, &snapshot).is_err());

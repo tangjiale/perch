@@ -14,8 +14,8 @@ impl Secrets for crate::credential_vault::Entry {
     fn read(&self) -> Result<Option<String>, String> {
         match self.get_password() {
             Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(_) => Err("无法读取 MCP 凭据，请检查系统钥匙串权限".into()),
+            Err(crate::credential_vault::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.to_string()),
         }
     }
     fn write(&self, value: Option<&str>) -> Result<(), String> {
@@ -24,7 +24,7 @@ impl Secrets for crate::credential_vault::Entry {
                 .set_password(value)
                 .map_err(|_| "无法保存 MCP 凭据".into()),
             None => match self.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Ok(()) | Err(crate::credential_vault::Error::NoEntry) => Ok(()),
                 Err(_) => Err("无法清除 MCP 凭据".into()),
             },
         }
@@ -37,7 +37,7 @@ fn entry(store: &Store, id: &str) -> Result<crate::credential_vault::Entry, Stri
         "com.self.workbench",
         &format!("mcp:{id}"),
     )
-    .map_err(|_| "系统钥匙串不可用".into())
+    .map_err(|error| error.to_string())
 }
 
 fn normalize(value: &Value) -> Result<Value, String> {

@@ -106,11 +106,24 @@ fn read(store: &Store) -> Result<Snapshot, String> {
         .optional()
         .map_err(|_| "读取日历配置失败")?;
     value
-        .map(|s| serde_json::from_str(&s).map_err(|_| "日历缓存格式无效".into()))
+        .map(|raw| {
+            let value = crate::credential_vault::decrypt_json(
+                &store.workspace_id,
+                "settings:dingtalk-caldav",
+                &raw,
+            )?;
+            serde_json::from_value(value).map_err(|_| "日历缓存格式无效".into())
+        })
         .unwrap_or_else(|| Ok(Snapshot::default()))
 }
 fn write(store: &Store, snapshot: &Snapshot) -> Result<(), String> {
-    store.conn.lock().map_err(|_|"日历存储不可用")?.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",rusqlite::params![KEY,serde_json::to_string(snapshot).map_err(|_|"日历缓存序列化失败")?]).map_err(|_|"保存日历缓存失败")?;
+    let value = serde_json::to_value(snapshot).map_err(|_| "日历缓存序列化失败")?;
+    let encrypted = crate::credential_vault::encrypt_json(
+        &store.workspace_id,
+        "settings:dingtalk-caldav",
+        &value,
+    )?;
+    store.conn.lock().map_err(|_|"日历存储不可用")?.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",rusqlite::params![KEY,encrypted]).map_err(|_|"保存日历缓存失败")?;
     Ok(())
 }
 fn address(value: &str) -> Result<Url, String> {
@@ -215,7 +228,7 @@ fn save_config(
     let previous = if secret_changed {
         match entry.get_password() {
             Ok(secret) => Some(secret),
-            Err(keyring::Error::NoEntry) => None,
+            Err(crate::credential_vault::Error::NoEntry) => None,
             Err(_) => return Err("无法读取原 CalDAV 凭据，未修改配置".into()),
         }
     } else {
@@ -224,13 +237,13 @@ fn save_config(
     if let Some(secret) = password {
         integrations::credential(&store.workspace_id, &credential_id(&config))?
             .set_password(&secret)
-            .map_err(|_| "无法保存 CalDAV 密码到系统钥匙串")?;
+            .map_err(|_| "无法保存 CalDAV 密码到本地加密凭据库")?;
         config.has_credential = true;
     } else if changed && old.config.has_credential {
         match integrations::credential(&store.workspace_id, &credential_id(&config))?
             .delete_credential()
         {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Ok(()) | Err(crate::credential_vault::Error::NoEntry) => {}
             Err(_) => return Err("无法清理旧 CalDAV 凭据".into()),
         }
         config.has_credential = false;
@@ -263,7 +276,10 @@ fn save_config(
                 Some(secret) => entry.set_password(&secret),
                 None => entry.delete_credential(),
             };
-            if !matches!(restored, Ok(()) | Err(keyring::Error::NoEntry)) {
+            if !matches!(
+                restored,
+                Ok(()) | Err(crate::credential_vault::Error::NoEntry)
+            ) {
                 return Err(
                     "日历配置保存失败，且无法恢复原凭据；请先停用日历同步并重新配置密码".into(),
                 );
@@ -984,6 +1000,48 @@ pub fn start(app: tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    static SYNC_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    #[test]
+    fn calendar_account_is_encrypted_and_readable_after_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let snapshot = Snapshot {
+            config: Config {
+                username: "fixture-private-caldav-account".into(),
+                server_url: "https://calendar.example.test/".into(),
+                enabled: true,
+                ..Config::default()
+            },
+            ..Snapshot::default()
+        };
+        write(&store, &snapshot).unwrap();
+        let raw: String = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT value FROM settings WHERE key=?1", [KEY], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(!raw.contains(&snapshot.config.username));
+        drop(store);
+        let reopened = Store::open_at(root.path().to_path_buf()).unwrap();
+        let restored = read(&reopened).unwrap();
+        assert_eq!(restored.config.username, snapshot.config.username);
+        assert!(restored.config.enabled);
+        // 已升级数据不接受明文回退，避免后续保存重新泄漏登录账号。
+        reopened
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE settings SET value=?1 WHERE key=?2",
+                rusqlite::params![serde_json::to_string(&snapshot).unwrap(), KEY],
+            )
+            .unwrap();
+        assert!(read(&reopened).is_err());
+    }
+
     fn event(extra: &str) -> String {
         format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:test\r\nDTSTART:20260911T080000Z\r\nSUMMARY:例会\\,讨论\r\n{extra}END:VEVENT\r\nEND:VCALENDAR\r\n")
     }
@@ -1082,13 +1140,14 @@ mod tests {
         assert!(json.get("password").is_none());
         assert!(json["config"].get("password").is_none());
     }
-    #[test]
-    fn enabled_preference_survives_save_and_reopen_without_selected_calendar() {
+    #[tokio::test]
+    async fn enabled_preference_survives_save_and_reopen_without_selected_calendar() {
+        let _guard = SYNC_TEST_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("workspace");
         let store = Store::open_at(root.clone()).unwrap();
         let mut snapshot = Snapshot::default();
-        // 仅模拟已有凭据的元数据，普通保存不读写真实钥匙串。
+        // 仅模拟已有凭据的元数据，普通保存不读写真实凭据库。
         snapshot.config.server_url = "https://calendar.example/".into();
         snapshot.config.username = "fixture".into();
         snapshot.config.has_credential = true;
@@ -1109,6 +1168,7 @@ mod tests {
     }
     #[tokio::test]
     async fn failed_sync_preserves_cache_and_stale_generation_never_reads_credentials() {
+        let _guard = SYNC_TEST_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open_at(dir.path().join("workspace")).unwrap();
         let mut cached = Snapshot::default();
@@ -1123,7 +1183,7 @@ mod tests {
             .err()
             .unwrap();
         assert!(stale.contains("已切换"));
-        // 缺少用户名会在读取钥匙串之前失败；验证失败路径仍保留旧日程。
+        // 缺少用户名会在读取凭据之前失败；验证失败路径仍保留旧日程。
         let error = sync_inner(&state, None).await.err().unwrap();
         assert!(error.contains("用户名"));
         let after = read(&state.store.lock().unwrap()).unwrap();
@@ -1204,8 +1264,9 @@ mod tests {
         assert!(requests[2].contains("name=\"VEVENT\""));
         assert!(requests[3].contains("name=\"VTODO\""));
     }
-    #[test]
-    fn todo_selection_change_clears_only_todos_and_rejects_cross_origin() {
+    #[tokio::test]
+    async fn todo_selection_change_clears_only_todos_and_rejects_cross_origin() {
+        let _guard = SYNC_TEST_LOCK.lock().await;
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open_at(dir.path().join("workspace")).unwrap();
         let mut old = Snapshot::default();

@@ -163,13 +163,13 @@ pub(crate) fn credential(
     id: &str,
 ) -> Result<crate::credential_vault::Entry, String> {
     crate::credential_vault::entry(workspace, "com.self.workbench", id)
-        .map_err(|_| "系统钥匙串不可用".into())
+        .map_err(|error| error.to_string())
 }
 pub(crate) fn read_secret(workspace: &str, id: &str) -> Result<String, String> {
     match credential(workspace, id)?.get_password() {
         Ok(secret) => Ok(secret),
-        Err(keyring::Error::NoEntry) => Ok(String::new()),
-        Err(_) => Err("无法读取系统钥匙串，请检查访问权限后重试".into()),
+        Err(crate::credential_vault::Error::NoEntry) => Ok(String::new()),
+        Err(error) => Err(error.to_string()),
     }
 }
 pub(crate) fn http() -> Result<reqwest::Client, String> {
@@ -196,20 +196,6 @@ pub(crate) fn endpoint(base: &str, suffix: &str) -> Result<url::Url, String> {
     url.set_query(None);
     url.set_fragment(None);
     Ok(url)
-}
-#[tauri::command]
-pub fn credential_set(state: State<AppState>, id: String, secret: String) -> Result<(), String> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    let entry = credential(&store.workspace_id, &id)?;
-    if secret.is_empty() {
-        entry
-            .delete_credential()
-            .map_err(|_| "凭据清除失败".to_string())
-    } else {
-        entry
-            .set_password(&secret)
-            .map_err(|_| "凭据写入失败".to_string())
-    }
 }
 pub(crate) fn auth(
     request: reqwest::RequestBuilder,
@@ -287,12 +273,13 @@ pub async fn provider_test(
     provider_id: String,
     model_id: Option<String>,
 ) -> Result<String, String> {
-    let (snapshot, workspace) = {
+    let (snapshot, key) = {
         let s = state.store.lock().map_err(|e| e.to_string())?;
-        (s.snapshot()?, s.workspace_id.clone())
+        let snapshot = s.snapshot()?;
+        let key = s.provider_secret(&provider_id)?;
+        (snapshot, key)
     };
     let provider = get(&snapshot, "providers", &provider_id)?;
-    let key = read_secret(&workspace, &provider_id)?;
     if let Some(id) = model_id {
         let model = get(&snapshot, "models", &id)?;
         if text(&model, "providerId") != provider_id {
@@ -408,9 +395,9 @@ async fn chat_run(
     channel: &tauri::ipc::Channel<Value>,
     token: &CancellationToken,
 ) -> Result<(), String> {
-    let (snapshot, workspace) = {
+    let snapshot = {
         let s = state.store.lock().map_err(|e| e.to_string())?;
-        (s.snapshot()?, s.workspace_id.clone())
+        s.snapshot()?
     };
     let conversation = get(&snapshot, "conversations", conversation_id)?;
     if snapshot["messages"].as_array().is_some_and(|rows| {
@@ -441,7 +428,11 @@ async fn chat_run(
     } else {
         live_provider
     };
-    let key = read_secret(&workspace, text(&provider, "id"))?;
+    let key = state
+        .store
+        .lock()
+        .map_err(|e| e.to_string())?
+        .provider_secret(text(&provider, "id"))?;
     let mut system = text(&agent, "systemPrompt").to_string();
     if let Some(skills) = agent["skills"].as_array() {
         for skill in skills {
@@ -480,7 +471,11 @@ async fn chat_run(
         if text(&kb, "modelFingerprint") != crate::knowledge::model_fingerprint(&kp, &km)? {
             return Err("知识库模型配置已变化，请重新索引".into());
         }
-        let kk = read_secret(&workspace, text(&kp, "id"))?;
+        let kk = state
+            .store
+            .lock()
+            .map_err(|e| e.to_string())?
+            .provider_secret(text(&kp, "id"))?;
         let vectors = embed(&kp, &km, &kk, vec![content.into()]).await?;
         let q = &vectors[0];
         let docs = snapshot["documents"].as_array().ok_or("文档列表无效")?;

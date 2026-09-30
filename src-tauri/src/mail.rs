@@ -95,17 +95,34 @@ fn parse<T: serde::de::DeserializeOwned>(s: String) -> Result<T> {
 fn sql<T>(v: rusqlite::Result<T>) -> Result<T> {
     v.map_err(|_| "邮件数据库操作失败".into())
 }
-fn account(conn: &Connection, id: &str) -> Result<Account> {
-    parse(sql(conn.query_row(
-        "SELECT data FROM mail_accounts WHERE id=?1",
-        [id],
-        |r| r.get(0),
-    ))?)
+fn decode_account(workspace: &str, id: &str, raw: &str) -> Result<Account> {
+    let value =
+        crate::credential_vault::decrypt_json(workspace, &format!("mail_accounts:{id}"), raw)?;
+    let account: Account = serde_json::from_value(value).map_err(|_| "邮箱配置格式无效")?;
+    if account.id != id {
+        return Err("邮箱配置与记录不匹配".into());
+    }
+    Ok(account)
+}
+fn encode_account(workspace: &str, account: &Account) -> Result<String> {
+    crate::credential_vault::encrypt_json(
+        workspace,
+        &format!("mail_accounts:{}", account.id),
+        &json!(account),
+    )
+}
+fn account(store: &Store, conn: &Connection, id: &str) -> Result<Account> {
+    let raw = sql(
+        conn.query_row("SELECT data FROM mail_accounts WHERE id=?1", [id], |r| {
+            r.get::<_, String>(0)
+        }),
+    )?;
+    decode_account(&store.workspace_id, id, &raw)
 }
 fn context(app: &AppHandle, id: &str) -> Result<Context> {
     db(app, |s, c| {
         Ok(Context {
-            account: account(c, id)?,
+            account: account(s, c, id)?,
             workspace: s.workspace_id.clone(),
             generation: s.generation.clone(),
         })
@@ -115,7 +132,7 @@ fn verify(s: &Store, c: &Connection, ctx: &Context) -> Result<()> {
     if s.workspace_id != ctx.workspace || s.generation != ctx.generation {
         return Err("工作空间已切换，请重新操作".into());
     }
-    if account(c, &ctx.account.id)?.revision != ctx.account.revision {
+    if account(s, c, &ctx.account.id)?.revision != ctx.account.revision {
         return Err("邮箱配置已变更，请重新操作".into());
     }
     Ok(())
@@ -177,12 +194,15 @@ fn restore_secret(workspace: &str, id: &str, old: &str) {
 
 #[tauri::command]
 pub fn mail_accounts(app: AppHandle) -> Result<Vec<Account>> {
-    db(&app, |_, c| list_accounts(c))
+    db(&app, list_accounts)
 }
-fn list_accounts(c: &Connection) -> Result<Vec<Account>> {
-    let mut q = sql(c.prepare("SELECT data FROM mail_accounts ORDER BY rowid"))?;
-    let rows = sql(q.query_map([], |r| r.get::<_, String>(0)))?
-        .map(|r| parse(sql(r)?))
+fn list_accounts(store: &Store, c: &mut Connection) -> Result<Vec<Account>> {
+    let mut q = sql(c.prepare("SELECT id,data FROM mail_accounts ORDER BY rowid"))?;
+    let rows = sql(q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))))?
+        .map(|r| {
+            let (id, raw) = sql(r)?;
+            decode_account(&store.workspace_id, &id, &raw)
+        })
         .collect();
     rows
 }
@@ -203,7 +223,7 @@ pub fn mail_account_save(
                 |r| r.get::<_, String>(0),
             )
             .optional())?
-        .map(parse::<Account>)
+        .map(|raw| decode_account(&store.workspace_id, &account.id, &raw))
         .transpose()?;
         if old.as_ref().map(|a| a.revision).unwrap_or(0) != account.revision {
             return Err("邮箱已被修改，请刷新后重试".into());
@@ -226,7 +246,7 @@ pub fn mail_account_save(
                 for (id, previous) in &changed {
                     restore_secret(&store.workspace_id, id, previous);
                 }
-                return Err("无法保存邮箱凭据到系统钥匙串".into());
+                return Err("无法保存邮箱凭据到本地加密凭据库".into());
             }
             changed.push((id, previous));
         }
@@ -248,7 +268,7 @@ pub fn mail_account_save(
         }
         let result = (|| {
             let tx = sql(c.transaction())?;
-            sql(tx.execute("INSERT INTO mail_accounts VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,data=excluded.data",params![account.id,account.revision,json!(account).to_string()]))?;
+            sql(tx.execute("INSERT INTO mail_accounts VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,data=excluded.data",params![account.id,account.revision,encode_account(&store.workspace_id, &account)?]))?;
             if reset_cache {
                 sql(tx.execute(
                     "DELETE FROM mail_messages WHERE account_id=?1",
@@ -274,7 +294,7 @@ pub fn mail_account_save(
 #[tauri::command]
 pub fn mail_account_delete(app: AppHandle, account_id: String, revision: i64) -> Result<()> {
     db(&app, |s, c| {
-        if account(c, &account_id)?.revision != revision {
+        if account(s, c, &account_id)?.revision != revision {
             return Err("邮箱配置已修改，请刷新后重试".into());
         }
         let _guard = Busy::acquire(format!("{}:{}", s.workspace_id, account_id))?;
@@ -810,7 +830,7 @@ fn sync_inner(app: &AppHandle, account_id: &str, folder: Option<&str>) -> Result
             updated.last_error = None;
             sql(tx.execute(
                 "UPDATE mail_accounts SET data=?2 WHERE id=?1",
-                params![account_id, json!(updated).to_string()],
+                params![account_id, encode_account(&ctx.workspace, &updated)?],
             ))?;
             sql(tx.commit())?;
             Ok(())
@@ -833,7 +853,7 @@ fn sync_inner(app: &AppHandle, account_id: &str, folder: Option<&str>) -> Result
             updated.last_error = Some(e.clone());
             sql(c.execute(
                 "UPDATE mail_accounts SET data=?2 WHERE id=?1",
-                params![account_id, json!(updated).to_string()],
+                params![account_id, encode_account(&ctx.workspace, &updated)?],
             ))?;
             Ok(())
         });
@@ -958,7 +978,7 @@ pub fn mail_attachment_save(
 fn message_context(app: &AppHandle, id: &str) -> Result<(Context, Value, u32)> {
     db(app, |s, c| {
         let (m, _, v) = cached(c, id)?;
-        let a = account(c, m["accountId"].as_str().ok_or("邮件账户无效")?)?;
+        let a = account(s, c, m["accountId"].as_str().ok_or("邮件账户无效")?)?;
         Ok((
             Context {
                 account: a,
@@ -1078,7 +1098,7 @@ pub fn mail_draft_save(app: AppHandle, mut draft: Draft) -> Result<Draft> {
     validate_draft(&draft)?;
     db(&app, |s, c| {
         let _guard = Busy::acquire(format!("{}:{}", s.workspace_id, draft.account_id))?;
-        account(c, &draft.account_id)?;
+        account(s, c, &draft.account_id)?;
         let old: Option<(String, String)> = sql(c
             .query_row(
                 "SELECT account_id,state FROM mail_drafts WHERE id=?1",
@@ -1181,10 +1201,10 @@ pub async fn mail_send(app: AppHandle, draft_id: String) -> Result<Value> {
 }
 #[tauri::command]
 pub fn mail_unread(app: AppHandle) -> Result<Value> {
-    db(&app, |_, c| {
+    db(&app, |s, c| {
         let mut accounts = Vec::new();
         let mut total = 0_i64;
-        for a in list_accounts(c)?.into_iter().filter(|a| a.enabled) {
+        for a in list_accounts(s, c)?.into_iter().filter(|a| a.enabled) {
             let unread:i64=sql(c.query_row("SELECT COALESCE(SUM(json_extract(data,'$.unread')),0) FROM mail_folders WHERE account_id=?1 AND json_extract(data,'$.kind')='inbox'",[&a.id],|r|r.get(0)))?;
             total += unread;
             accounts.push(json!({"accountId":a.id,"unread":unread}));
@@ -1204,7 +1224,7 @@ pub fn start_background(app: AppHandle) {
                 Ok((
                     s.workspace_id.clone(),
                     s.generation.clone(),
-                    list_accounts(c)?,
+                    list_accounts(s, c)?,
                 ))
             });
             if let Ok((workspace, generation, accounts)) = accounts {
@@ -1453,13 +1473,26 @@ mod tests {
             assert_eq!(
                 c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                4
+                6
             );
             c.execute(
                 "INSERT INTO mail_accounts VALUES(?1,?2,?3)",
-                params![a.id, a.revision, json!(a).to_string()],
+                params![
+                    a.id,
+                    a.revision,
+                    encode_account(&store.workspace_id, &a).unwrap()
+                ],
             )
             .unwrap();
+            let raw: String = c
+                .query_row("SELECT data FROM mail_accounts WHERE id=?1", [&a.id], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert!(!raw.contains(&a.username));
+            assert!(!raw.contains(&a.smtp_username));
+            assert_eq!(account(&store, &c, &a.id).unwrap().username, a.username);
+            assert!(decode_account(&store.workspace_id, "another-account", &raw).is_err());
             c.execute(
                 "INSERT INTO mail_drafts VALUES(?1,?2,'sent',?3)",
                 params![d.id, a.id, json!(d).to_string()],
@@ -1475,7 +1508,7 @@ mod tests {
         store.backup(&archive).unwrap();
         let restored = Store::restore_to(&archive, &tmp.path().join("restored")).unwrap();
         let c = restored.conn.lock().unwrap();
-        assert_eq!(account(&c, &a.id).unwrap().name, "测试邮箱");
+        assert_eq!(account(&restored, &c, &a.id).unwrap().name, "测试邮箱");
         assert_eq!(
             c.query_row("SELECT raw FROM mail_messages WHERE id='m'", [], |r| r
                 .get::<_, Vec<u8>>(0))

@@ -188,7 +188,7 @@ export default function McpSettings({
                   </td>
                   <td>
                     {connection.hasSecrets ? (
-                      <span title="凭据存储在系统钥匙串">
+                      <span title="凭据加密保存在本机">
                         <ShieldCheck size={14} /> 已配置
                       </span>
                     ) : (

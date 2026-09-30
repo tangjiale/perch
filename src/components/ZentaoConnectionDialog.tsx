@@ -5,6 +5,14 @@ import type { Connection } from "../lib/types";
 import GlassSelect from "./GlassSelect";
 import Modal from "./Modal";
 
+function normalizedServiceAddress(value: string) {
+  try {
+    return new URL(value.trim()).toString().replace(/\/+$/, "");
+  } catch {
+    return value.trim().replace(/\/+$/, "");
+  }
+}
+
 export default function ZentaoConnectionDialog({
   connection,
   workspaceId,
@@ -58,8 +66,14 @@ export default function ZentaoConnectionDialog({
   }
   const needsHttpConsent = mode === "account" && insecure;
   const locked = busy || saved || preferencesLoading;
+  const addressChanged =
+    existing &&
+    normalizedServiceAddress(draft.baseUrl) !==
+      normalizedServiceAddress(connection.baseUrl);
+  const requiresToken = !connection.hasCredential || addressChanged;
   const retainingPassword =
     hasSavedPassword &&
+    !addressChanged &&
     !editingPassword &&
     account.trim() === (connection.loginAccount || "");
   const loggingIn = mode === "account" && !retainingPassword;
@@ -165,6 +179,7 @@ export default function ZentaoConnectionDialog({
             mode === "account"
               ? rememberCredentials
               : !!connection.rememberCredentials &&
+                !addressChanged &&
                 !token.trim() &&
                 rememberCredentials,
         });
@@ -209,15 +224,29 @@ export default function ZentaoConnectionDialog({
         <input
           required
           type="url"
-          readOnly={existing}
           disabled={locked}
           placeholder="https://zentao.example.com"
           value={draft.baseUrl}
           onChange={(event) => {
-            setDraft({ ...draft, baseUrl: event.target.value });
-            setAllowInsecureHttp(false);
+            const baseUrl = event.target.value;
+            if (
+              normalizedServiceAddress(baseUrl) !==
+              normalizedServiceAddress(draft.baseUrl)
+            ) {
+              // 更换发送目标后，必须由用户为当前地址重新输入凭据并确认 HTTP 许可。
+              setPassword("");
+              setToken("");
+              setAllowInsecureHttp(false);
+            }
+            setDraft({ ...draft, baseUrl });
+            setError("");
           }}
         />
+        {addressChanged && (
+          <small className="muted">
+            地址已修改，请重新输入密码登录或填写访问令牌。已有项目与执行关联会保留，适用于当前禅道实例迁址。
+          </small>
+        )}
       </label>
       <label>
         API 版本
@@ -310,6 +339,7 @@ export default function ZentaoConnectionDialog({
                 </button>
               )}
               {hasSavedPassword &&
+                !addressChanged &&
                 editingPassword &&
                 account.trim() === connection.loginAccount && (
                   <button
@@ -335,9 +365,9 @@ export default function ZentaoConnectionDialog({
               placeholder={
                 preferencesLoading
                   ? "正在检查已保存凭据…"
-                  : editingPassword
-                    ? "请输入密码"
-                    : ""
+                  : retainingPassword
+                    ? ""
+                    : "请输入密码"
               }
               value={retainingPassword ? "********" : password}
               onChange={(event) => setPassword(event.target.value)}
@@ -348,19 +378,25 @@ export default function ZentaoConnectionDialog({
         <label>
           <span className="inline-field">访问令牌 {helpButton}</span>
           <input
-            required={!existing && !saved}
+            required={requiresToken && !saved}
             type="password"
             aria-label="禅道访问令牌"
             disabled={locked}
             autoComplete="off"
-            placeholder={existing ? "留空保留已有令牌" : "请输入访问令牌"}
+            placeholder={
+              addressChanged
+                ? "请输入新地址的访问令牌"
+                : connection.hasCredential
+                  ? "留空保留已有令牌"
+                  : "请输入访问令牌"
+            }
             value={token}
             onChange={(event) => setToken(event.target.value)}
           />
         </label>
       )}
       {(mode === "account" ||
-        (connection.rememberCredentials && !token.trim())) && (
+        (connection.rememberCredentials && !addressChanged && !token.trim())) && (
         <div>
           <label className="check-label">
             <input
@@ -372,17 +408,19 @@ export default function ZentaoConnectionDialog({
             记住登录凭据，令牌失效后自动重新登录
           </label>
           <p className="muted">
-            账号密码仅保存在系统钥匙串。平时使用已保存的令牌；认证失效时最多自动登录一次，失败后暂停并提示处理。
+            账号密码加密保存在本机。平时使用已保存的令牌；认证失效时最多自动登录一次，失败后暂停并提示处理。
             {mode === "token" &&
               " 已保存的登录凭据会保留；取消勾选并保存可清除。"}
           </p>
         </div>
       )}
-      {mode === "token" && token.trim() && connection.rememberCredentials && (
-        <p className="notice">
-          改用手动令牌后，将停用自动登录并清除已保存的登录凭据。
-        </p>
-      )}
+      {mode === "token" &&
+        (token.trim() || addressChanged) &&
+        connection.rememberCredentials && (
+          <p className="notice">
+            改用手动令牌后，将停用自动登录并清除已保存的登录凭据。
+          </p>
+        )}
       {needsHttpConsent && (
         <label className="check-label">
           <input
@@ -400,8 +438,13 @@ export default function ZentaoConnectionDialog({
         <div className="notice">
           账号登录通过禅道官方账号接口获取令牌，并非网页单点登录（SSO）。 公司
           SSO 账号若没有禅道密码，请使用访问令牌。
-          令牌保存在系统钥匙串。未勾选“记住登录凭据”时，密码仅用于本次登录；勾选后可在认证失效时自动重新登录。
+          令牌加密保存在本机。未勾选“记住登录凭据”时，密码仅用于本次登录；勾选后加密保存，可在认证失效时自动重新登录。
         </div>
+      )}
+      {existing && !connection.hasCredential && (
+        <p className="notice">
+          此连接尚未保存本地凭据，请重新输入密码或访问令牌。旧版本钥匙串中的凭据不会自动读取。
+        </p>
       )}
       {error && (
         <p className="error" role="alert">

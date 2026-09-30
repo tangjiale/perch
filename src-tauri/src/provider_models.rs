@@ -1,5 +1,5 @@
 use crate::{
-    integrations::{auth, checked, endpoint, get, http, read_secret, text},
+    integrations::{auth, checked, endpoint, get, http, text},
     storage::Store,
     AppState,
 };
@@ -210,13 +210,13 @@ pub async fn provider_models(
     state: State<'_, AppState>,
     provider_id: String,
 ) -> Result<ModelCatalog, String> {
-    let (provider, catalog) = {
+    let (provider, catalog, key) = {
         let store = state.store.lock().map_err(|_| "工作空间不可用")?;
         let provider = get(&store.snapshot()?, "providers", &provider_id)?;
         let catalog = context(&store, &provider)?;
-        (provider, catalog)
+        let key = store.provider_secret(&provider_id)?;
+        (provider, catalog, key)
     };
-    let key = read_secret(&catalog.workspace_id, &catalog.provider_id)?;
     let models = fetch_models(&provider, &key).await?;
     let store = state.store.lock().map_err(|_| "工作空间不可用")?;
     validate_context(&store, &catalog)?;

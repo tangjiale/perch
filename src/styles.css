@@ -773,6 +773,149 @@ html .task-card.task-is-closed .tag:not(.expired) {
 .overview-app-description {
   font-size: 12px;
 }
+
+/* 总览页保持首屏可扫描：主任务区与辅助摘要区并列。 */
+.overview-metrics {
+  min-height: 76px;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+}
+.overview-metrics button {
+  padding: 0 20px;
+}
+.overview-metrics strong {
+  font-size: 30px;
+  margin-top: 5px;
+}
+.overview-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.overview-layout > section,
+.overview-side > section {
+  min-width: 0;
+}
+.overview-layout section {
+  margin-bottom: 0;
+}
+.overview-side {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.overview-layout .section-heading {
+  margin-bottom: 10px;
+}
+.overview-layout .section-heading h2 {
+  font-size: 18px;
+}
+.overview-layout .table-wrap {
+  border-top: 1px solid var(--line);
+}
+.overview-layout th {
+  padding: 10px 12px;
+  height: 40px;
+  box-sizing: border-box;
+}
+.overview-layout td {
+  padding: 10px 12px;
+  height: 60px;
+  box-sizing: border-box;
+}
+.overview-layout td small {
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overview-bugs {
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.overview-bugs > .muted {
+  margin: 0 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overview-bugs .metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.overview-bugs .metrics button,
+.overview-bugs .metrics button:first-child {
+  min-height: 64px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+}
+.overview-bugs .metrics button:nth-child(2n) {
+  border-left: 0;
+}
+.overview-bugs .metrics button:nth-child(n + 3) {
+  border-top: 0;
+}
+.overview-bugs .metrics strong {
+  font-size: 24px;
+  margin-top: 3px;
+}
+.overview-app-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.app-card.overview-app {
+  grid-template-columns: 32px minmax(0, 1fr) 14px;
+  gap: 8px;
+  min-height: 64px;
+  padding: 9px 10px;
+}
+.app-card.overview-app .app-logo {
+  width: 32px;
+  height: 32px;
+}
+.overview-app-description {
+  white-space: nowrap;
+}
+
+@media (max-width: 1199px) {
+  .overview-layout {
+    grid-template-columns: minmax(0, 1.4fr) minmax(250px, 0.9fr);
+    gap: 16px;
+  }
+  .overview-app-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 899px) {
+  .overview-layout {
+    grid-template-columns: 1fr;
+  }
+  .overview-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+  .overview-bugs {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+  .overview-app-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 559px) {
+  .overview-side {
+    grid-template-columns: 1fr;
+  }
+  .overview-metrics button {
+    padding: 0 10px;
+  }
+}
 .favorite {
   color: #aa803c !important;
 }

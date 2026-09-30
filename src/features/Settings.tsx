@@ -148,10 +148,12 @@ export default function Settings({
     setProviderBusy(true);
     setError("");
     try {
-      const p = await api.save("provider", provider!);
-      // 保存后立即接收 revision；密钥保存或刷新失败时重试不会重复创建供应商。
+      const p = await command<Provider>("save_provider", {
+        value: provider!,
+        secret: secret || null,
+      });
+      // 配置与新密钥已在同一数据库事务提交；立即接收 revision，避免重试重复创建。
       setProvider(p);
-      if (secret) await command("credential_set", { id: p.id, secret });
       setSecret("");
       try {
         await refresh();
@@ -540,7 +542,7 @@ export default function Settings({
             <section>
               <h2>备份与恢复</h2>
               <p className="muted">
-                备份包含数据库与文档原件，不包含系统钥匙串中的凭据。
+                备份包含数据库、加密的模型 API Key 与文档原件，不包含本机主密钥及登录密码。恢复加密配置需要保留原本机主密钥。
               </p>
               <div className="actions">
                 <button
@@ -595,7 +597,7 @@ export default function Settings({
         {tab === "about" && (
           <section>
             <h2>栖点 · Perch</h2>
-            <p>版本 {info.version}</p>
+            <p>版本 {import.meta.env.DEV ? "dev" : info.version}</p>
             <p>Tauri · React · SQLite</p>
             <p className="muted">个人任务、项目、日历与 AI 工作空间</p>
           </section>
@@ -695,7 +697,8 @@ export default function Settings({
               </label>
               <p className="muted">
                 拉取前会保存当前配置；API Key
-                留空可保留原密钥，本地免密服务可直接留空。
+                留空可保留原密钥，本地免密服务可直接留空。密钥加密保存在本地数据库中，重启后无需重复输入；备份仅包含密文，不包含本机主密钥。
+                旧版本已存于系统钥匙串的模型密钥不会自动读取，升级后需重新输入一次。
               </p>
               {error && (
                 <p className="error" role="alert">

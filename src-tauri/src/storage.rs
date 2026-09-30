@@ -12,6 +12,9 @@ use std::{
 
 const DEFAULT_DATA_DIR: &str = ".perch";
 const LEGACY_DATA_DIR: &str = ".self-workbanch";
+const ENCRYPTION_CHECK_KEY: &str = "credential-encryption-check";
+const ENCRYPTION_CHECK_PURPOSE: &str = "settings:credential-encryption-check";
+const ENCRYPTION_CLEANUP_KEY: &str = "credential-encryption-cleanup-pending";
 
 pub struct Store {
     pub root: PathBuf,
@@ -42,6 +45,173 @@ fn atomic_json(path: &Path, value: &Value) -> Result<(), String> {
     fs::rename(temporary, path).map_err(|e| e.to_string())
 }
 
+fn verify_encryption_key(conn: &Connection, workspace: &str) -> Result<(), String> {
+    let raw: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key=?1",
+            [ENCRYPTION_CHECK_KEY],
+            |row| row.get(0),
+        )
+        .map_err(|_| "工作空间缺少加密校验信息，未修改数据")?;
+    let check = crate::credential_vault::decrypt_json(workspace, ENCRYPTION_CHECK_PURPOSE, &raw)
+        .map_err(|_| "本机加密密钥缺失、损坏或与工作空间不匹配，无法打开或恢复该工作空间")?;
+    if check != json!({"version":1,"workspaceId":workspace}) {
+        return Err("工作空间加密校验失败，未修改数据".into());
+    }
+    Ok(())
+}
+
+fn migrate_encrypted_credentials(conn: &mut Connection, workspace: &str) -> Result<(), String> {
+    let sql = include_str!("../migrations/006_encrypted_credentials.sql");
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute_batch(sql).map_err(|e| e.to_string())?;
+    let providers = {
+        let mut statement = tx
+            .prepare("SELECT provider_id,secret FROM provider_credentials")
+            .map_err(|e| e.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+    for (id, secret) in providers {
+        let encrypted =
+            crate::credential_vault::encrypt(workspace, &format!("provider:{id}"), &secret)?;
+        tx.execute(
+            "UPDATE provider_credentials SET secret=?1 WHERE provider_id=?2",
+            params![encrypted, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    for (table, id_column, purpose, filter) in [
+        ("connections", "id", "connections", ""),
+        ("mail_accounts", "id", "mail_accounts", ""),
+        (
+            "entity_history",
+            "entity_id",
+            "connections",
+            " WHERE entity_type='connections'",
+        ),
+    ] {
+        let rows = {
+            let mut statement = tx
+                .prepare(&format!(
+                    "SELECT rowid,{id_column},data FROM {table}{filter}"
+                ))
+                .map_err(|e| e.to_string())?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?
+        };
+        for (rowid, id, raw) in rows {
+            let value =
+                serde_json::from_str(&raw).map_err(|_| "旧版凭据配置格式无效，未执行迁移")?;
+            let encrypted = crate::credential_vault::encrypt_json(
+                workspace,
+                &format!("{purpose}:{id}"),
+                &value,
+            )?;
+            tx.execute(
+                &format!("UPDATE {table} SET data=?1 WHERE rowid=?2"),
+                params![encrypted, rowid],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    let calendar: Option<String> = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key='dingtalk-caldav'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if let Some(raw) = calendar {
+        let value = serde_json::from_str(&raw).map_err(|_| "旧版日历配置格式无效，未执行迁移")?;
+        let encrypted =
+            crate::credential_vault::encrypt_json(workspace, "settings:dingtalk-caldav", &value)?;
+        tx.execute(
+            "UPDATE settings SET value=?1 WHERE key='dingtalk-caldav'",
+            [encrypted],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    let check = crate::credential_vault::encrypt_json(
+        workspace,
+        ENCRYPTION_CHECK_PURPOSE,
+        &json!({"version":1,"workspaceId":workspace}),
+    )?;
+    tx.execute(
+        "INSERT INTO settings(key,value) VALUES(?1,?2)",
+        params![ENCRYPTION_CHECK_KEY, check],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO schema_migrations VALUES(6,?1,?2)",
+        params![
+            format!("{:x}", Sha256::digest(sql.as_bytes())),
+            chrono::Utc::now().timestamp_millis()
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute_batch("PRAGMA user_version=6")
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn checkpoint(conn: &Connection) -> Result<(), String> {
+    let busy: i64 = conn
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+        .map_err(|_| "无法清理旧版凭据日志，请关闭其他数据库连接后重试")?;
+    if busy != 0 {
+        return Err("旧版凭据日志仍被占用，请关闭其他数据库连接后重试".into());
+    }
+    Ok(())
+}
+
+fn finish_encryption_cleanup(conn: &Connection) -> Result<(), String> {
+    let pending: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE key=?1)",
+            [ENCRYPTION_CLEANUP_KEY],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if pending {
+        // 事务提交之后清理旧页及 WAL；保留标记，以便中断后继续完成物理清理。
+        checkpoint(conn)?;
+        conn.execute_batch("VACUUM")
+            .map_err(|_| "无法清理旧版凭据页面，请重启应用后重试")?;
+        checkpoint(conn)?;
+        conn.execute(
+            "DELETE FROM settings WHERE key=?1",
+            [ENCRYPTION_CLEANUP_KEY],
+        )
+        .map_err(|e| e.to_string())?;
+        checkpoint(conn)?;
+    }
+    Ok(())
+}
+
+fn decode_entity(workspace: &str, table: &str, id: &str, raw: &str) -> Result<Value, String> {
+    if table == "connections" {
+        crate::credential_vault::decrypt_json(workspace, &format!("connections:{id}"), raw)
+    } else {
+        serde_json::from_str(raw).map_err(|e| e.to_string())
+    }
+}
+
 impl Store {
     pub fn restore_to(archive: &Path, target: &Path) -> Result<Self, String> {
         if target.exists()
@@ -59,7 +229,7 @@ impl Store {
             serde_json::from_reader(&mut entry).map_err(|e| e.to_string())?
         };
         if manifest["formatVersion"] != json!(1)
-            || !matches!(manifest["schemaVersion"].as_i64(), Some(1..=4))
+            || !matches!(manifest["schemaVersion"].as_i64(), Some(1..=6))
         {
             return Err("不支持的备份版本".into());
         }
@@ -137,6 +307,16 @@ impl Store {
         {
             return Err("备份数据库关联校验失败".into());
         }
+        let version: i64 = db
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        if version > 6 {
+            return Err("该数据库由更新版本创建，请升级应用".into());
+        }
+        if version >= 6 {
+            // 先确认本机仍有匹配的密钥，失败时不发布新的工作空间定位。
+            verify_encryption_key(&db, workspace)?;
+        }
         drop(db);
         atomic_json(
             &target.join("current.json"),
@@ -199,11 +379,71 @@ impl Store {
         self.save_table(entity_table(kind)?, value)
     }
 
+    /// 模型供应商密钥经认证加密后保存，不混入前端快照。
+    pub fn provider_secret(&self, provider_id: &str) -> Result<String, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let encrypted: Option<String> = conn
+            .query_row(
+                "SELECT secret FROM provider_credentials WHERE provider_id=?1",
+                [provider_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        encrypted
+            .map(|secret| {
+                crate::credential_vault::decrypt(
+                    &self.workspace_id,
+                    &format!("provider:{provider_id}"),
+                    &secret,
+                )
+            })
+            .transpose()
+            .map(Option::unwrap_or_default)
+    }
+
+    /// 供应商配置与新密钥在同一 SQLite 事务内提交；None 表示保留已有密钥。
+    pub fn save_provider_with_secret(
+        &self,
+        value: Value,
+        secret: Option<&str>,
+    ) -> Result<Value, String> {
+        if secret.is_some_and(|value| value.len() > 64 * 1024) {
+            return Err("API Key 过长".into());
+        }
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let output = Self::save_in_transaction(&tx, &self.workspace_id, "providers", value, false)?;
+        if let Some(secret) = secret {
+            let provider_id = text(&output, "id");
+            if secret.is_empty() {
+                tx.execute(
+                    "DELETE FROM provider_credentials WHERE provider_id=?1",
+                    [provider_id],
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                tx.execute(
+                    "INSERT INTO provider_credentials(provider_id,secret,updated_at_ms) VALUES(?1,?2,?3) \
+                     ON CONFLICT(provider_id) DO UPDATE SET secret=excluded.secret,updated_at_ms=excluded.updated_at_ms",
+                    params![provider_id, crate::credential_vault::encrypt(
+                        &self.workspace_id,
+                        &format!("provider:{provider_id}"),
+                        secret,
+                    )?, chrono::Utc::now().timestamp_millis()],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(output)
+    }
+
     /// 远端写入前使用同一落库规则校验，事务回滚，不发布草稿。
     pub fn validate_save(&self, kind: &str, value: Value) -> Result<(), String> {
         let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
-        Self::save_in_transaction(&tx, entity_table(kind)?, value, false)?;
+        Self::save_in_transaction(&tx, &self.workspace_id, entity_table(kind)?, value, false)?;
         tx.rollback().map_err(|e| e.to_string())
     }
 
@@ -268,11 +508,17 @@ impl Store {
             if text(&value, "connectionId") != id {
                 return Err("BUG 连接范围不一致".into());
             }
-            output.push(Self::save_in_transaction(&tx, "bugs", value, true)?);
+            output.push(Self::save_in_transaction(
+                &tx,
+                &self.workspace_id,
+                "bugs",
+                value,
+                true,
+            )?);
         }
         let mut latest = connection.clone();
         latest["lastBugSync"] = json!(chrono::Utc::now().timestamp_millis());
-        Self::save_in_transaction(&tx, "connections", latest, true)?;
+        Self::save_in_transaction(&tx, &self.workspace_id, "connections", latest, true)?;
         tx.commit().map_err(|e| e.to_string())?;
         Ok(output)
     }
@@ -333,6 +579,7 @@ impl Store {
         for (kind, value) in changes {
             output.push(Self::save_in_transaction(
                 &tx,
+                &self.workspace_id,
                 entity_table(kind)?,
                 value,
                 trusted_remote,
@@ -407,7 +654,7 @@ impl Store {
                 )
                 .map_err(|e| e.to_string())?;
             if !exists {
-                Self::save_in_transaction(&tx, "agents", agent, false)?;
+                Self::save_in_transaction(&tx, &self.workspace_id, "agents", agent, false)?;
             }
         }
         tx.execute(
@@ -489,11 +736,11 @@ impl Store {
         fs::create_dir_all(root.join("backups")).map_err(|e| e.to_string())?;
         let mut conn =
             Connection::open(generation.join("workbench.sqlite3")).map_err(|e| e.to_string())?;
-        conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;").map_err(|e|e.to_string())?;
+        conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON; PRAGMA temp_store=MEMORY;").map_err(|e|e.to_string())?;
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if version > 4 {
+        if version > 6 {
             return Err("该数据库由更新版本创建，请升级应用".into());
         }
         if version == 0 {
@@ -546,7 +793,7 @@ impl Store {
                 let mut value: Value = serde_json::from_str(&row).map_err(|e| e.to_string())?;
                 if value.get("dueDate").is_some() {
                     crate::data::migrate_task_end(&mut value);
-                    Self::save_in_transaction(&tx, "tasks", value, true)?;
+                    Self::save_in_transaction(&tx, &workspace_id, "tasks", value, true)?;
                 }
             }
             tx.execute(
@@ -577,6 +824,27 @@ impl Store {
                 .map_err(|e| e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;
         }
+        if version < 5 {
+            let sql = include_str!("../migrations/005_provider_credentials.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(5,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=5")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
+        if version < 6 {
+            migrate_encrypted_credentials(&mut conn, &workspace_id)?;
+        }
+        verify_encryption_key(&conn, &workspace_id)?;
+        finish_encryption_cleanup(&conn)?;
         let integrity: String = conn
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
@@ -632,17 +900,15 @@ impl Store {
             ("connections", "connections"),
         ] {
             let mut stmt = conn
-                .prepare(&format!("SELECT data FROM {table} ORDER BY rowid"))
+                .prepare(&format!("SELECT id,data FROM {table} ORDER BY rowid"))
                 .map_err(|e| e.to_string())?;
             let rows = stmt
-                .query_map([], |r| r.get::<_, String>(0))
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
                 .map_err(|e| e.to_string())?;
             let mut values = vec![];
             for row in rows {
-                values.push(
-                    serde_json::from_str::<Value>(&row.map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?,
-                );
+                let (id, raw) = row.map_err(|e| e.to_string())?;
+                values.push(decode_entity(&self.workspace_id, table, &id, &raw)?);
             }
             output[key] = json!(values);
         }
@@ -652,13 +918,14 @@ impl Store {
     fn save_table(&self, table: &str, value: Value) -> Result<Value, String> {
         let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
-        let output = Self::save_in_transaction(&tx, table, value, false)?;
+        let output = Self::save_in_transaction(&tx, &self.workspace_id, table, value, false)?;
         tx.commit().map_err(|e| e.to_string())?;
         Ok(output)
     }
 
     fn save_in_transaction(
         tx: &rusqlite::Transaction<'_>,
+        workspace: &str,
         table: &str,
         mut value: Value,
         trusted_remote: bool,
@@ -714,7 +981,7 @@ impl Store {
             if value.get("revision").and_then(Value::as_i64) != Some(*revision) {
                 return Err("数据已被修改，请刷新后重试".into());
             }
-            let old: Value = serde_json::from_str(old).map_err(|e| e.to_string())?;
+            let old = decode_entity(workspace, table, &id, old)?;
             if !trusted_remote
                 && text(&old, "source") == "zentao"
                 && (text(&value, "source") != "zentao"
@@ -788,11 +1055,16 @@ impl Store {
                 Value::Null
             };
         }
+        let stored_data = if table == "connections" {
+            crate::credential_vault::encrypt_json(workspace, &format!("connections:{id}"), &value)?
+        } else {
+            value.to_string()
+        };
         let mut columns = vec!["id".to_string(), "revision".to_string(), "data".to_string()];
         let mut vals = vec![
             rusqlite::types::Value::Text(id.clone()),
             rusqlite::types::Value::Integer(revision),
-            rusqlite::types::Value::Text(value.to_string()),
+            rusqlite::types::Value::Text(stored_data.clone()),
         ];
         let fields: &[(&str, &str)] = match table {
             "bugs" => &[
@@ -899,7 +1171,7 @@ impl Store {
         }
         tx.execute(
             "INSERT INTO entity_history VALUES(?1,?2,?3,?4,?5)",
-            params![table, id, revision, value.to_string(), now],
+            params![table, id, revision, stored_data, now],
         )
         .map_err(|e| e.to_string())?;
         Ok(value)
@@ -958,7 +1230,7 @@ impl Store {
         }
         zip.start_file("manifest.json", options)
             .map_err(|e| e.to_string())?;
-        zip.write_all(json!({"formatVersion":1,"schemaVersion":4,"workspaceId":self.workspace_id,"files":manifest}).to_string().as_bytes()).map_err(|e|e.to_string())?;
+        zip.write_all(json!({"formatVersion":1,"schemaVersion":6,"workspaceId":self.workspace_id,"files":manifest}).to_string().as_bytes()).map_err(|e|e.to_string())?;
         zip.finish()
             .map_err(|e| e.to_string())?
             .sync_all()
@@ -1082,6 +1354,315 @@ fn entity_table(kind: &str) -> Result<&'static str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn legacy_credentials_workspace(root: &Path) -> (String, PathBuf) {
+        let workspace = uuid::Uuid::now_v7().to_string();
+        let generation_id = uuid::Uuid::now_v7().to_string();
+        let generation = root
+            .join("workspaces")
+            .join(&workspace)
+            .join("generations")
+            .join(&generation_id);
+        fs::create_dir_all(&generation).unwrap();
+        atomic_json(
+            &root.join("current.json"),
+            &json!({"workspaceId":workspace,"generationId":generation_id}),
+        )
+        .unwrap();
+        let database = generation.join("workbench.sqlite3");
+        let conn = Connection::open(&database).unwrap();
+        for sql in [
+            include_str!("../migrations/001_initial.sql"),
+            include_str!("../migrations/002_mail.sql"),
+            include_str!("../migrations/003_task_end.sql"),
+            include_str!("../migrations/004_bugs.sql"),
+            include_str!("../migrations/005_provider_credentials.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute_batch("PRAGMA user_version=5").unwrap();
+        conn.execute(
+            "INSERT INTO providers VALUES('model','模型',1,?1)",
+            [json!({"id":"model","name":"模型","revision":1}).to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO provider_credentials VALUES('model','fixture-model-api-key',1)",
+            [],
+        )
+        .unwrap();
+        let connection = json!({"id":"zentao","name":"禅道","revision":2,"loginAccount":"fixture-zentao-account","authMode":"account","rememberCredentials":true,"enabled":true,"hasCredential":true});
+        conn.execute(
+            "INSERT INTO connections VALUES('zentao','禅道',2,?1)",
+            [connection.to_string()],
+        )
+        .unwrap();
+        let mut history = connection;
+        history["loginAccount"] = json!("fixture-historical-account");
+        history["revision"] = json!(1);
+        conn.execute(
+            "INSERT INTO entity_history VALUES('connections','zentao',1,?1,1)",
+            [history.to_string()],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO mail_accounts VALUES('mail',1,?1)", [json!({"id":"mail","revision":1,"username":"fixture-imap-account","smtpUsername":"fixture-smtp-account","hasImapCredential":true,"hasSmtpCredential":true}).to_string()]).unwrap();
+        conn.execute("INSERT INTO settings VALUES('dingtalk-caldav',?1)", [json!({"config":{"username":"fixture-caldav-account","enabled":true,"hasCredential":true},"events":[]}).to_string()]).unwrap();
+        conn.execute(
+            "INSERT INTO settings VALUES('mcp.connection.test',?1)",
+            [json!({"id":"test","hasSecrets":true,"enabled":true}).to_string()],
+        )
+        .unwrap();
+        drop(conn);
+        (workspace, database)
+    }
+
+    fn assert_fixture_credentials_absent(bytes: &[u8]) {
+        for marker in [
+            "fixture-model-api-key",
+            "fixture-zentao-account",
+            "fixture-historical-account",
+            "fixture-imap-account",
+            "fixture-smtp-account",
+            "fixture-caldav-account",
+        ] {
+            assert!(
+                !bytes
+                    .windows(marker.len())
+                    .any(|window| window == marker.as_bytes()),
+                "未清理凭据明文：{marker}"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_six_encrypts_existing_credentials_and_cleans_database_and_wal() {
+        let root = tempfile::tempdir().unwrap();
+        let (workspace, database) = legacy_credentials_workspace(root.path());
+        assert!(fs::read(&database)
+            .unwrap()
+            .windows(21)
+            .any(|window| window == b"fixture-model-api-key"));
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let connection = store.snapshot().unwrap()["connections"][0].clone();
+        assert_eq!(connection["loginAccount"], "fixture-zentao-account");
+        assert_eq!(connection["revision"], 2);
+        assert_eq!(connection["authMode"], "account");
+        assert_eq!(connection["rememberCredentials"], true);
+        assert_eq!(connection["enabled"], true);
+        assert_eq!(connection["hasCredential"], false);
+        assert_eq!(
+            store.provider_secret("model").unwrap(),
+            "fixture-model-api-key"
+        );
+        {
+            let conn = store.conn.lock().unwrap();
+            let history: String = conn.query_row("SELECT data FROM entity_history WHERE entity_type='connections' AND entity_id='zentao'", [], |row| row.get(0)).unwrap();
+            let history =
+                crate::credential_vault::decrypt_json(&workspace, "connections:zentao", &history)
+                    .unwrap();
+            assert_eq!(history["loginAccount"], "fixture-historical-account");
+            assert_eq!(history["revision"], 1);
+            let mail: String = conn
+                .query_row(
+                    "SELECT data FROM mail_accounts WHERE id='mail'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let mail =
+                crate::credential_vault::decrypt_json(&workspace, "mail_accounts:mail", &mail)
+                    .unwrap();
+            assert_eq!(mail["username"], "fixture-imap-account");
+            assert_eq!(mail["smtpUsername"], "fixture-smtp-account");
+            assert_eq!(mail["hasImapCredential"], false);
+            assert_eq!(mail["hasSmtpCredential"], false);
+            let calendar: String = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key='dingtalk-caldav'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let calendar = crate::credential_vault::decrypt_json(
+                &workspace,
+                "settings:dingtalk-caldav",
+                &calendar,
+            )
+            .unwrap();
+            assert_eq!(calendar["config"]["username"], "fixture-caldav-account");
+            assert_eq!(calendar["config"]["enabled"], true);
+            assert_eq!(calendar["config"]["hasCredential"], false);
+            let mcp: String = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key='mcp.connection.test'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&mcp).unwrap()["hasSecrets"],
+                false
+            );
+            assert_eq!(
+                conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                6
+            );
+        }
+        assert_fixture_credentials_absent(&fs::read(&database).unwrap());
+        let wal = database.with_file_name("workbench.sqlite3-wal");
+        if wal.exists() {
+            assert_fixture_credentials_absent(&fs::read(&wal).unwrap());
+        }
+        drop(store);
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        assert_eq!(
+            store.provider_secret("model").unwrap(),
+            "fixture-model-api-key"
+        );
+        let mut updated = connection;
+        updated["loginAccount"] = json!("fixture-new-account");
+        let updated = store.save("connection", updated).unwrap();
+        assert_eq!(updated["revision"], 3);
+        assert_eq!(store.snapshot().unwrap()["connections"][0], updated);
+        let history: String = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT data FROM entity_history WHERE entity_type='connections' AND revision=3",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!history.contains("fixture-new-account"));
+        assert_eq!(
+            crate::credential_vault::decrypt_json(&workspace, "connections:zentao", &history)
+                .unwrap(),
+            updated
+        );
+    }
+
+    #[test]
+    fn encrypted_records_reject_ciphertext_replacement_and_plaintext_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        for id in ["one", "two"] {
+            store
+                .save(
+                    "connection",
+                    json!({"id":id,"name":id,"loginAccount":format!("account-{id}")}),
+                )
+                .unwrap();
+            store
+                .save_provider_with_secret(
+                    json!({"id":id,"name":id}),
+                    Some(&format!("api-key-{id}")),
+                )
+                .unwrap();
+        }
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute("UPDATE connections SET data=(SELECT data FROM connections WHERE id='one') WHERE id='two'", []).unwrap();
+            conn.execute("UPDATE provider_credentials SET secret=(SELECT secret FROM provider_credentials WHERE provider_id='one') WHERE provider_id='two'", []).unwrap();
+        }
+        assert!(store.snapshot().is_err());
+        assert!(store.provider_secret("two").is_err());
+        assert_eq!(store.provider_secret("one").unwrap(), "api-key-one");
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE connections SET data=?1 WHERE id='two'",
+                [json!({"id":"two","name":"two","revision":1}).to_string()],
+            )
+            .unwrap();
+        assert!(store.snapshot().is_err());
+    }
+
+    #[test]
+    fn encrypted_backup_contains_no_secrets_or_key_and_requires_matching_local_key() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let (workspace, _) = legacy_credentials_workspace(&source);
+        let store = Store::open_at(source.clone()).unwrap();
+        let archive = root.path().join("backup.zip");
+        store.backup(&archive).unwrap();
+        let mut zip = zip::ZipArchive::new(File::open(&archive).unwrap()).unwrap();
+        assert_eq!(zip.len(), 2);
+        for index in 0..zip.len() {
+            let mut entry = zip.by_index(index).unwrap();
+            assert!(["workbench.sqlite3", "manifest.json"].contains(&entry.name()));
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+            assert_fixture_credentials_absent(&bytes);
+        }
+        drop(zip);
+        let restored = Store::restore_to(&archive, &root.path().join("restored")).unwrap();
+        assert_eq!(
+            restored.provider_secret("model").unwrap(),
+            "fixture-model-api-key"
+        );
+        drop(restored);
+        drop(store);
+        let key = crate::credential_vault::test_key_path(&workspace);
+        let held = key.with_extension("held");
+        fs::rename(&key, &held).unwrap();
+        assert!(Store::open_at(source.clone()).is_err());
+        assert!(!key.exists(), "缺失密钥时禁止创建替代密钥");
+        let target = root.path().join("missing-key-restore");
+        assert!(Store::restore_to(&archive, &target).is_err());
+        assert!(!target.join("current.json").exists());
+        assert!(!key.exists());
+        fs::rename(held, key).unwrap();
+        assert_eq!(
+            Store::open_at(source)
+                .unwrap()
+                .provider_secret("model")
+                .unwrap(),
+            "fixture-model-api-key"
+        );
+    }
+
+    #[test]
+    fn provider_metadata_and_encrypted_secret_rollback_together() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let provider = store
+            .save_provider_with_secret(json!({"name":"原配置"}), Some("original-key"))
+            .unwrap();
+        store.conn.lock().unwrap().execute_batch("CREATE TEMP TRIGGER refuse_credential_change BEFORE UPDATE ON provider_credentials BEGIN SELECT RAISE(ABORT, 'fixture refusal'); END;").unwrap();
+        let mut changed = provider.clone();
+        changed["name"] = json!("未提交配置");
+        assert!(store
+            .save_provider_with_secret(changed, Some("replacement-key"))
+            .is_err());
+        assert_eq!(
+            store.provider_secret(text(&provider, "id")).unwrap(),
+            "original-key"
+        );
+        assert_eq!(store.snapshot().unwrap()["providers"][0], provider);
+        assert_eq!(
+            store
+                .conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM entity_history WHERE entity_type='providers'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert!(!store
+            .snapshot()
+            .unwrap()
+            .to_string()
+            .contains("original-key"));
+    }
+
     #[test]
     fn remote_preflight_validates_revision_without_publishing_changes() {
         let root = tempfile::tempdir().unwrap();
@@ -1201,7 +1782,7 @@ mod tests {
         }
         {
             let conn = store.conn.lock().unwrap();
-            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE bugs; DELETE FROM schema_migrations WHERE version>=3; PRAGMA user_version=2;").unwrap();
+            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE bugs; DROP TABLE provider_credentials; DELETE FROM schema_migrations WHERE version>=3; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); PRAGMA user_version=2;").unwrap();
             for (mut value, old) in saved.into_iter().zip(values) {
                 if let Some(due) = old.get("dueDate") {
                     value["dueDate"] = due.clone();
@@ -1266,6 +1847,68 @@ mod tests {
         let reopened = Store::open_at(root.path().to_path_buf()).unwrap();
         assert_eq!(reopened.snapshot().unwrap()["tasks"][0]["status"], "done");
     }
+
+    #[test]
+    fn provider_secret_persists_without_snapshot_leak_and_follows_backup() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("data");
+        let archive = sandbox.path().join("provider-backup.zip");
+        let store = Store::open_at(root.clone()).unwrap();
+        let provider = store
+            .save_provider_with_secret(
+                json!({
+                    "id":"provider-local-secret",
+                    "name":"测试供应商",
+                    "baseUrl":"https://example.com/v1",
+                    "protocol":"openai-responses",
+                    "enabled":true
+                }),
+                Some("fixture-api-key"),
+            )
+            .unwrap();
+        assert_eq!(
+            store.provider_secret(text(&provider, "id")).unwrap(),
+            "fixture-api-key"
+        );
+        assert!(!store
+            .snapshot()
+            .unwrap()
+            .to_string()
+            .contains("fixture-api-key"));
+        let history: String = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT data FROM entity_history WHERE entity_type='providers' AND entity_id=?1",
+                [text(&provider, "id")],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!history.contains("fixture-api-key"));
+        let mut changed = provider.clone();
+        changed["name"] = json!("修改后仍保留密钥");
+        let changed = store.save_provider_with_secret(changed, None).unwrap();
+        assert_eq!(changed["revision"], 2);
+        assert_eq!(
+            store.provider_secret(text(&provider, "id")).unwrap(),
+            "fixture-api-key"
+        );
+        store.backup(&archive).unwrap();
+        drop(store);
+
+        let reopened = Store::open_at(root).unwrap();
+        assert_eq!(
+            reopened.provider_secret(text(&provider, "id")).unwrap(),
+            "fixture-api-key"
+        );
+        let restored = Store::restore_to(&archive, &sandbox.path().join("restored")).unwrap();
+        assert_eq!(
+            restored.provider_secret(text(&provider, "id")).unwrap(),
+            "fixture-api-key"
+        );
+    }
+
     #[test]
     fn restores_legacy_backup_versions_and_migrates_deadline() {
         for version in [1, 2] {
@@ -1303,7 +1946,7 @@ mod tests {
                     .unwrap()
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                4
+                6
             );
         }
     }
@@ -1521,7 +2164,10 @@ mod tests {
             "dataRoot": legacy,
             "workspaceId": "01a07c49-45ee-7810-9256-f0f6148f33cf"
         });
-        fs::write(legacy.join("bootstrap.json"), serde_json::to_vec(&bootstrap).unwrap())
+        fs::write(
+            legacy.join("bootstrap.json"),
+            serde_json::to_vec(&bootstrap).unwrap(),
+        )
         .unwrap();
         migrate_legacy_default(&legacy, &default).unwrap();
         assert!(!legacy.exists());

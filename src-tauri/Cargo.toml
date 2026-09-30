@@ -1,6 +1,6 @@
 [package]
 name = "perch"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2021"
 
 [lib]
@@ -29,7 +29,8 @@ dirs = "6"
 fs2 = "0.4"
 walkdir = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-keyring = { version = "3", features = ["apple-native", "windows-native"] }
+ring = "0.17"
+libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
