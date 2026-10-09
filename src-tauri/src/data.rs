@@ -43,11 +43,9 @@ pub fn validate(value: &Value, kind: &str) -> Result<(), String> {
         if start.is_some() && optional(value, "scheduleDate").is_some() {
             return Err("带时间排期与全天日期不能同时设置".into());
         }
-        for key in ["scheduleDate"] {
-            if let Some(date) = optional(value, key) {
-                if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
-                    return Err("日期格式必须为 YYYY-MM-DD".into());
-                }
+        if let Some(date) = optional(value, "scheduleDate") {
+            if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
+                return Err("日期格式必须为 YYYY-MM-DD".into());
             }
         }
     }
