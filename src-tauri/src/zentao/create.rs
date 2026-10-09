@@ -39,130 +39,6 @@ fn payload(value: &Value, project: &str, account: &str) -> Result<Value, String>
     )
 }
 
-// 只展示业务字段校验，禁止直接回显 HTML、堆栈、认证字段或完整服务端响应。
-fn validation_details(value: &Value) -> Option<String> {
-    let fields = [
-        ("name", "执行名称"),
-        ("code", "执行代号"),
-        ("project", "所属项目"),
-        ("begin", "计划开始日期"),
-        ("end", "计划结束日期"),
-        ("days", "可用工作日"),
-        ("products", "关联产品"),
-        ("plans", "关联计划"),
-        ("PM", "执行负责人"),
-        ("lifetime", "执行周期"),
-        ("acl", "访问控制"),
-    ];
-    let mut details = vec![];
-    for (field, label) in fields {
-        if let Some(object) = value.as_object() {
-            for (key, message) in object {
-                if key != field && !key.starts_with(&format!("{field}[")) {
-                    continue;
-                }
-                let messages = message
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_else(|| vec![message.clone()]);
-                for message in messages.iter().take(3) {
-                    if let Some(message) = message.as_str() {
-                        let lower = message.to_lowercase();
-                        if message.chars().count() > 300
-                            || message.contains(['<', '>'])
-                            || [
-                                "token",
-                                "password",
-                                "secret",
-                                "authorization",
-                                "cookie",
-                                "sql",
-                                "stack trace",
-                                "http://",
-                                "https://",
-                                "密码",
-                                "令牌",
-                                "密钥",
-                            ]
-                            .iter()
-                            .any(|word| lower.contains(word))
-                        {
-                            continue;
-                        }
-                        let clean: String = message.chars().filter(|c| !c.is_control()).collect();
-                        if !clean.trim().is_empty() {
-                            details.push(format!("{label}：{}", clean.trim()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if !details.is_empty() {
-        return Some(details.into_iter().take(8).collect::<Vec<_>>().join("；"));
-    }
-    None
-}
-fn response_validation(value: &Value) -> Option<String> {
-    for candidate in [value, &value["message"], &value["errors"], &value["error"]] {
-        if let Some(details) = validation_details(candidate) {
-            return Some(details);
-        }
-        if let Some(raw) = candidate.as_str().filter(|raw| raw.len() <= 8192) {
-            if let Ok(parsed) = serde_json::from_str::<Value>(raw) {
-                if let Some(details) = validation_details(&parsed) {
-                    return Some(details);
-                }
-            }
-        }
-    }
-    None
-}
-async fn body(response: reqwest::Response) -> Result<Value, String> {
-    let status = response.status().as_u16();
-    // 400/422 保留字段错误；其他状态沿用认证/权限处理，绝不输出原始错误正文。
-    let response = if matches!(status, 400 | 422) {
-        response
-    } else {
-        checked_zentao(response).await?
-    };
-    let mut stream = response.bytes_stream();
-    let mut bytes = vec![];
-    let limit = if matches!(status, 400 | 422) {
-        64 * 1024
-    } else {
-        4 * 1024 * 1024
-    };
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| "禅道响应读取失败，请同步核对创建结果")?;
-        if bytes.len() + chunk.len() > limit {
-            return Err("禅道响应过大，请同步核对创建结果".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    let parsed = serde_json::from_slice::<Value>(&bytes);
-    if matches!(status, 400 | 422) {
-        let details = parsed
-            .as_ref()
-            .ok()
-            .and_then(response_validation)
-            .unwrap_or_else(|| {
-                "服务器未返回可安全展示的字段校验信息，请在禅道查看创建规则或联系管理员核对该请求"
-                    .into()
-            });
-        return Err(format!("禅道未接受创建请求（HTTP {status}）。{details}。这不是连接失效提示；请先在禅道核对是否已创建，确认未创建后重新打开新建窗口并调整表单。"));
-    }
-    let result = parsed.map_err(|_| "禅道响应无效，请同步核对创建结果")?;
-    if result["status"] == "fail" || result["result"] == "fail" {
-        let details = response_validation(&result)
-            .unwrap_or_else(|| "服务器未提供可安全展示的字段信息".into());
-        return Err(format!(
-            "禅道创建被拒绝：{details}。请先在禅道核对结果，勿重复提交。"
-        ));
-    }
-    Ok(result)
-}
-
 fn validate_project_dates(request: &Value, project: &Value) -> Result<(), String> {
     let date = |value: &Value, field: &str| {
         chrono::NaiveDate::parse_from_str(text(value, field), "%Y-%m-%d").ok()
@@ -193,7 +69,7 @@ impl Adapter<'_> {
         let mut url = endpoint(&self.base, "executions")?;
         url.query_pairs_mut().append_pair("project", &project);
         // POST 不参与自动续登/重放；调用前的账号与项目 GET 已完成身份验证。
-        body(
+        validation::body(
             self.client
                 .post(url)
                 .header("Token", self.token()?)
@@ -201,13 +77,15 @@ impl Adapter<'_> {
                 .send()
                 .await
                 .map_err(|_| "禅道创建结果未知，请先同步核对，勿重新新建相同执行")?,
+            "创建",
         )
         .await
     }
     async fn create_project(&self, id: &str) -> Result<Value, String> {
-        let project = body(
+        let project = validation::body(
             self.read(endpoint(&self.base, &format!("projects/{id}"))?)
                 .await?,
+            "读取",
         )
         .await?;
         if remote_id(&project["id"]).ok().as_deref() != Some(id) {
@@ -420,20 +298,23 @@ mod tests {
     #[test]
     fn creation_errors_expose_fields_without_response_secrets() {
         let error = json!({"error":400,"message":{"name":["名称已经存在"],"end":"不能晚于项目结束日期","token":"private-value"}});
-        let details = response_validation(&error).unwrap();
+        let details = validation::response_validation(&error).unwrap();
         assert!(details.contains("执行名称：名称已经存在"));
         assert!(details.contains("计划结束日期"));
         assert!(!details.contains("private-value"));
-        assert!(response_validation(&json!({"message":"<html>private-value</html>"})).is_none());
-        assert!(response_validation(
+        assert!(
+            validation::response_validation(&json!({"message":"<html>private-value</html>"}))
+                .is_none()
+        );
+        assert!(validation::response_validation(
             &json!({"message":{"name":"SQL private-value","code":"token=private-value"}})
         )
         .is_none());
-        assert!(
-            response_validation(&json!({"message":"{\"begin\":[\"开始日期不合法\"]}"}))
-                .unwrap()
-                .contains("开始日期不合法")
-        );
+        assert!(validation::response_validation(
+            &json!({"message":"{\"begin\":[\"开始日期不合法\"]}"})
+        )
+        .unwrap()
+        .contains("开始日期不合法"));
     }
     #[test]
     fn creation_dates_use_remote_project_inclusive_bounds() {

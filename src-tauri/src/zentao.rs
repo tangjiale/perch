@@ -6,8 +6,10 @@ mod board;
 pub mod bugs;
 mod create;
 mod description;
+mod edit;
 mod execution_context;
 pub mod media;
+mod validation;
 
 const PAGE_SIZE: usize = 100;
 const MAX_PAGES: usize = 1_000;
@@ -671,7 +673,12 @@ fn apply_execution_result(
     patch: &Value,
 ) -> Result<(), String> {
     for (field, expected) in patch.as_object().ok_or("无效执行修改")? {
-        if !description::field_matches(base, field, &result[field], expected) {
+        let matches = if field == "days" {
+            edit::workdays_match(&result[field], expected)
+        } else {
+            description::field_matches(base, field, &result[field], expected)
+        };
+        if !matches {
             return Err("禅道已处理请求，但返回内容与修改不一致，请重新同步核对".into());
         }
     }
@@ -711,7 +718,8 @@ impl Adapter<'_> {
     async fn execution_assignment(&self, id: &str) -> Result<Value, String> {
         let mut url = endpoint(&self.base, &format!("executions/{id}"))?;
         url.query_pairs_mut().append_pair("fields", "actions");
-        self.execution_response(self.read(url).await?, id).await
+        self.execution_response(self.read(url).await?, id, "读取")
+            .await
     }
 
     async fn execution_request(&self, id: &str, patch: Option<&Value>) -> Result<Value, String> {
@@ -727,26 +735,17 @@ impl Adapter<'_> {
         } else {
             self.read(url).await?
         };
-        self.execution_response(response, id).await
+        self.execution_response(response, id, if patch.is_some() { "修改" } else { "读取" })
+            .await
     }
 
     async fn execution_response(
         &self,
         response: reqwest::Response,
         id: &str,
+        operation: &str,
     ) -> Result<Value, String> {
-        let response = checked_zentao(response).await?;
-        let mut stream = response.bytes_stream();
-        let mut bytes = vec![];
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|_| "禅道响应读取失败；若为保存操作，请先同步核对结果")?;
-            if bytes.len() + chunk.len() > 4 * 1024 * 1024 {
-                return Err("禅道响应过大，请同步核对结果".into());
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        let body: Value =
-            serde_json::from_slice(&bytes).map_err(|_| "禅道响应无效，请同步核对结果")?;
+        let body = validation::body(response, operation).await?;
         if remote_id(&body["id"]).ok().as_deref() != Some(id) {
             return Err("禅道未返回有效执行结果，请同步核对，修改未保存到本地".into());
         }
@@ -801,7 +800,7 @@ pub async fn save_task(state: State<'_, AppState>, mut value: Value) -> Result<V
     };
     let connection_id = text(&old, "connectionId");
     let _guard = SyncGuard::acquire(&workspace, connection_id)?;
-    let patch = execution_patch(&old, &value)?;
+    let mut patch = execution_patch(&old, &value)?;
     if !patch.as_object().unwrap().is_empty() {
         if connection["enabled"] == false {
             return Err("该禅道连接已停用，无法同步修改".into());
@@ -826,6 +825,7 @@ pub async fn save_task(state: State<'_, AppState>, mut value: Value) -> Result<V
             &project,
             &account,
         )?;
+        edit::complete_schedule_patch(&mut patch, &remote)?;
         {
             let store = state.store.lock().map_err(|e| e.to_string())?;
             if store.workspace_id != workspace || store.generation != generation {
