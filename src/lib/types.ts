@@ -46,6 +46,11 @@ export interface Task extends Base {
   connectionId?: string;
   completedAt?: number | null;
 }
+export interface ZentaoTaskAssignment {
+  assignedBy: string | null;
+  assignedAt: string | null;
+  createdBy: string | null;
+}
 export interface Project extends Base {
   name: string;
   description: string;

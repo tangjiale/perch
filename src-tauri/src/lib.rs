@@ -216,6 +216,7 @@ pub fn run() {
             integrations::chat_send,
             integrations::chat_cancel,
             zentao::zentao_sync,
+            zentao::assignment::zentao_task_assignment,
             zentao::media::zentao_task_image_read,
             zentao::media::zentao_task_image_upload,
             zentao::bugs::zentao_bugs_sync,

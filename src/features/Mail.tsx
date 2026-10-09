@@ -113,7 +113,7 @@ export default function Mail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [limit, setLimit] = useState(50);
-  const [htmlView, setHtmlView] = useState(false);
+  const [htmlView, setHtmlView] = useState(true);
   const inFlight = useRef(false);
   const pendingRead = useRef("");
   const { data: folders = [], error: foldersError } = useQuery({
@@ -249,7 +249,7 @@ export default function Mail({
   }, [busy, selectedId]);
   function view(message: MailMessage) {
     setSelectedId(message.id);
-    setHtmlView(false);
+    setHtmlView(true);
     pendingRead.current = !message.seen && inFlight.current ? message.id : "";
     if (!message.seen && !inFlight.current)
       void run(() =>
@@ -875,7 +875,7 @@ export default function Mail({
                       <span>已拦截外部图片和活动内容</span>
                     </div>
                   )}
-                  {htmlView ? (
+                  {htmlView && detail.html ? (
                     <iframe
                       sandbox=""
                       title="邮件排版正文"

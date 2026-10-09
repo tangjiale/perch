@@ -119,8 +119,8 @@
         const m = messages.find((m) => m.id === args.messageId);
         return {
           ...m,
-          text: "你好，\n\n本周重点推进项目看板和邮箱功能。请确认以下安排：\n\n周一：需求与设计评审\n周三：开发进度同步\n周五：版本验收\n\n谢谢。",
-          html: '<h2>本周工作安排</h2><p>这是正常正文。</p><script>parent.evil=true</script><img src="https://tracker.invalid/pixel"><form action="https://bad.invalid"><input></form><a href="javascript:alert(1)">恶意链接</a>',
+          text: m.id === "m2" ? "" : "你好，\n\n本周重点推进项目看板和邮箱功能。请确认以下安排：\n\n周一：需求与设计评审\n周三：开发进度同步\n周五：版本验收\n\n谢谢。",
+          html: m.id === "m1" ? "" : '<html><head><style>font{line-height:1.6;}ul,ol{padding-left:20px;list-style-position:inside;}</style></head><body><p>你好，</p><p>本周重点推进项目看板和邮箱功能。请确认以下安排：</p><ul><li>周一：需求与设计评审</li><li>周三：开发进度同步</li><li>周五：版本验收</li></ul><p><strong>项目团队</strong><br>team@example.test</p><script>parent.evil=true</script><img src="https://tracker.invalid/pixel"><form action="https://bad.invalid"><input></form><a href="javascript:alert(1)">恶意链接</a></body></html>',
           attachments: m.hasAttachments
             ? [
                 {
@@ -214,14 +214,14 @@
           r.args.seen === true,
       ),
     );
-    assert(
-      "邮件正文与附件显示",
-      doc.body.innerText.includes("周一：需求") &&
-        doc.body.innerText.includes("本周工作安排.pdf"),
-    );
-    button("显示排版正文").click();
     await wait(() => doc.querySelector(".mail-html-content"));
     const html = doc.querySelector(".mail-html-content");
+    assert(
+      "HTML邮件默认显示排版正文及附件",
+      !!button("显示纯文本") &&
+        html.srcdoc.includes("周一：需求") &&
+        doc.body.innerText.includes("本周工作安排.pdf"),
+    );
     assert(
       "HTML邮件隔离并拦截跟踪及脚本",
       html.getAttribute("sandbox") === "" &&
@@ -229,6 +229,38 @@
         !html.srcdoc.includes("tracker.invalid") &&
         !html.srcdoc.includes("<form"),
     );
+    const rendered = new win.DOMParser().parseFromString(html.srcdoc, "text/html");
+    assert(
+      "排版正文保留段落和签名且不显示样式代码",
+      rendered.body.querySelectorAll("p").length === 3 &&
+        rendered.body.querySelectorAll("li").length === 3 &&
+        rendered.body.textContent.includes("项目团队") &&
+        !rendered.body.textContent.includes("font{") &&
+        !rendered.body.textContent.includes("padding-left"),
+    );
+    button("显示纯文本").click();
+    await wait(() => doc.querySelector(".mail-text-content"));
+    assert(
+      "可切换纯文本并保留换行",
+      doc.querySelector(".mail-text-content").textContent.includes("你好，\n\n本周"),
+    );
+    doc.querySelectorAll(".mail-message-item")[2].click();
+    await wait(() => doc.querySelector(".mail-html-content"));
+    assert(
+      "切换邮件恢复排版且HTML-only邮件有正文",
+      doc.querySelector(".mail-html-content").srcdoc.includes("项目团队") &&
+        !!button("显示纯文本"),
+    );
+    doc.querySelectorAll(".mail-message-item")[1].click();
+    await wait(() => doc.querySelector(".mail-text-content"));
+    assert(
+      "纯文本邮件直接显示正文",
+      doc.querySelector(".mail-text-content").textContent.includes("周一：需求") &&
+        !doc.querySelector(".mail-html-content") &&
+        !doc.querySelector(".mail-content-mode"),
+    );
+    doc.querySelector(".mail-message-item").click();
+    await wait(() => doc.querySelector(".mail-html-content"));
     doc.querySelector('button[title="回复全部"]').click();
     await wait(() => field("收件人"));
     assert(

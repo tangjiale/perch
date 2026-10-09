@@ -1,6 +1,7 @@
 import { Fragment, useId, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import TaskRichTextEditor from "../components/TaskRichTextEditor";
+import TaskAssignmentDetails from "../components/TaskAssignmentDetails";
 import { taskNotesText } from "../lib/task-rich-text";
 import "./projects.css";
 import { buildBugProjectIndex, projectBugKey } from "../lib/bug-projects";
@@ -474,10 +475,12 @@ export function TaskEditor({
           </label>
         </div>
         {value.source === "zentao" && (
-          <p className="notice">
-            禅道 {value.remoteType} #{value.remoteId} · {value.remoteStatus}
-            。保存名称、状态、排期及备注时会同步更新禅道执行；所属项目保持一致。禅道排期精确到日期，修改排期需同时填写开始和结束日期。
-          </p>
+          <div className="notice task-remote-notice">
+            <p>禅道 {value.remoteType} #{value.remoteId} · {value.remoteStatus}</p>
+            {value.remoteType === "execution" && Boolean(value.revision) &&
+              <TaskAssignmentDetails task={value} disabled={busy || saved} />}
+            <p>保存名称、状态、排期及备注时会同步更新禅道执行；所属项目保持一致。禅道排期精确到日期，修改排期需同时填写开始和结束日期。</p>
+          </div>
         )}
         <div className="task-notes-field">
           <span>备注</span>

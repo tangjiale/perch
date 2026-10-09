@@ -48,6 +48,7 @@
 - v1 /projects?involved=1&status=all 完整读取当前账号参与项目；包含创建者、PM、项目团队、干系人或白名单成员。v2 involved 查询参数无已验证的等效过滤，因此个人同步固定使用 v1。
 - v1 /executions?fields=PM,desc&status=all 完整读取执行目录。只导入相关项目内 PM.account 与当前账号相同的执行，包含 status 为 closed 的执行并映射为本地已关闭。无负责人跳过，负责人字段缺失或无法识别时失败；不能按 realname 或项目负责人筛选。
 - 项目 PM 保存到 owner，执行 PM 保存到 remoteExecutionOwner / remoteExecutionOwnerAccount。
+- 任务详情按需只读查询 v1 `/executions/{id}?fields=actions`，核验项目和当前 `PM.account` 后，显示最新 PM 变更动作的操作者、时间及独立的创建人。22.0 的 action API 会将 actor、人员历史 old/new 转成显示姓名，不能用姓名授权或把 actor 当账号；缺失、矛盾或没有负责人变更记录时不推断指派人。来源：官方 `zentaopms_22.0_20260318` 的 `api/v1/entries/execution.php` 与 `module/action/model.php`。不增加全量同步请求，不读取执行下任务。
 - 远端 wait / doing / done / closed 对应本地 todo / doing / done / closed；begin / end 转为全天跨日排期，末日包含当天。
 - 官方 22.0 越界页会回到第一页。按 page/total/limit 或 pager 元数据停止，校验页码并保留重复记录检测，不通过忽略重复假装读取完成。
 - 完整远端读取成功后，在一个事务中保存项目、执行、同步时间，并清理当前连接下不在本轮范围的旧工作项（包括以前导入的具体任务）；自建任务与其他连接保持。读取、权限、版本校验或写入失败都不会提前删除旧数据。

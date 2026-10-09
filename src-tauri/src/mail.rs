@@ -674,6 +674,119 @@ type DecodedMail<'a> = (
     String,
     Vec<(Value, Vec<u8>)>,
 );
+// 迭代遍历正文，避免样式/脚本泄漏，也不让深层邮件 DOM 消耗调用栈。
+fn html_body_text(html: &str) -> String {
+    let document = scraper::Html::parse_document(html);
+    let mut stack = vec![(document.tree.root(), false)];
+    let mut output = String::new();
+    let mut pre_depth = 0usize;
+    let mut pending_space = false;
+    while let Some((node, exiting)) = stack.pop() {
+        match node.value() {
+            scraper::Node::Element(element) => {
+                let name = element.name();
+                if matches!(
+                    name,
+                    "head"
+                        | "style"
+                        | "script"
+                        | "template"
+                        | "noscript"
+                        | "iframe"
+                        | "object"
+                        | "svg"
+                        | "canvas"
+                ) {
+                    continue;
+                }
+                let block = matches!(
+                    name,
+                    "p" | "div"
+                        | "section"
+                        | "article"
+                        | "header"
+                        | "footer"
+                        | "blockquote"
+                        | "ul"
+                        | "ol"
+                        | "li"
+                        | "table"
+                        | "tr"
+                        | "pre"
+                        | "h1"
+                        | "h2"
+                        | "h3"
+                        | "h4"
+                        | "h5"
+                        | "h6"
+                        | "hr"
+                );
+                if block || name == "br" {
+                    while output.ends_with(' ') {
+                        output.pop();
+                    }
+                    if !output.is_empty() && !output.ends_with('\n') {
+                        output.push('\n');
+                    }
+                    pending_space = false;
+                } else if exiting && matches!(name, "td" | "th") {
+                    pending_space = true;
+                }
+                if name == "pre" {
+                    if exiting {
+                        pre_depth -= 1;
+                    } else {
+                        pre_depth += 1;
+                    }
+                }
+                if !exiting {
+                    stack.push((node, true));
+                    stack.extend(node.children().rev().map(|child| (child, false)));
+                }
+            }
+            scraper::Node::Text(text) if !exiting => {
+                if pre_depth > 0 {
+                    output.push_str(text);
+                } else {
+                    for ch in text.chars() {
+                        if ch.is_ascii_whitespace() {
+                            pending_space = true;
+                        } else {
+                            if pending_space
+                                && !output.is_empty()
+                                && !output.ends_with('\n')
+                                && !output.ends_with(' ')
+                            {
+                                output.push(' ');
+                            }
+                            pending_space = false;
+                            output.push(ch);
+                        }
+                    }
+                }
+            }
+            _ if !exiting => stack.extend(node.children().rev().map(|child| (child, false))),
+            _ => {}
+        }
+    }
+    output.trim().to_string()
+}
+
+fn mail_preview(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(200)
+        .collect()
+}
+
+fn refresh_cached_preview(message: &mut Value, raw: &[u8]) -> Result<()> {
+    let (_, text, _, _) = decode(raw)?;
+    message["preview"] = json!(mail_preview(&text));
+    Ok(())
+}
+
 fn decode(raw: &[u8]) -> Result<DecodedMail<'_>> {
     if raw.len() > MAX_MAIL {
         return Err("单封邮件超过 25 MB 限制".into());
@@ -682,11 +795,7 @@ fn decode(raw: &[u8]) -> Result<DecodedMail<'_>> {
     let (mut text, mut html, mut attachments) = (String::new(), String::new(), Vec::new());
     parts(&parsed, "0", &mut text, &mut html, &mut attachments)?;
     if text.trim().is_empty() && !html.is_empty() {
-        text = scraper::Html::parse_document(&html)
-            .root_element()
-            .text()
-            .collect::<Vec<_>>()
-            .join(" ");
+        text = html_body_text(&html);
     }
     Ok((parsed, text, html, attachments))
 }
@@ -714,7 +823,7 @@ fn message_value(
         )))
     );
     Ok(
-        json!({"id":id,"accountId":account_id,"folder":folder,"uid":uid,"subject":p.headers.get_first_value("Subject").unwrap_or_else(||"（无主题）".into()),"from":p.headers.get_first_value("From").unwrap_or_default(),"to":addresses(&p,"To"),"cc":addresses(&p,"Cc"),"date":date,"preview":text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect::<String>(),"seen":fetch.flags().contains(&Flag::Seen),"flagged":fetch.flags().contains(&Flag::Flagged),"hasAttachments":!attachments.is_empty()}),
+        json!({"id":id,"accountId":account_id,"folder":folder,"uid":uid,"subject":p.headers.get_first_value("Subject").unwrap_or_else(||"（无主题）".into()),"from":p.headers.get_first_value("From").unwrap_or_default(),"to":addresses(&p,"To"),"cc":addresses(&p,"Cc"),"date":date,"preview":mail_preview(&text),"seen":fetch.flags().contains(&Flag::Seen),"flagged":fetch.flags().contains(&Flag::Flagged),"hasAttachments":!attachments.is_empty()}),
     )
 }
 
@@ -769,6 +878,7 @@ fn sync_inner(app: &AppHandle, account_id: &str, folder: Option<&str>) -> Result
                 })?;
                 if let Some((data, raw)) = cached {
                     let mut m: Value = parse(data)?;
+                    refresh_cached_preview(&mut m, &raw)?;
                     m["seen"] = json!(meta.flags().contains(&Flag::Seen));
                     m["flagged"] = json!(meta.flags().contains(&Flag::Flagged));
                     bytes += raw.len();
@@ -1266,6 +1376,39 @@ pub fn start_background(app: AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn html_body_omits_non_content_and_preserves_layout() {
+        let html = "<html><head><title>标题</title><style>font{line-height:1.6}</style></head><body><script>alert(1)</script><template>隐藏</template><p>你好，<b>家乐</b>&amp;同事</p><div>第一行<br>第二行</div><ul><li>甲</li><li>乙</li></ul><table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table><pre> a  b\n  c</pre></body></html>";
+        assert_eq!(
+            html_body_text(html),
+            "你好，家乐&同事\n第一行\n第二行\n甲\n乙\nA B\nC D\n a  b\n  c"
+        );
+    }
+
+    #[test]
+    fn alternative_mail_prefers_non_empty_plain_text() {
+        let raw = b"MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nplain body\r\n--x\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>html body</p>\r\n--x--\r\n";
+        assert_eq!(decode(raw).unwrap().1.trim(), "plain body");
+    }
+
+    #[test]
+    fn empty_plain_part_falls_back_to_html_body() {
+        let raw = b"MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\n  \r\n--x\r\nContent-Type: text/html\r\n\r\n<style>hidden css</style><p>body</p>\r\n--x--\r\n";
+        assert_eq!(decode(raw).unwrap().1, "body");
+    }
+
+    #[test]
+    fn cached_preview_is_repaired_from_original_html() {
+        let raw = "Content-Type: text/html; charset=utf-8\r\n\r\n<style>font{line-height:1.6}</style><p>你好，家乐</p><p>考核结果</p>";
+        let mut message =
+            json!({"id":"cached", "preview":"font{line-height:1.6} 你好，家乐", "seen":true});
+        refresh_cached_preview(&mut message, raw.as_bytes()).unwrap();
+        assert_eq!(message["preview"], "你好，家乐 考核结果");
+        assert_eq!(message["id"], "cached");
+        assert_eq!(message["seen"], true);
+        assert_eq!(decode(raw.as_bytes()).unwrap().1, "你好，家乐\n考核结果");
+    }
+
     #[test]
     fn cached_messages_list_search_and_pagination_handle_literal_wildcards() {
         let c = rusqlite::Connection::open_in_memory().unwrap();

@@ -1,10 +1,12 @@
 use crate::integrations::*;
 use std::collections::HashSet;
+pub mod assignment;
 pub mod background;
 mod board;
 pub mod bugs;
 mod create;
 mod description;
+mod execution_context;
 pub mod media;
 
 const PAGE_SIZE: usize = 100;
@@ -706,6 +708,12 @@ fn apply_execution_result(
 }
 
 impl Adapter<'_> {
+    async fn execution_assignment(&self, id: &str) -> Result<Value, String> {
+        let mut url = endpoint(&self.base, &format!("executions/{id}"))?;
+        url.query_pairs_mut().append_pair("fields", "actions");
+        self.execution_response(self.read(url).await?, id).await
+    }
+
     async fn execution_request(&self, id: &str, patch: Option<&Value>) -> Result<Value, String> {
         let url = endpoint(&self.base, &format!("executions/{id}"))?;
         let response = if let Some(patch) = patch {
@@ -719,6 +727,14 @@ impl Adapter<'_> {
         } else {
             self.read(url).await?
         };
+        self.execution_response(response, id).await
+    }
+
+    async fn execution_response(
+        &self,
+        response: reqwest::Response,
+        id: &str,
+    ) -> Result<Value, String> {
         let response = checked_zentao(response).await?;
         let mut stream = response.bytes_stream();
         let mut bytes = vec![];

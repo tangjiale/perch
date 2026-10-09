@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { version } from "../../package.json";
-import type { EntityKind, Base, Snapshot, StorageInfo } from "./types";
+import type { EntityKind, Base, Snapshot, StorageInfo, ZentaoTaskAssignment } from "./types";
 export const native = isTauri();
 export const appVersion = version;
 export const emptySnapshot: Snapshot = {
@@ -31,6 +31,8 @@ export async function command<T>(
   }
 }
 export const api = {
+  taskAssignment: (taskId: string) =>
+    command<ZentaoTaskAssignment>("zentao_task_assignment", { taskId }),
   snapshot: () =>
     native
       ? command<Snapshot>("workspace_snapshot")
