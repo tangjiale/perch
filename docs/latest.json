@@ -1,15 +1,15 @@
 {
-  "version": "0.1.17",
-  "notes": "# 栖点 v0.1.17\n\n## 问题修复\n\n- 修复：移除单元素循环以兼容新版 Rust 发布检查（277a176）\n\n## 工程与维护\n\n- 发布：v0.1.17 邮件正文修复与禅道指派信息更新（e593a05）\n",
-  "pub_date": "2026-10-09T10:05:32.971Z",
+  "version": "0.1.18",
+  "notes": "# 栖点 v0.1.18\n\n## 问题修复\n\n- 修复：禅道执行修改日期时处理超限工作日并显示字段校验原因（3f781a0）\n\n## 工程与维护\n\n- 维护：同步宣传页最新版本清单（6a7cc1a）\n- 发布：v0.1.18 禅道日期保存修复（82265c7）\n",
+  "pub_date": "2026-10-09T12:27:21.914Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRR0xjSGx1REM5cDdIa1RWdWo2MVpIN050QXdEYVRWeXRjc2tyaFVxVXh1S2ZyT2lyMnpIRktRdU1TYVR1cjNtOVFGRDBOR3N2RlFVS0s0UWJNUGZ2Tjh6cU9LcHpua2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNTM5ODEyCWZpbGU65qCW54K5LmFwcC50YXIuZ3oKaWNZcGcvRmxtenJya25Ga082WUNzWVFpVDFscHJ1R2liWk01NTR3Yisrd3VLakNLRlRTbE5lNWJBUmVOL3YxMVJYRUNFVTlTMjBpUk1UNHhFcFhnREE9PQo=",
-      "url": "https://github.com/tangjiale/perch/releases/download/v0.1.17/Perch_0.1.17_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRR0xjSGx1REM5cDFQdDIvdnRYSTJ3Y2VZRUp2SndKYVBSelhkMVg2OG15M210a3psUXIrT2ZmblVFSmJHYVY0bXFGc2hSNmMxaWJQTi8vK2dWemkxa1NSTy9GVGVpL0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNTQ4MTQ2CWZpbGU65qCW54K5LmFwcC50YXIuZ3oKeVQycjR5ZnNSYUtraDJQUjBXam9mS1B5VFhCZlJKenlDcmdYbmE0QVFWbHZmT0lEMkwvaVZVN0Rnd3VFZ1Z3OUM1L04vSDlCQzcxMitGZ0ZCQS9NREE9PQo=",
+      "url": "https://github.com/tangjiale/perch/releases/download/v0.1.18/Perch_0.1.18_aarch64.app.tar.gz"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRR0xjSGx1REM5cHd1c2lwSkRBNFdLTENDRlkzdThVdi9TREpRaWhQeUNKaWtwcXBlb0p3anJVNU1nMkgraGoweXJlaEdhc2lLdCt2VkkxZHdVVnpiaUhsU3BmNnBRWkFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNTQwMjM5CWZpbGU65qCW54K5XzAuMS4xN194NjQtc2V0dXAuZXhlCnYwTmtEeVRiREZrRENrMWE2ajFBZTBES1l2a0Ywcnh0M1pjd01XL0xYSi9PNkF2MFJVWGlLTmRaWE4xcllOeGR1Z0xZbUZIK2FoR1AzamRKNHUwS0JRPT0K",
-      "url": "https://github.com/tangjiale/perch/releases/download/v0.1.17/Perch_0.1.17_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRR0xjSGx1REM5cDNvdjBNVWE1RFJGREN3T2o3d3hSd3pjNll3Tkp6M1hpY0VHdmFMWTRXMVNKNWg0Q3VweHlHelExc2ZXQzRBT2F1ZXJSdzF5aXpUclhDU2RwL3EwdHdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNTQ4NzM0CWZpbGU65qCW54K5XzAuMS4xOF94NjQtc2V0dXAuZXhlCnhkRlM3RGFUYmdEU2NOYkxidnRzeHlITi9TL2lKTVZMSStoREQzN2N5QkhTMnJNV3p6eS9qYTZyOElZNTNySXZOcVlmdnBrN1Q3VFNhbGJTTkUrWkRRPT0K",
+      "url": "https://github.com/tangjiale/perch/releases/download/v0.1.18/Perch_0.1.18_x64-setup.exe"
     }
   }
 }
