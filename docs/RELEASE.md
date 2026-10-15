@@ -4,7 +4,7 @@
 
 推送稳定 Tag `vX.Y.Z` 触发 `.github/workflows/release.yml`：校验版本与中文提交，构建 macOS Apple Silicon 和 Windows x64，验证更新包签名，再统一公开 GitHub Release。普通分支提交只执行 CI，不发布安装包。暂不支持预发布 Tag、Intel Mac 和 Linux。
 
-当前目录尚未初始化 Git，也未绑定 GitHub 仓库及正式签名配置。工作流和应用更新链路已实现；真实 Actions、Windows 原生安装与已安装应用在线升级仍待首次发布验证。
+仓库已接入 GitHub Actions 正式发布与 GitHub Pages 宣传主页；Windows 原生安装与已安装应用在线升级仍需按版本执行真实验收。
 
 更新源使用公开 GitHub 仓库的 `https://github.com/OWNER/REPO/releases/latest/download/latest.json`，由工作流按实际仓库名生成配置，不需要修改源码中的仓库地址。不把 GitHub 私人访问令牌放进客户端。私有仓库需要另行提供公开分发仓库或更新服务，当前工作流会明确拒绝直接发布。
 
@@ -53,6 +53,14 @@ git push origin v0.1.1
 `release:tag` 仅创建本地 annotated Tag，不自动推送。Tag 注释包含前一祖先稳定版本 Tag 到 HEAD 的所有非 merge 提交，按新增功能、问题修复、体验优化、工程与维护分组；首次发布汇总已有全部非 merge 提交。Release 正文与 `latest.json.notes` 使用同一范围。历史纯英文主题会使校验失败，需在发布前整理尚未发布的提交，不自动重写共享历史。
 
 推送 Tag 就表示启动构建与公开发布。新版本必须高于当前公开版本；不要同时推送多个版本 Tag，GitHub concurrency 只保留有限待执行任务。两个平台可以并行构建，发布步骤串行执行，避免最新清单被旧版本覆盖。
+
+## 宣传主页与版本同步
+
+发布工作流成功完成后，宣传主页通过 `workflow_run` 完成事件自动部署，无需人工更新版本号。仅接受同仓库、由推送触发且结果成功的发布工作流。分支上的官网修改和手动运行 Pages 工作流也会重新部署。每次部署都读取最新公开 Release 的 `latest.json`，校验版本、日期与双平台资产地址，失败时阻止部署，避免用旧清单冒充最新版本。
+
+官网仅发布 `docs/index.html`、`styles.css`、`main.js`、`assets/` 和从 Release 下载的 `latest.json`，不上传内部开发文档及历史验收截图。`docs/latest.json` 是源码中的离线兜底样本，线上部署不以它作为最新版本依据。页面浏览期间还会按官网自身刷新策略检查版本。
+
+发布完成事件独立触发 Pages：GitHub Actions 使用 `GITHUB_TOKEN` 推送产生的提交不会再次触发普通 `push` 工作流；因此不再依赖机器人提交清单触发部署，也不向 `master` 追加版本清单提交。Pages 工作流在默认分支 `master` 上运行，并固定检出 `master` 官网代码，符合现有 `github-pages` 环境只允许该分支部署的保护策略；不会因发布 Tag 的运行上下文被环境拒绝。Release 已公开但 Pages 失败时，只需重跑 Pages 工作流，不要覆盖公开 Tag 或重新发布同版本。
 
 ## 安装与更新行为
 

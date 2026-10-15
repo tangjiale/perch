@@ -5,6 +5,9 @@ on:
     branches: [master]
     paths: ["docs/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
+  workflow_run:
+    workflows: ["构建并发布栖点"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -13,18 +16,57 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    # workflow_run 使用默认分支运行，满足 github-pages 仅允许 master 的保护策略。
+    # 不部署失败发布、其他事件或外部仓库工作流的结果。
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: master
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 准备宣传页文件
+        run: |
+          mkdir -p _site
+          cp docs/index.html docs/styles.css docs/main.js _site/
+          cp -R docs/assets _site/assets
+      - name: 从最新公开 Release 获取版本清单
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir _site --clobber
+          node --input-type=module -e '
+            import { readFile } from "node:fs/promises";
+            const manifest = JSON.parse(await readFile("_site/latest.json", "utf8"));
+            if (!/^\d+\.\d+\.\d+$/.test(manifest.version) || !Number.isFinite(Date.parse(manifest.pub_date))) {
+              throw new Error("公开版本清单的版本或日期无效");
+            }
+            for (const platform of ["darwin-aarch64", "windows-x86_64"]) {
+              const entry = manifest.platforms?.[platform];
+              const prefix = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/v${manifest.version}/`;
+              if (!entry?.url?.startsWith(prefix) || !entry.signature?.trim()) {
+                throw new Error(`公开版本清单缺少有效平台：${platform}`);
+              }
+            }
+          '
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs
+          path: _site
       - name: 部署到 GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
