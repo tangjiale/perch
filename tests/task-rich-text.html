@@ -3,6 +3,12 @@ window.isTauri=true;window.richCalls=[];
 const canvas=document.createElement('canvas');canvas.width=600;canvas.height=180;const ctx=canvas.getContext('2d');ctx.fillStyle='#d9edf2';ctx.fillRect(0,0,600,180);ctx.fillStyle='#276d84';ctx.font='24px sans-serif';ctx.fillText('任务说明图片 · 上传与回显测试',30,95);window.richPng=canvas.toDataURL('image/png');
 window.__TAURI_INTERNALS__={invoke:async(name,args)=>{
 window.richCalls.push({name,args});
+if (name === 'image_clipboard_write' || name === 'image_download') {
+  const mode = window.__imageActionMode;
+  if (mode === 'fail') throw Error('模拟图片操作失败');
+  if (mode === 'pending') return await new Promise(resolve => { window.__resolveImageAction = resolve; });
+  return name === 'image_download' ? mode !== 'cancel' : undefined;
+}
 if(name==='zentao_task_image_read')return {dataUrl:window.richPng};
 if(name==='zentao_task_image_upload')return {source:'{709.png}',dataUrl:window.richPng,fileId:'709'};
 if(name==='save_task'){

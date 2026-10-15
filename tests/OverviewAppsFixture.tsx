@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import Work from "../src/features/Work";
 import { Apps } from "../src/features/Resources";
 import { emptySnapshot } from "../src/lib/api";
-import type { Application } from "../src/lib/types";
+import type { Application, Task } from "../src/lib/types";
 
 export function mountAppCategories(host: HTMLElement) {
   const root = createRoot(host);
@@ -15,11 +15,11 @@ export function mountAppCategories(host: HTMLElement) {
   return () => root.unmount();
 }
 
-export function mountOverview(host: HTMLElement, apps: Application[], categories: typeof emptySnapshot.categories = []) {
+export function mountOverview(host: HTMLElement, apps: Application[], categories: typeof emptySnapshot.categories = [], tasks: Task[] = []) {
   const root = createRoot(host);
   root.render(
     <MemoryRouter>
-      <Work page="overview" data={{ ...emptySnapshot, apps, categories }}
+      <Work page="overview" data={{ ...emptySnapshot, apps, categories, tasks }}
         refresh={async () => {}} notify={() => {}} />
     </MemoryRouter>,
   );

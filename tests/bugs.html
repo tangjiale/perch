@@ -10,11 +10,87 @@
     <script>
       globalThis.isTauri = true;
       window.__bugCalls = [];
+      window.__bugHistoryCalls = [];
+      window.__bugHistoryPending = [];
+      window.__bugHistory = {
+        assignedBy: "吴敏政（wuminzheng）",
+        assignedAt: "2026-09-08 10:00:00",
+        createdBy: "测试用户（tester）",
+        entries: [
+          { id: "1", actor: "测试用户（tester）", action: "opened", date: "2026-09-08 09:00:00", comment: "<p>创建问题</p>", changes: [] },
+          { id: "2", actor: "吴敏政（wuminzheng）", action: "assigned", date: "2026-09-08 10:00:00", extra: "测试用户（tester）", comment: "<p>请处理<b>知识库接入</b></p>", changes: [{ field: "assignedTo", old: "待指派", new: "测试用户（tester）" }] },
+          { id: "3", actor: "测试用户（tester）", action: "edited", date: "2026-09-09 11:00:00", comment: '<p><strong>仅支持 dify</strong><br>后续扩展其他知识库</p><img src="https://history-tracking.invalid/pixel" onerror="window.__unsafeHistory=true"><script>window.__unsafeHistory=true<\/script><a href="https://history-tracking.invalid/link">外部链接</a><svg onload="window.__unsafeHistory=true"></svg>', changes: [{ field: "备注", old: "原始备注", new: "仅支持 dify" }, { field: "title", old: "旧标题", new: "新的知识库标题" }] },
+        ],
+      };
+      window.__bugAssignees = [
+        { account: "tester", realname: "测试用户" },
+        { account: "tangjiale", realname: "唐家乐" },
+        { account: "wuminzheng", realname: "吴敏政" },
+        { account: "same.a", realname: "同名用户" },
+        { account: "same.b", realname: "同名用户" },
+      ];
+      const canvas = document.createElement("canvas");
+      canvas.width = 1400;
+      canvas.height = 900;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#f6f8fa";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#202830";
+      context.font = "36px sans-serif";
+      context.fillText("模拟 BUG 复现步骤截图", 60, 100);
+      context.strokeStyle = "#da4453";
+      context.lineWidth = 5;
+      context.strokeRect(60, 170, 1280, 620);
+      context.fillText("截图通过附件读取显示，原始 HTML 引用保持不变", 100, 250);
+      window.__bugImageData = canvas.toDataURL("image/png");
       window.__TAURI_INTERNALS__ = {
         invoke: async (name, args) => {
           window.__bugCalls.push({ name, args });
+          if (name === "zentao_bug_history") {
+            window.__bugHistoryCalls.push({ name, args });
+            if (window.__bugHistoryMode === "fail") throw Error("模拟：历史读取失败");
+            if (window.__bugHistoryMode === "empty") return { assignedBy: null, assignedAt: null, createdBy: null, entries: [] };
+            if (window.__bugHistoryMode === "pending")
+              return await new Promise(resolve => { window.__bugHistoryPending.push(resolve); });
+            return window.__bugHistory;
+          }
+          if (name === "zentao_bug_assignees") {
+            if (window.__bugAssigneeMode === "fail") throw Error("模拟：人员读取失败");
+            if (window.__bugAssigneeMode === "empty") return [];
+            if (window.__bugAssigneeMode === "pending")
+              return await new Promise(resolve => { window.__resolveAssignees = resolve; });
+            return window.__bugAssignees;
+          }
+if (name === 'image_clipboard_write' || name === 'image_download') {
+  const mode = window.__imageActionMode;
+  if (mode === 'fail') throw Error('模拟图片操作失败');
+  if (mode === 'pending') return await new Promise(resolve => { window.__resolveImageAction = resolve; });
+  return name === 'image_download' ? mode !== 'cancel' : undefined;
+}
+          if (name === "zentao_bug_image_read") {
+            if (window.__bugImageFail) throw "模拟：附件加载失败";
+            if (!args.source.includes("708") && !args.source.includes("709"))
+              throw "仅支持当前禅道站点内的图片引用";
+            if (window.__bugImageDeferred)
+              return await new Promise(resolve => { window.__resolveBugImage = resolve; });
+            return { dataUrl: window.__bugImageData };
+          }
           if (window.__bugFail) throw "模拟：禅道权限不足";
+          if (window.__bugWriteDeferred && ["zentao_bug_save", "zentao_bug_transition"].includes(name))
+            return await new Promise(resolve => { window.__resolveBugWrite = resolve; });
           if (name === "zentao_bugs_sync") return "已同步测试 BUG";
+          if (name === "zentao_bug_transition" && ["confirm", "assign"].includes(args.action)) {
+            const existing = window.__fixtureBugs.find(bug => bug.id === args.id);
+            const updated = { ...existing, revision: existing.revision + 1,
+              ...(args.action === "confirm" ? { confirmed: true } : {
+                assignedTo: args.payload.assignedTo,
+                assignedToName: window.__bugAssignees.find(user => user.account === args.payload.assignedTo)?.realname || "",
+              }),
+            };
+            window.__fixtureBugs = window.__fixtureBugs.flatMap(bug => bug.id !== args.id
+              ? [bug] : args.action === "assign" && updated.assignedTo !== "tester" ? [] : [updated]);
+            return updated;
+          }
           return {
             ...(args.value || {}),
             id: args.id || args.value?.id,

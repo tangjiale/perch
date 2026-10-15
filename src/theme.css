@@ -244,6 +244,12 @@ html[data-theme="dark"] .favorite {
 html[data-theme="dark"] .tag.doing {
   background: rgba(106, 153, 236, 0.14);
 }
+html[data-theme="dark"] .suspended {
+  color: var(--theme-amber);
+}
+html[data-theme="dark"] .tag.suspended {
+  background: rgba(204, 160, 90, 0.14);
+}
 html[data-theme="dark"] .tag.done {
   background: rgba(90, 178, 131, 0.14);
 }

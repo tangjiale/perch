@@ -4,7 +4,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { Projects } from "../src/features/Work";
 import Bugs from "../src/features/Bugs";
 import { emptySnapshot } from "../src/lib/api";
-import type { Project, Status } from "../src/lib/types";
+import type { Project, TaskStatus } from "../src/lib/types";
 import "../src/styles.css";
 import "../src/glass.css";
 import "../src/theme.css";
@@ -62,7 +62,7 @@ const data = {
       status,
     }),
   ),
-  tasks: (["todo", "doing", "doing", "done", "closed"] as Status[]).map(
+  tasks: (["todo", "doing", "doing", "suspended", "done"] as TaskStatus[]).map(
     (status, index) => ({
       id: `t${index}`,
       title: "测试任务",

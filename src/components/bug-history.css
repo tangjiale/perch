@@ -1,0 +1,107 @@
+.bug-history {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.bug-history h3 {
+  margin: 0 0 12px;
+}
+.bug-history-assignment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  margin: 0 0 18px;
+}
+.bug-history-assignment > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.bug-history-assignment dt,
+.bug-history-event time {
+  color: var(--muted);
+}
+.bug-history dd {
+  margin: 0;
+}
+.bug-history-list {
+  margin: 0;
+  padding-left: 24px;
+}
+.bug-history-entry {
+  padding: 0 0 14px 4px;
+  line-height: 1.7;
+}
+.bug-history-entry:last-child {
+  padding-bottom: 0;
+}
+.bug-history-entry::marker {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bug-history-event {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+}
+.bug-history-event time,
+.bug-history-assignment dd {
+  font-variant-numeric: tabular-nums;
+}
+.bug-history-comment {
+  margin-top: 6px;
+  white-space: pre-wrap;
+}
+.bug-history-comment > :first-child {
+  margin-top: 0;
+}
+.bug-history-comment > :last-child {
+  margin-bottom: 0;
+}
+.bug-history-comment pre {
+  white-space: pre-wrap;
+}
+.bug-history-comment table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.bug-history-comment td,
+.bug-history-comment th {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+}
+.bug-history-changes {
+  margin-top: 4px;
+}
+.bug-history-changes summary {
+  color: var(--command);
+  cursor: pointer;
+  width: fit-content;
+}
+.bug-history-changes summary:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.bug-history-changes summary:focus-visible {
+  outline: 2px solid var(--command);
+  outline-offset: 3px;
+}
+.bug-history-changes dl {
+  margin: 8px 0 0;
+}
+.bug-history-changes dl > div + div {
+  margin-top: 10px;
+}
+.bug-history-changes dt {
+  font-weight: 600;
+}
+.bug-history-changes dd {
+  white-space: pre-wrap;
+}
+.bug-history-error p {
+  color: var(--theme-red, #a92d3b);
+  margin: 0 0 8px;
+}

@@ -5,16 +5,14 @@ import McpSettings from "./McpSettings";
 import GeneralSettings from "./GeneralSettings";
 import MailSettings from "./MailSettings";
 import DingCalendarSettings from "./DingCalendarSettings";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import BackupSettings from "./BackupSettings";
 import {
   Plus,
   Settings2,
   Server,
   Database,
-  FolderOpen,
   Download,
-  Upload,
   RefreshCw,
   Trash2,
   Pencil,
@@ -490,104 +488,12 @@ export default function Settings({
           </>
         )}
         {tab === "storage" && (
-          <>
-            <section>
-              <h2>存储位置</h2>
-              <div className="settings-row">
-                <div>
-                  <strong>当前数据目录</strong>
-                  <p className="path-text">{info.dataRoot}</p>
-                </div>
-                <button
-                  onClick={() =>
-                    revealItemInDir(info.dataRoot).catch((e) =>
-                      notify(String(e)),
-                    )
-                  }
-                >
-                  <FolderOpen size={15} />在 Finder 中打开
-                </button>
-              </div>
-              <p className="muted">默认：{info.defaultRoot}</p>
-              <div className="actions">
-                <button
-                  disabled={busy}
-                  onClick={async () => {
-                    const target = await open({ directory: true });
-                    if (
-                      typeof target === "string" &&
-                      confirm(
-                        "将工作数据复制到该目录并切换？目标必须为空，原目录会保留。",
-                      )
-                    )
-                      await run(() => command("storage_move", { target }));
-                  }}
-                >
-                  <FolderOpen size={15} />
-                  选择目录并迁移
-                </button>
-                <button
-                  disabled={busy || info.dataRoot === info.defaultRoot}
-                  onClick={() => {
-                    if (confirm("迁移回默认目录？存在旧数据时将拒绝覆盖。"))
-                      void run(() =>
-                        command("storage_move", { target: info.defaultRoot }),
-                      );
-                  }}
-                >
-                  恢复默认路径
-                </button>
-              </div>
-            </section>
-            <section>
-              <h2>备份与恢复</h2>
-              <p className="muted">
-                备份包含数据库、加密的模型 API Key 与文档原件，不包含本机主密钥及登录密码。恢复加密配置需要保留原本机主密钥。
-              </p>
-              <div className="actions">
-                <button
-                  disabled={busy}
-                  onClick={async () => {
-                    const destination = await save({
-                      defaultPath: `workbench-${new Date().toISOString().slice(0, 10)}.zip`,
-                      filters: [{ name: "工作台备份", extensions: ["zip"] }],
-                    });
-                    if (destination)
-                      await run(() => command("data_backup", { destination }));
-                  }}
-                >
-                  <Download size={15} />
-                  导出完整备份
-                </button>
-                <button
-                  disabled={busy}
-                  onClick={async () => {
-                    const archive = await open({
-                      filters: [{ name: "工作台备份", extensions: ["zip"] }],
-                    });
-                    if (typeof archive !== "string") return;
-                    const target = await open({
-                      directory: true,
-                      title: "选择空目录用于恢复",
-                    });
-                    if (
-                      typeof target === "string" &&
-                      confirm(
-                        "验证备份并恢复到所选空目录？验证成功后切换，当前数据保留。",
-                      )
-                    )
-                      await run(() =>
-                        command("data_restore", { archive, target }),
-                      );
-                  }}
-                >
-                  <Upload size={15} />
-                  恢复备份
-                </button>
-              </div>
-              {busy && <p role="status">正在处理数据，请勿退出应用。</p>}
-            </section>
-          </>
+          <BackupSettings
+            key={`${info.workspaceId}:${info.dataRoot}`}
+            info={info}
+            onRestored={async () => { await Promise.all([refresh(), onInfo()]); }}
+            notify={notify}
+          />
         )}
         {tab === "mail" && <MailSettings />}
         {tab === "ding-calendar" && (

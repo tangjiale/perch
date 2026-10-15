@@ -1,11 +1,12 @@
 import { DateTime } from "luxon";
 import type { ZentaoBug } from "./types";
 
-export type BugSortField = "status" | "priority" | "severity" | "openedDate" | "deadline";
+export type BugSortField = "status" | "confirmed" | "priority" | "severity" | "openedDate" | "deadline";
 export type BugSortDirection = "asc" | "desc";
 
 function valueOf(bug: ZentaoBug, field: BugSortField): number | undefined {
   if (field === "status") return { active: 0, resolved: 1, closed: 2 }[bug.status];
+  if (field === "confirmed") return typeof bug.confirmed === "boolean" ? Number(bug.confirmed) : undefined;
   if (field === "priority" || field === "severity") {
     return Number.isFinite(bug[field]) ? bug[field] : undefined;
   }
@@ -16,7 +17,7 @@ function valueOf(bug: ZentaoBug, field: BugSortField): number | undefined {
 }
 
 export function sortBugs(bugs: ZentaoBug[], field: BugSortField, direction: BugSortDirection) {
-  // 使用禅道业务创建时间，不能用本地导入时间代替；空日期始终排末尾。
+  // 使用禅道业务创建时间，不能用本地导入时间代替；未知值始终排末尾。
   const compare = (a: number | undefined, b: number | undefined, order: BugSortDirection) => {
     if (a === undefined) return b === undefined ? 0 : 1;
     if (b === undefined) return -1;

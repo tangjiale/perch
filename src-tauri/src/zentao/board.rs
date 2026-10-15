@@ -32,7 +32,7 @@ pub(super) fn validate_placement(
     if current["revision"] != value["revision"] {
         return Err("任务已被修改，请刷新后重新拖动".into());
     }
-    if !["todo", "doing", "done", "closed"].contains(&text(value, "status")) {
+    if !["todo", "doing", "suspended", "done"].contains(&text(value, "status")) {
         return Err("无效的任务状态".into());
     }
     if let Some(before) = before {
@@ -123,9 +123,14 @@ mod tests {
         let mut c = save(&store, c, &Some(Some("b".into()))).unwrap();
         assert_eq!(order(&store, "todo"), ["a", "c", "b"]);
         assert_eq!(c["notes"], "保留备注");
-        c["status"] = json!("closed");
+        c["status"] = json!("suspended");
         let mut c = save(&store, c, &Some(None)).unwrap();
-        assert_eq!(order(&store, "closed"), ["c"]);
+        assert_eq!(order(&store, "suspended"), ["c"]);
+        for status in ["done", "doing"] {
+            c["status"] = json!(status);
+            c = save(&store, c, &Some(None)).unwrap();
+            assert_eq!(order(&store, status), ["c"]);
+        }
         c["status"] = json!("todo");
         save(&store, c, &Some(Some("a".into()))).unwrap();
         assert_eq!(order(&store, "todo"), ["c", "a", "b"]);
@@ -137,6 +142,11 @@ mod tests {
         let a = task(&store, "a", "todo", 1);
         task(&store, "b", "doing", 1);
         let before = store.snapshot().unwrap()["tasks"].clone();
+        let mut legacy_closed = a.clone();
+        legacy_closed["status"] = json!("closed");
+        assert!(save(&store, legacy_closed, &Some(None))
+            .unwrap_err()
+            .contains("状态"));
         for id in ["a", "b", "missing"] {
             assert!(save(&store, a.clone(), &Some(Some(id.into()))).is_err());
         }

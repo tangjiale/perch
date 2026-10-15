@@ -296,6 +296,17 @@ mod tests {
         json!({"id":99,"project":12,"name":"执行名称","desc":"执行说明","type":"sprint","lifetime":"short","status":"wait","PM":{"account":"me","realname":"本人"},"begin":"2026-09-08","end":"2026-09-09"})
     }
     #[test]
+    fn creation_payload_does_not_include_local_reminder() {
+        let mut value = draft();
+        value["reminder"] = json!({"enabled":true,"advanceMinutes":1440});
+        assert!(crate::data::validate_task_reminder(&value).is_ok());
+        let request = payload(&value, "12", "me").unwrap();
+        assert!(request.get("reminder").is_none());
+        assert!(request.get("advanceMinutes").is_none());
+        assert_eq!(request["end"], "2026-09-09");
+    }
+
+    #[test]
     fn creation_errors_expose_fields_without_response_secrets() {
         let error = json!({"error":400,"message":{"name":["名称已经存在"],"end":"不能晚于项目结束日期","token":"private-value"}});
         let details = validation::response_validation(&error).unwrap();

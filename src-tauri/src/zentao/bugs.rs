@@ -19,6 +19,14 @@ fn account_of(value: &Value) -> Result<String, String> {
 fn reference(value: &Value) -> Option<String> {
     remote_id(value).or_else(|_| remote_id(&value["id"])).ok()
 }
+fn confirmation(remote: &Value) -> Result<Value, String> {
+    match remote.get("confirmed") {
+        None | Some(Value::Null) => Ok(Value::Null),
+        Some(value) if value == true || value == 1 || value == "1" => Ok(json!(true)),
+        Some(value) if value == false || value == 0 || value == "0" => Ok(json!(false)),
+        _ => Err("禅道 BUG 确认字段无效，请重新同步".into()),
+    }
+}
 fn normalized(remote: &Value, connection: &str, old: Option<&Value>) -> Result<Value, String> {
     if remote.get("assignedTo").is_none() {
         return Err("禅道 BUG 缺少指派字段，请重新同步".into());
@@ -35,6 +43,7 @@ fn normalized(remote: &Value, connection: &str, old: Option<&Value>) -> Result<V
         value["id"] = old["id"].clone();
         value["revision"] = old["revision"].clone();
     }
+    value["confirmed"] = confirmation(remote)?;
     value["lastAssignedTo"] = if text(&value, "assignedTo").is_empty() {
         old.map(|row| row["lastAssignedTo"].clone())
             .unwrap_or(Value::Null)
@@ -67,7 +76,7 @@ fn normalized(remote: &Value, connection: &str, old: Option<&Value>) -> Result<V
 }
 
 impl Adapter<'_> {
-    async fn bug_request(
+    pub(super) async fn bug_request(
         &self,
         id: &str,
         operation: Option<(&str, &Value)>,
@@ -227,7 +236,7 @@ pub(super) async fn sync_inner(
     Ok(format!("同步完成，共 {count} 个指派给我的 BUG"))
 }
 
-fn verify_baseline(old: &Value, remote: &Value, account: &str) -> Result<(), String> {
+pub(super) fn verify_baseline(old: &Value, remote: &Value, account: &str) -> Result<(), String> {
     let current = normalized(remote, text(old, "connectionId"), Some(old))?;
     // 本人刚关闭的缓存允许在下次同步清理前重新激活；不能放行其他人关闭或转派的记录。
     let known_closed = text(old, "status") == "closed"
@@ -237,6 +246,9 @@ fn verify_baseline(old: &Value, remote: &Value, account: &str) -> Result<(), Str
         && text(old, "lastAssignedTo") == account;
     if text(&current, "assignedTo") != account && !known_closed {
         return Err("该 BUG 已不再指派给当前账号，请重新同步".into());
+    }
+    if old.get("confirmed").unwrap_or(&Value::Null) != &current["confirmed"] {
+        return Err("BUG 远端确认状态已变化，请同步后再修改".into());
     }
     for key in [
         "remoteId",
@@ -302,6 +314,36 @@ fn transition_payload(
 ) -> Result<(&'static str, Value, &'static str), String> {
     let mut payload = json!({"comment":text(input,"comment")});
     match action {
+        "confirm" => {
+            if text(old, "status") != "active" {
+                return Err("只有激活的 BUG 可以确认".into());
+            }
+            match old["confirmed"].as_bool() {
+                Some(false) => (),
+                Some(true) => return Err("该 BUG 已确认，请刷新列表".into()),
+                None => return Err("BUG 确认状态未知，请先同步".into()),
+            }
+            Ok(("confirm", payload, "active"))
+        }
+        "assign" => {
+            if text(old, "status") == "closed" {
+                return Err("已关闭 BUG 不能指派，请先激活".into());
+            }
+            let account = text(input, "assignedTo").trim();
+            if account.is_empty() || account == "closed" {
+                return Err("请选择有效指派账号".into());
+            }
+            payload["assignedTo"] = json!(account);
+            Ok((
+                "assign",
+                payload,
+                if text(old, "status") == "resolved" {
+                    "resolved"
+                } else {
+                    "active"
+                },
+            ))
+        }
         "resolve" => {
             if text(old, "status") != "active" {
                 return Err("只有激活的 BUG 可以解决".into());
@@ -371,6 +413,20 @@ fn transition_payload(
     }
 }
 
+fn verify_confirmation_result(action: &str, result: &Value, remote: &Value) -> Result<(), String> {
+    if action == "confirm" {
+        if text(result, "assignedTo") != account_of(&remote["assignedTo"])? {
+            return Err("禅道确认后指派人与预期不一致，请同步核对；未保存本地修改".into());
+        }
+        if result["confirmed"] != true {
+            return Err("禅道未确认 BUG，请同步核对；未保存本地修改".into());
+        }
+    } else if action == "assign" && result["confirmed"] != confirmation(remote)? {
+        return Err("禅道确认状态与预期不一致，请同步核对；未保存本地修改".into());
+    }
+    Ok(())
+}
+
 async fn mutate(
     state: State<'_, AppState>,
     id: String,
@@ -413,6 +469,7 @@ async fn mutate(
             "connectionId",
             "remoteId",
             "status",
+            "confirmed",
             "productId",
             "projectId",
         ] {
@@ -452,6 +509,7 @@ async fn mutate(
     {
         return Err("禅道处理结果与预期不一致，请同步核对；未保存本地修改".into());
     }
+    verify_confirmation_result(action, &value, &remote)?;
     if let Some(edit) = edit {
         for key in ["title", "steps", "severity", "priority", "assignedTo"] {
             if value[key] != edit[key] {
@@ -475,6 +533,12 @@ async fn mutate(
     let store = state.store.lock().map_err(|e| e.to_string())?;
     if store.workspace_id != workspace || store.generation != generation {
         return Err("工作空间已切换，禅道可能已更新，请重新同步".into());
+    }
+    if action == "assign" && text(&value, "assignedTo") != account {
+        store
+            .remove_transferred_bug(&old, &connection)
+            .map_err(|error| format!("本地缓存更新失败，禅道可能已更新，请重新同步：{error}"))?;
+        return Ok(value);
     }
     store
         .save_batch(
@@ -640,6 +704,8 @@ mod tests {
             ("edit", "PUT", "bugs/1"),
             ("resolve", "POST", "bugs/1/resolve"),
             ("close", "POST", "bugs/1/close"),
+            ("confirm", "POST", "bugs/1/confirm"),
+            ("assign", "POST", "bugs/1/assign"),
             ("active", "POST", "bugs/1/active"),
         ] {
             let (base, server) = auth_server(vec![(200, bug(1, "me"))]);
@@ -665,6 +731,86 @@ mod tests {
             .await
             .is_err());
         server.join().unwrap();
+    }
+    #[tokio::test]
+    async fn action_response_must_target_requested_bug() {
+        for action in ["confirm", "assign"] {
+            let (base, server) = auth_server(vec![(200, bug(2, "me"))]);
+            assert!(adapter(&base)
+                .bug_request("1", Some((action, &json!({}))))
+                .await
+                .is_err());
+            assert_eq!(server.join().unwrap().len(), 1);
+        }
+        let mut remote = bug(1, "me");
+        remote["confirmed"] = json!(1);
+        let mut result = normalized(&remote, "c", None).unwrap();
+        result["assignedTo"] = json!("other");
+        assert!(verify_confirmation_result("confirm", &result, &remote).is_err());
+    }
+    #[test]
+    fn confirmation_values_conflicts_and_action_guards() {
+        let mut remote = bug(1, "me");
+        let unknown = normalized(&remote, "c", None).unwrap();
+        assert!(unknown["confirmed"].is_null());
+        assert!(transition_payload("confirm", &json!({}), &unknown).is_err());
+        for raw in [json!(false), json!(0), json!("0")] {
+            remote["confirmed"] = raw;
+            let old = normalized(&remote, "c", None).unwrap();
+            assert_eq!(old["confirmed"], false);
+            let (action, payload, status) =
+                transition_payload("confirm", &json!({"comment":"已复现"}), &old).unwrap();
+            assert_eq!(action, "confirm");
+            assert_eq!(status, "active");
+            assert_eq!(payload, json!({"comment":"已复现"}));
+            assert!(verify_confirmation_result(action, &old, &remote).is_err());
+            remote["confirmed"] = json!("1");
+            let confirmed = normalized(&remote, "c", None).unwrap();
+            assert_eq!(confirmed["confirmed"], true);
+            assert!(transition_payload("confirm", &json!({}), &confirmed).is_err());
+            assert!(verify_baseline(&old, &remote, "me").is_err());
+            verify_confirmation_result(action, &confirmed, &remote).unwrap();
+        }
+        remote["confirmed"] = json!("unexpected");
+        assert!(normalized(&remote, "c", None).is_err());
+    }
+    #[tokio::test]
+    async fn confirm_assign_payloads_and_failed_writes_are_not_replayed() {
+        let mut remote = bug(1, "me");
+        remote["confirmed"] = json!(0);
+        let old = normalized(&remote, "c", None).unwrap();
+        assert!(transition_payload("assign", &json!({}), &old).is_err());
+        for (action, input, expected) in [
+            (
+                "confirm",
+                json!({"comment":"确认备注"}),
+                json!({"comment":"确认备注"}),
+            ),
+            (
+                "assign",
+                json!({"assignedTo":"other","comment":"指派备注"}),
+                json!({"assignedTo":"other","comment":"指派备注"}),
+            ),
+        ] {
+            let (path, payload, _) = transition_payload(action, &input, &old).unwrap();
+            let (base, server) = auth_server(vec![(200, remote.clone())]);
+            adapter(&base)
+                .bug_request("1", Some((path, &payload)))
+                .await
+                .unwrap();
+            let requests = server.join().unwrap();
+            assert!(requests[0].starts_with(&format!("POST /api.php/v1/bugs/1/{action} ")));
+            let body = requests[0].split("\r\n\r\n").nth(1).unwrap();
+            assert_eq!(serde_json::from_str::<Value>(body).unwrap(), expected);
+            for status in [400, 403, 500] {
+                let (base, server) = auth_server(vec![(status, json!({"error":"失败"}))]);
+                assert!(adapter(&base)
+                    .bug_request("1", Some((path, &payload)))
+                    .await
+                    .is_err());
+                assert_eq!(server.join().unwrap().len(), 1);
+            }
+        }
     }
     #[test]
     fn baseline_checks_owner_version_and_fields_and_payloads_require_business_fields() {
@@ -706,6 +852,179 @@ mod tests {
         );
     }
     #[test]
+    fn unchanged_bug_sync_preserves_open_dialog_revision_and_timestamps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = crate::storage::Store::open_at(tmp.path().join("source")).unwrap();
+        let connection = store
+            .save("connection", json!({"id":"c","name":"公司"}))
+            .unwrap();
+        let remote = bug(1, "me");
+        let opened = store
+            .save_bug_snapshot(vec![normalized(&remote, "c", None).unwrap()], &connection)
+            .unwrap()
+            .remove(0);
+        let history_count =
+            || {
+                store.conn.lock().unwrap().query_row(
+                "SELECT COUNT(*) FROM entity_history WHERE entity_type='bugs' AND entity_id=?1",
+                [text(&opened, "id")],
+                |row| row.get::<_, i64>(0),
+            ).unwrap()
+            };
+        let original_history_count = history_count();
+        for _ in 0..3 {
+            let snapshot = store.snapshot().unwrap();
+            let connection = get(&snapshot, "connections", "c").unwrap();
+            let cached = get(&snapshot, "bugs", text(&opened, "id")).unwrap();
+            let synced = store
+                .save_bug_snapshot(
+                    vec![normalized(&remote, "c", Some(&cached)).unwrap()],
+                    &connection,
+                )
+                .unwrap()
+                .remove(0);
+            for field in ["revision", "createdAt", "updatedAt"] {
+                assert_eq!(synced[field], opened[field], "无变化同步不应修改 {field}");
+            }
+            let latest = get(&store.snapshot().unwrap(), "connections", "c").unwrap();
+            assert_eq!(
+                latest["revision"].as_i64(),
+                Some(connection["revision"].as_i64().unwrap() + 1),
+                "无变化同步仍须发布连接同步状态"
+            );
+            assert!(latest["lastBugSync"].as_i64().unwrap() > 0);
+            assert!(
+                latest["lastBugSync"].as_i64().unwrap()
+                    >= connection["lastBugSync"].as_i64().unwrap()
+            );
+            assert_eq!(
+                history_count(),
+                original_history_count,
+                "无变化同步不应新增 BUG 历史"
+            );
+        }
+        // 弹窗仍持有打开时的版本；无变化同步后应能正常提交修改。
+        let mut assigned = opened.clone();
+        assigned["assignedTo"] = json!("other");
+        let saved = store
+            .save_batch(vec![("bug", assigned)], vec![], true)
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            saved["revision"].as_i64(),
+            Some(opened["revision"].as_i64().unwrap() + 1)
+        );
+        assert_eq!(saved["assignedTo"], "other");
+    }
+
+    #[test]
+    fn changed_bug_sync_keeps_revision_conflicts_and_atomic_scope_checks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = crate::storage::Store::open_at(tmp.path().join("source")).unwrap();
+        let connection = store
+            .save("connection", json!({"id":"c","name":"公司"}))
+            .unwrap();
+        let mut remote = bug(1, "me");
+        let mut cached = store
+            .save_bug_snapshot(
+                vec![
+                    normalized(&remote, "c", None).unwrap(),
+                    normalized(&bug(2, "me"), "c", None).unwrap(),
+                ],
+                &connection,
+            )
+            .unwrap()
+            .remove(0);
+        for (field, value) in [
+            ("title", json!("修改标题")),
+            ("steps", json!("<p>修改复现步骤</p>")),
+            ("status", json!("resolved")),
+            (
+                "assignedTo",
+                json!({"account":"other","realname":"其他用户"}),
+            ),
+            ("lastEditedDate", json!("2026-09-09T12:00:00+08:00")),
+        ] {
+            let previous = cached.clone();
+            remote[field] = value;
+            let snapshot = store.snapshot().unwrap();
+            let connection = get(&snapshot, "connections", "c").unwrap();
+            let second = get(&snapshot, "bugs", "zentao-bug-c-2").unwrap();
+            cached = store
+                .save_bug_snapshot(
+                    vec![normalized(&remote, "c", Some(&cached)).unwrap(), second],
+                    &connection,
+                )
+                .unwrap()
+                .remove(0);
+            assert_eq!(
+                cached["revision"].as_i64(),
+                Some(previous["revision"].as_i64().unwrap() + 1),
+                "业务变化 {field} 必须使旧版本过期"
+            );
+            assert!(store
+                .save_batch(vec![("bug", previous)], vec![], true)
+                .is_err());
+        }
+        let snapshot = store.snapshot().unwrap();
+        let connection = get(&snapshot, "connections", "c").unwrap();
+        let mut stale_identical = normalized(&remote, "c", Some(&cached)).unwrap();
+        stale_identical["revision"] = json!(cached["revision"].as_i64().unwrap() - 1);
+        assert!(store
+            .save_bug_snapshot(vec![stale_identical], &connection)
+            .is_err());
+        assert_eq!(
+            store.snapshot().unwrap(),
+            snapshot,
+            "旧版本失败不能清理其他 BUG 或更新连接"
+        );
+        let mut wrong_scope = cached;
+        wrong_scope["connectionId"] = json!("other");
+        assert!(store
+            .save_bug_snapshot(vec![wrong_scope], &connection)
+            .is_err());
+        assert_eq!(
+            store.snapshot().unwrap(),
+            snapshot,
+            "跨连接输入不能部分发布"
+        );
+    }
+
+    #[test]
+    fn transferred_cache_removal_checks_revisions_and_preserves_other_bugs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = crate::storage::Store::open_at(tmp.path().join("source")).unwrap();
+        let connection = store
+            .save("connection", json!({"id":"c","name":"公司"}))
+            .unwrap();
+        let values = store
+            .save_batch(
+                vec![
+                    ("bug", normalized(&bug(1, "me"), "c", None).unwrap()),
+                    ("bug", normalized(&bug(2, "me"), "c", None).unwrap()),
+                ],
+                vec![],
+                true,
+            )
+            .unwrap();
+        let mut stale = values[0].clone();
+        stale["revision"] = json!(0);
+        assert!(store.remove_transferred_bug(&stale, &connection).is_err());
+        assert_eq!(
+            store.snapshot().unwrap()["bugs"].as_array().unwrap().len(),
+            2
+        );
+        store
+            .remove_transferred_bug(&values[0], &connection)
+            .unwrap();
+        let remaining = store.snapshot().unwrap();
+        assert_eq!(remaining["bugs"].as_array().unwrap().len(), 1);
+        assert_eq!(remaining["bugs"][0]["remoteId"], "2");
+        assert!(store
+            .remove_transferred_bug(&values[0], &connection)
+            .is_err());
+    }
+    #[test]
     fn schema_three_upgrade_preserves_existing_data_and_accepts_old_backup() {
         use std::io::Write;
         let tmp = tempfile::tempdir().unwrap();
@@ -714,7 +1033,7 @@ mod tests {
         let project = store.save("project", json!({"name":"原有项目"})).unwrap();
         let db = store.generation.join("workbench.sqlite3");
         let workspace = store.workspace_id.clone();
-        store.conn.lock().unwrap().execute_batch("DROP TABLE provider_credentials; DROP TABLE bugs; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        store.conn.lock().unwrap().execute_batch("DROP TABLE provider_credentials; DROP TABLE bugs; DROP TABLE task_reminder_deliveries; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
         drop(store);
         let bytes = std::fs::read(db).unwrap();
         let archive = tmp.path().join("v3.zip");

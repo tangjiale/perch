@@ -1,5 +1,7 @@
 (async () => {
   if(location.pathname !== '/tests/task-rich-text.html') throw Error('仅允许隔离富文本测试');
+  const { default: interactionScript } = await import('/src-tauri/src/desktop-interaction.js?raw');
+  new Function(interactionScript)();
   const wait=()=>new Promise(resolve=>setTimeout(resolve,200));
   const assert=(value,message)=>{if(!value)throw Error(message);};
   await wait();
@@ -7,6 +9,12 @@
   assert(area.textContent.includes('撤销接口') && !area.textContent.includes('<p>'), '富文本应显示正文');
   assert(!window.unsafeRich && !area.querySelector('script'), '不执行不可信HTML');
   assert(area.querySelector('img')?.naturalWidth===600, '占位图片应通过IPC正常回显');
+  area.querySelector('img').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
+  await wait();
+  const menu=document.querySelector('[role=menu][aria-label=图片操作]');
+  assert(menu?.textContent.includes('复制图片') && menu.textContent.includes('下载图片'), '任务备注图片显示中文右键菜单');
+  menu.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  await wait();
   assert(window.richCalls.some(call=>call.name==='zentao_task_image_read' && call.args.source==='{708.png}'), '保留原始图片引用读取');
   area.focus(); const selection=window.getSelection(); selection.selectAllChildren(area); selection.collapseToEnd();
   const bytes=Uint8Array.from(atob(window.richPng.split(',')[1]),c=>c.charCodeAt(0));

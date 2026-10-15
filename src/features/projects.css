@@ -2,6 +2,16 @@
   width: 100%;
   overflow-x: auto;
 }
+.task-detail-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.task-detail-bar > button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
 .task-remote-notice {
   display: grid;
   gap: 10px;
@@ -203,9 +213,8 @@
 .project-progress-done {
   background: var(--theme-green, #438766);
 }
-.project-progress-closed {
-  background: var(--muted);
-  opacity: 0.45;
+.project-progress-suspended {
+  background: var(--theme-amber, #ae863c);
 }
 .project-bug-active {
   background: var(--theme-red, #bf6871);

@@ -1,6 +1,7 @@
 import { useRef, useState, type AriaAttributes, type ReactNode } from "react";
 import * as Select from "@radix-ui/react-select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
+import GlassSearchSelect from "./GlassSearchSelect";
 import "./glass-select.css";
 
 export interface GlassSelectOption {
@@ -21,9 +22,15 @@ export interface GlassSelectProps extends AriaAttributes {
   title?: string;
   placeholder?: string;
   icon?: ReactNode;
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }
 
-export default function GlassSelect({
+export default function GlassSelect({ searchable, searchPlaceholder, ...props }: GlassSelectProps) {
+  return searchable ? <GlassSearchSelect {...props} searchPlaceholder={searchPlaceholder} /> : <StaticGlassSelect {...props} />;
+}
+
+function StaticGlassSelect({
   options,
   value,
   onValueChange,
@@ -87,7 +94,11 @@ export default function GlassSelect({
           sideOffset={7}
           collisionPadding={12}
           align="start"
-          onEscapeKeyDown={(event) => event.stopPropagation()}
+          onEscapeKeyDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(false);
+          }}
         >
           <Select.ScrollUpButton className="glass-select-scroll">
             <ChevronUp size={15} />

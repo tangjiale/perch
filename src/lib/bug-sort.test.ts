@@ -26,3 +26,14 @@ it("状态和数值按业务顺序切换，截止日期空值始终置后", () =
   expect(sortBugs(bugs, "deadline", "asc").map((b) => b.id)).toEqual(["c", "a", "b"]);
   expect(sortBugs(bugs, "deadline", "desc").map((b) => b.id)).toEqual(["a", "c", "b"]);
 });
+
+it("确认状态按未确认与已确认排序，旧缓存和未知状态始终置后", () => {
+  const bugs = [
+    { id: "confirmed", confirmed: true },
+    { id: "legacy" },
+    { id: "unconfirmed", confirmed: false },
+    { id: "unknown", confirmed: null },
+  ] as ZentaoBug[];
+  expect(sortBugs(bugs, "confirmed", "asc").map(bug => bug.id)).toEqual(["unconfirmed", "confirmed", "legacy", "unknown"]);
+  expect(sortBugs(bugs, "confirmed", "desc").map(bug => bug.id)).toEqual(["confirmed", "unconfirmed", "legacy", "unknown"]);
+});

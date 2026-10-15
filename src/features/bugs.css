@@ -109,7 +109,8 @@ html[data-theme="dark"] .bugs-title:hover:not(:disabled) {
   overflow-wrap: anywhere;
   font-weight: 600;
 }
-.bug-status {
+.bug-status,
+.bug-confirmation {
   display: inline-flex;
   padding: 3px 8px;
   border-radius: 6px;
@@ -126,10 +127,44 @@ html[data-theme="dark"] .bugs-title:hover:not(:disabled) {
   color: #247050;
   background: #e9f4ed;
 }
+.bug-confirmation-yes {
+  color: #247050;
+  background: #e9f4ed;
+}
+.bug-confirmation-no {
+  color: #975315;
+  background: #fff1dd;
+}
 .bugs-urgent {
   color: #bd3044;
   font-weight: 600;
 }
+.bugs-severity-cell {
+  text-align: center;
+  white-space: nowrap;
+}
+.bug-severity {
+  display: inline-flex;
+  width: 24px;
+  height: 27px;
+  vertical-align: middle;
+  color: var(--muted);
+}
+.bug-severity svg {
+  width: 100%;
+  height: 100%;
+}
+.bug-severity text {
+  font-family: Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+}
+/* 禅道 22.0 严重程度配色；深色下提亮最高级红色，保留等级色相。 */
+.bug-severity[data-severity="1"] { color: #b91c1c; }
+.bug-severity[data-severity="2"] { color: #f97316; }
+.bug-severity[data-severity="3"] { color: #faae1a; }
+.bug-severity[data-severity="4"] { color: #b89664; }
+[data-theme="dark"] .bug-severity[data-severity="1"] { color: #ff6b6b; }
 [data-theme="dark"] .bug-status-active {
   color: #f5b497;
   background: #442e26;
@@ -137,6 +172,14 @@ html[data-theme="dark"] .bugs-title:hover:not(:disabled) {
 [data-theme="dark"] .bug-status-resolved {
   color: #8ed0aa;
   background: #243c31;
+}
+[data-theme="dark"] .bug-confirmation-yes {
+  color: #8ed0aa;
+  background: #243c31;
+}
+[data-theme="dark"] .bug-confirmation-no {
+  color: #f1bd79;
+  background: #443322;
 }
 [data-theme="dark"] .bugs-urgent {
   color: #ff9daa;
@@ -164,6 +207,11 @@ html[data-theme="dark"] .bugs-title:hover:not(:disabled) {
 .bugs-detail-bar {
   justify-content: space-between;
 }
+.bugs-detail-badges {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
 .bugs-steps {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -184,6 +232,35 @@ html[data-theme="dark"] .bugs-title:hover:not(:disabled) {
 }
 .bugs-steps pre {
   white-space: pre-wrap;
+}
+.bugs-step-editor h3 {
+  margin: 0 0 12px;
+}
+.bugs-step-image {
+  display: block;
+  margin: 8px 0;
+}
+.bugs-step-image-button {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+.bugs-step-image-button img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.bugs-step-image-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--line);
+  color: var(--muted);
 }
 .bugs-detail-meta {
   display: flex;

@@ -122,7 +122,7 @@ fn schedule_date(task: &Value, field: &str) -> Option<NaiveDate> {
 }
 
 fn is_overdue(task: &Value, now: DateTime<chrono::Utc>) -> bool {
-    if task["status"] == "closed" {
+    if task["status"] == "done" {
         return false;
     }
     let schedule = &task["schedule"];
@@ -369,19 +369,20 @@ mod tests {
         )
     }
     #[test]
-    fn summary_excludes_closed_expiry_and_sorts_open_tasks() {
+    fn summary_excludes_done_expiry_and_sorts_active_tasks() {
         let value = json!({"tasks":[
             {"title":"今日计划", "status":"todo", "schedule":{"kind":"all_day","start":"2026-09-08"}},
             {"title":"过期任务", "status":"doing", "schedule":{"kind":"all_day","start":"2026-09-07","end":"2026-09-08","timezone":"Asia/Shanghai"}},
             {"title":"已完成", "status":"done", "schedule":{"kind":"all_day","start":"2026-09-01","end":"2026-09-02","timezone":"Asia/Shanghai"}},
-            {"title":"已关闭", "status":"closed", "schedule":{"kind":"all_day","start":"2026-09-01","end":"2026-09-02","timezone":"Asia/Shanghai"}},
+            {"title":"已挂起", "status":"suspended", "schedule":{"kind":"all_day","start":"2026-09-01","end":"2026-09-02","timezone":"Asia/Shanghai"}},
             {"title":"错误日期", "status":"todo", "schedule":{"kind":"all_day","end":"2026-02-30"}}
         ]});
         let result = summary(&value, date("2026-09-08").unwrap());
         assert!(result.contains("今日待办 1 · 正在做 1 · 逾期 2"));
         assert!(result.lines().nth(1).unwrap().contains("过期任务"));
         assert!(!result.contains("已完成"));
-        assert!(!result.contains("已关闭"));
+        assert!(!result.contains("已挂起"));
+        assert!(!is_overdue(&value["tasks"][2], chrono::Utc::now()));
     }
     #[test]
     fn summary_limits_untrusted_titles_and_includes_multiday() {

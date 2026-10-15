@@ -53,3 +53,29 @@ export function taskScheduleDates(schedule: Task["schedule"]) {
   };
   return { start: format(schedule?.start), end: format(schedule?.end, true) };
 }
+
+/** 列表紧凑展示完整排期，全天结束日还原为用户选择的包含日期。 */
+export function taskScheduleLabel(schedule: Task["schedule"]): string {
+  if (!schedule) return "未排期";
+  const start = DateTime.fromISO(schedule.start, { zone: schedule.timezone });
+  if (!start.isValid) return "未排期";
+  let end = schedule.end
+    ? DateTime.fromISO(schedule.end, { zone: schedule.timezone })
+    : undefined;
+  if (end && schedule.kind === "all_day") end = end.minus({ days: 1 });
+  if (end && (!end.isValid || end < start)) end = undefined;
+  const dateFormat = end && end.year !== start.year ? "yyyy年M月d日" : "M月d日";
+  if (schedule.kind === "all_day") {
+    return (
+      start.toFormat(dateFormat) +
+      (end && !end.hasSame(start, "day") ? ` – ${end.toFormat(dateFormat)}` : "") +
+      " 全天"
+    );
+  }
+  return (
+    start.toFormat(`${dateFormat} HH:mm`) +
+    (end
+      ? ` – ${end.toFormat(end.hasSame(start, "day") ? "HH:mm" : `${dateFormat} HH:mm`)}`
+      : "")
+  );
+}

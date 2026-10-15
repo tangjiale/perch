@@ -19,6 +19,7 @@ export interface Base {
   updatedAt?: number;
 }
 export type Status = "todo" | "doing" | "done" | "closed";
+export type TaskStatus = "todo" | "doing" | "suspended" | "done";
 export interface Schedule {
   kind: "timed" | "all_day";
   timezone: string;
@@ -29,10 +30,11 @@ export interface Task extends Base {
   title: string;
   notes: string;
   source: "local" | "zentao";
-  status: Status;
+  status: TaskStatus;
   priority: "low" | "normal" | "high";
   projectId?: string;
   schedule?: Schedule;
+  reminder?: { enabled: boolean; advanceMinutes: number };
   sortOrder: number;
   remoteType?: string;
   remoteId?: string;
@@ -50,6 +52,21 @@ export interface ZentaoTaskAssignment {
   assignedBy: string | null;
   assignedAt: string | null;
   createdBy: string | null;
+}
+export interface ZentaoBugHistoryEntry {
+  id: string;
+  actor: string;
+  action: string;
+  date: string | null;
+  extra: string;
+  comment: string;
+  changes: { field: string; old: string; new: string }[];
+}
+export interface ZentaoBugHistory {
+  assignedBy: string | null;
+  assignedAt: string | null;
+  createdBy: string | null;
+  entries: ZentaoBugHistoryEntry[];
 }
 export interface Project extends Base {
   name: string;
@@ -193,12 +210,18 @@ export interface Snapshot {
   connections: Connection[];
 }
 
+export interface ZentaoAssignee {
+  account: string;
+  realname: string;
+}
+
 export interface ZentaoBug extends Base {
   connectionId: string;
   remoteId: string;
   title: string;
   steps: string;
   status: "active" | "resolved" | "closed";
+  confirmed?: boolean | null;
   assignedTo: string;
   assignedToName?: string;
   lastAssignedTo?: string;
@@ -212,6 +235,38 @@ export interface ZentaoBug extends Base {
   openedDate?: string;
   resolvedDate?: string;
   deadline?: string;
+}
+export interface NatappTunnel {
+  forwardingUrl?: string | null;
+  localAddress?: string | null;
+  id: string;
+  name: string;
+  revision: number;
+  hasAuthToken: boolean;
+  status: "stopped" | "starting" | "running" | "error";
+  pid?: number | null;
+  lastError?: string | null;
+  startedAt?: string | null;
+}
+export interface NatappState {
+  installed: boolean;
+  installing: boolean;
+  platform: string;
+  version: string;
+  dataDir: string;
+  downloadedBytes: number;
+  totalBytes?: number | null;
+  tunnels: NatappTunnel[];
+}
+export interface NatappSaveInput {
+  id?: string;
+  name: string;
+  revision?: number;
+  authToken?: string;
+}
+export interface NatappLogs {
+  text: string;
+  truncated: boolean;
 }
 export interface StorageInfo {
   dataRoot: string;
@@ -229,4 +284,11 @@ export const statuses: Record<Status, string> = {
   doing: "正在做",
   done: "已完成",
   closed: "已关闭",
+};
+
+export const taskStatuses: Record<TaskStatus, string> = {
+  todo: "待做",
+  doing: "正在做",
+  suspended: "已挂起",
+  done: "已完成",
 };

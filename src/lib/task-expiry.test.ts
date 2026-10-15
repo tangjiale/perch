@@ -14,8 +14,8 @@ const base: Task = {
   sortOrder: 0,
 };
 describe("任务过期标签", () => {
-  it("已关闭不标记过期，其他状态仍按结束时间判断", () => {
-    for (const status of ["todo", "doing", "done", "closed"] as const)
+  it("已完成不标记过期，其他状态仍按结束时间判断", () => {
+    for (const status of ["todo", "doing", "suspended", "done"] as const)
       expect(
         isTaskExpired(
           {
@@ -30,7 +30,7 @@ describe("任务过期标签", () => {
           },
           now,
         ),
-      ).toBe(status !== "closed");
+      ).toBe(status !== "done");
   });
   it("截止当天未过期，跨日全天范围在结束后过期", () => {
     expect(

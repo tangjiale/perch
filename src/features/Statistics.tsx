@@ -258,8 +258,8 @@ export default function Statistics({
               },
             ]
           : [],
-      series: (["todo", "doing", "done", "closed"] as const).map((key, i) => ({
-        name: ["待做", "正在做", "已完成", "已关闭"][i],
+      series: (["todo", "doing", "suspended", "done"] as const).map((key, i) => ({
+        name: ["待做", "正在做", "已挂起", "已完成"][i],
         type: "bar",
         stack: "tasks",
         barMaxWidth: 22,
@@ -579,7 +579,7 @@ export default function Statistics({
                 未排期<strong>{t.unscheduled}</strong>
               </span>
               <span>
-                已关闭<strong>{t.closed}</strong>
+                已挂起<strong>{t.suspended}</strong>
               </span>
               <Link to="/tasks">查看任务</Link>
             </div>
@@ -612,10 +612,10 @@ export default function Statistics({
                   p.name,
                   p.todo,
                   p.doing,
+                  p.suspended,
                   p.done,
-                  p.closed,
                 ])}
-                columns={["项目", "待做", "正在做", "完成", "关闭"]}
+                columns={["项目", "待做", "正在做", "挂起", "完成"]}
                 empty={!t.total ? "暂无项目任务" : undefined}
               />
               <StatisticsChart
@@ -658,8 +658,8 @@ export default function Statistics({
                           <td>{p.total}</td>
                           <td>
                             {percent(
-                              p.total - p.closed > 0
-                                ? p.done / (p.total - p.closed)
+                              p.total > 0
+                                ? p.done / p.total
                                 : null,
                             )}
                           </td>

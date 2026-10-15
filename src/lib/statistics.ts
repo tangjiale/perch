@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import { statuses, type Snapshot } from "./types";
+import { taskStatuses, type Snapshot } from "./types";
 import { isTaskExpired } from "./task-expiry";
 
 export type Count = { name: string; value: number };
@@ -105,7 +105,7 @@ export function buildStatistics(
     const date = DateTime.fromMillis(timestamp, { zone }).toISODate();
     return date ? dateIndexes.get(date) : undefined;
   };
-  const taskStatus = counts(Object.values(statuses));
+  const taskStatus = counts(Object.values(taskStatuses));
   const taskPriority = counts(["高", "普通", "低"]);
   const taskSource = counts(["本地", "禅道"]);
   const projects = new Map(
@@ -117,7 +117,7 @@ export function buildStatistics(
         todo: 0,
         doing: 0,
         done: 0,
-        closed: 0,
+        suspended: 0,
         total: 0,
       },
     ]),
@@ -128,20 +128,20 @@ export function buildStatistics(
     todo: 0,
     doing: 0,
     done: 0,
-    closed: 0,
+    suspended: 0,
     total: 0,
   };
   const taskMetrics = {
     total: data.tasks.length,
     open: 0,
     done: 0,
-    closed: 0,
+    suspended: 0,
     overdue: 0,
     unscheduled: 0,
     completionRate: null as number | null,
   };
   for (const task of data.tasks) {
-    taskStatus.add(label(statuses, task.status, "未知状态"));
+    taskStatus.add(label(taskStatuses, task.status, "未知状态"));
     taskPriority.add(
       label(
         { high: "高", normal: "普通", low: "低" },
@@ -154,12 +154,12 @@ export function buildStatistics(
     );
     const project =
       (task.projectId && projects.get(task.projectId)) || unassigned;
-    if (Object.hasOwn(statuses, task.status)) project[task.status] += 1;
+    if (Object.hasOwn(taskStatuses, task.status)) project[task.status] += 1;
     project.total += 1;
-    const open = task.status === "todo" || task.status === "doing";
+    const open = task.status !== "done";
     if (open) taskMetrics.open += 1;
     if (task.status === "done") taskMetrics.done += 1;
-    if (task.status === "closed") taskMetrics.closed += 1;
+    if (task.status === "suspended") taskMetrics.suspended += 1;
     if (!task.schedule?.start) taskMetrics.unscheduled += 1;
     if (isTaskExpired(task, DateTime.fromMillis(now, { zone }))) {
       taskMetrics.overdue += 1;
@@ -170,9 +170,8 @@ export function buildStatistics(
       task.status === "done" ? indexFor(task.completedAt) : undefined;
     if (completedIndex !== undefined) taskTrend[completedIndex].completed += 1;
   }
-  const activeTotal = taskMetrics.total - taskMetrics.closed;
-  taskMetrics.completionRate = activeTotal
-    ? taskMetrics.done / activeTotal
+  taskMetrics.completionRate = taskMetrics.total
+    ? taskMetrics.done / taskMetrics.total
     : null;
   const projectProgress = [
     ...projects.values(),

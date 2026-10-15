@@ -1616,7 +1616,7 @@ mod tests {
             assert_eq!(
                 c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                6
+                8
             );
             c.execute(
                 "INSERT INTO mail_accounts VALUES(?1,?2,?3)",

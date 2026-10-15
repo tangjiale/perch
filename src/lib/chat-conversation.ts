@@ -5,12 +5,13 @@ export function newChatConversation(
   agentId: string,
   knowledgeId: string,
   id: string,
+  modelId?: string,
 ): Conversation {
   const agent = data.agents.find((item) => item.id === agentId && item.enabled);
   if (!agent) throw new Error("请先选择可用的 Agent");
   const model = data.models.find(
     (item) =>
-      item.id === agent.modelId &&
+      item.id === (modelId || agent.modelId) &&
       item.enabled &&
       item.capability !== "embedding",
   );
@@ -30,6 +31,7 @@ export function newChatConversation(
     knowledgeId: knowledgeId || undefined,
     agentSnapshot: {
       ...agent,
+      modelId: model.id,
       model,
       provider,
       skills: data.skills.filter((skill) => agent.skillIds.includes(skill.id)),

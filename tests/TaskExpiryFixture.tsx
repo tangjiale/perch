@@ -52,7 +52,7 @@ export function mountDrag(host: HTMLElement) {
 }
 export function mountExpiry(host: HTMLElement) {
   const root = createRoot(host);
-  const tasks = (["todo", "doing", "done", "closed"] as const).map(
+  const tasks = (["todo", "doing", "done", "suspended"] as const).map(
     (status, i) => ({
       id: status,
       title: `过期-${status}`,

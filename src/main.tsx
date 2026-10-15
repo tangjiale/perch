@@ -22,6 +22,7 @@ import {
   Bug,
   CalendarDays,
   LayoutGrid,
+  Wrench,
   MessagesSquare,
   Settings2,
   Search,
@@ -52,6 +53,7 @@ const Apps = lazy(() =>
 const Settings = lazy(() => import("./features/Settings"));
 const Chat = lazy(() => import("./features/Chat"));
 const Statistics = lazy(() => import("./features/Statistics"));
+const Tools = lazy(() => import("./features/Tools"));
 import "./styles.css";
 import "./glass.css";
 import "./theme.css";
@@ -79,6 +81,7 @@ const navigation = [
   ["/bugs", "BUG 修复", Bug],
   ["/calendar", "日历", CalendarDays],
   ["/apps", "应用", LayoutGrid],
+  ["/tools", "工具", Wrench],
   ["/chat", "聊天", MessagesSquare],
   ["/mail", "邮件", MailIcon],
   ["/statistics", "统计", ChartNoAxesCombined],
@@ -223,7 +226,7 @@ function App() {
           <span>
             我的空间 <span className="muted"> / </span>{" "}
             <b>
-              {navigation.find((n) => n[0] === location.pathname)?.[1] ||
+              {navigation.find((n) => n[0] === location.pathname || (n[0] !== "/" && location.pathname.startsWith(`${n[0]}/`)))?.[1] ||
                 "设置"}
             </b>
           </span>
@@ -297,6 +300,10 @@ function App() {
                 <Route
                   path="/apps"
                   element={<Apps {...props} search={search} />}
+                />
+                <Route
+                  path="/tools/*"
+                  element={<Tools key={`${info.workspaceId}:${info.dataRoot}`} info={info} notify={notify} />}
                 />
                 <Route
                   path="/agents"

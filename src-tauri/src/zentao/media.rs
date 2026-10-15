@@ -143,6 +143,95 @@ async fn upload_image(
 }
 
 #[tauri::command]
+pub async fn zentao_bug_image_read(
+    state: State<'_, AppState>,
+    bug_id: String,
+    source: String,
+) -> Result<Value, String> {
+    let ctx = bug_context(&state, &bug_id)?;
+    file_id(text(&ctx.connection, "baseUrl"), &source)?;
+    let token = credential(&ctx.workspace, text(&ctx.connection, "id"))?
+        .get_password()
+        .map_err(|_| "请先保存禅道令牌")?;
+    let adapter =
+        Adapter::personal(&ctx.connection, token)?.with_auth(crate::zentao_auth::AutoAuth::new(
+            &state,
+            &ctx.workspace,
+            &ctx.generation,
+            &ctx.connection,
+        )?);
+    let data_url = read_bug_image(
+        &adapter,
+        text(&ctx.connection, "baseUrl"),
+        &ctx.bug,
+        &source,
+    )
+    .await?;
+    bug_unchanged(&state, &ctx)?;
+    // 文件编号只用于下载，不将临时 data URL 写入 BUG 缓存或远端步骤。
+    Ok(json!({"dataUrl": data_url}))
+}
+
+struct BugContext {
+    bug: Value,
+    connection: Value,
+    workspace: String,
+    generation: std::path::PathBuf,
+}
+
+fn bug_context(state: &AppState, bug_id: &str) -> Result<BugContext, String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let snapshot = store.snapshot()?;
+    let bug = get(&snapshot, "bugs", bug_id)?;
+    let connection = get(&snapshot, "connections", text(&bug, "connectionId"))?;
+    if connection["enabled"] == false {
+        return Err("该禅道连接已停用".into());
+    }
+    remote_id(&bug["remoteId"])?;
+    Ok(BugContext {
+        bug,
+        connection,
+        workspace: store.workspace_id.clone(),
+        generation: store.generation.clone(),
+    })
+}
+
+fn bug_unchanged(state: &AppState, ctx: &BugContext) -> Result<(), String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    if store.workspace_id != ctx.workspace || store.generation != ctx.generation {
+        return Err("工作空间已切换，请重新打开 BUG".into());
+    }
+    let snapshot = store.snapshot()?;
+    let connection = get(&snapshot, "connections", text(&ctx.connection, "id"))?;
+    let bug = get(&snapshot, "bugs", text(&ctx.bug, "id"))?;
+    if connection["revision"] != ctx.connection["revision"]
+        || bug["revision"] != ctx.bug["revision"]
+    {
+        return Err("连接或 BUG 已变化，请重新打开 BUG".into());
+    }
+    Ok(())
+}
+
+async fn read_bug_image(
+    adapter: &Adapter<'_>,
+    site_base: &str,
+    bug: &Value,
+    source: &str,
+) -> Result<String, String> {
+    // Adapter.base 是 API 根；附件引用属于站点根，不能以 API 路径校验。
+    let id = file_id(site_base, source)?;
+    let account = adapter.account().await?;
+    let remote = adapter
+        .bug_request(&remote_id(&bug["remoteId"])?, None)
+        .await?;
+    super::bugs::verify_baseline(bug, &remote, &account)?;
+    if !referenced(site_base, text(&remote, "steps"), &id) {
+        return Err("该图片不在当前禅道 BUG 复现步骤中，请重新同步核对".into());
+    }
+    read_image(adapter, &id).await
+}
+
+#[tauri::command]
 pub async fn zentao_task_image_read(
     state: State<'_, AppState>,
     task_id: String,
@@ -223,41 +312,158 @@ pub async fn zentao_task_image_upload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn bug_fixture() -> (Value, Value) {
+        let steps = r#"<p><img src="/index.php?m=file&amp;f=read&amp;fileID=708&amp;t=png"></p>"#;
+        (
+            json!({"id":"b","connectionId":"c","remoteId":"419","title":"截图 BUG","steps":steps,"status":"active","assignedTo":"me","severity":2,"priority":3,"productId":"1","remoteEditedDate":"2026-10-13 12:00:00"}),
+            json!({"id":419,"title":"截图 BUG","steps":steps,"status":"active","assignedTo":{"account":"me"},"severity":2,"pri":3,"product":1,"lastEditedDate":"2026-10-13 12:00:00"}),
+        )
+    }
+
+    #[tokio::test]
+    async fn bug_read_checks_identity_association_and_reference_before_download() {
+        let (old, remote) = bug_fixture();
+        for case in [
+            "assigned",
+            "null",
+            "missing",
+            "product",
+            "project",
+            "deleted",
+            "id",
+            "steps",
+            "unreferenced",
+        ] {
+            let mut changed = remote.clone();
+            match case {
+                "assigned" => changed["assignedTo"] = json!("other"),
+                "null" => changed["assignedTo"] = Value::Null,
+                "missing" => {
+                    changed.as_object_mut().unwrap().remove("assignedTo");
+                }
+                "product" => changed["product"] = json!(2),
+                "project" => changed["project"] = json!(2),
+                "deleted" => changed["deleted"] = json!(true),
+                "id" => changed["id"] = json!(420),
+                "steps" => changed["steps"] = json!("远端已修改"),
+                _ => (),
+            }
+            let (base, handle) = crate::zentao::tests::auth_server(vec![
+                (200, json!({"profile":{"account":"me"}})),
+                (200, changed),
+            ]);
+            let source = if case == "unreferenced" {
+                "{709.png}"
+            } else {
+                "{708.png}"
+            };
+            assert!(
+                read_bug_image(&test_adapter(&base), &base, &old, source)
+                    .await
+                    .is_err(),
+                "{case}"
+            );
+            let requests = handle.join().unwrap();
+            assert!(requests[0].starts_with("GET /api.php/v1/user "));
+            assert!(requests[1].starts_with("GET /api.php/v1/bugs/419 "));
+            assert!(requests
+                .iter()
+                .all(|r| r.to_lowercase().contains("token: test-token")));
+        }
+    }
+
+    #[test]
+    fn bug_read_accepts_only_own_just_closed_cache() {
+        let (mut old, mut remote) = bug_fixture();
+        old["status"] = json!("closed");
+        old["assignedTo"] = json!("");
+        old["lastAssignedTo"] = json!("me");
+        remote["status"] = json!("closed");
+        remote["assignedTo"] = Value::Null;
+        super::super::bugs::verify_baseline(&old, &remote, "me").unwrap();
+        assert!(super::super::bugs::verify_baseline(&old, &remote, "other").is_err());
+        remote["assignedTo"] = json!("other");
+        assert!(super::super::bugs::verify_baseline(&old, &remote, "me").is_err());
+    }
+
+    #[test]
+    fn bug_read_rejects_workspace_connection_and_cache_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = crate::storage::Store::open_at(tmp.path().join("workspace")).unwrap();
+        store
+            .save("connection", json!({"id":"c","name":"模拟"}))
+            .unwrap();
+        let (bug, _) = bug_fixture();
+        store.save_batch(vec![("bug", bug)], vec![], true).unwrap();
+        let state = AppState {
+            store: std::sync::Mutex::new(store),
+        };
+        let ctx = bug_context(&state, "b").unwrap();
+        bug_unchanged(&state, &ctx).unwrap();
+        {
+            let store = state.store.lock().unwrap();
+            let mut changed = ctx.bug.clone();
+            changed["title"] = json!("更新缓存");
+            store
+                .save_batch(vec![("bug", changed)], vec![], true)
+                .unwrap();
+        }
+        assert!(bug_unchanged(&state, &ctx).is_err());
+        let ctx = bug_context(&state, "b").unwrap();
+        {
+            let store = state.store.lock().unwrap();
+            let mut changed = ctx.connection.clone();
+            changed["name"] = json!("更新连接");
+            store.save("connection", changed).unwrap();
+        }
+        assert!(bug_unchanged(&state, &ctx).is_err());
+        let ctx = bug_context(&state, "b").unwrap();
+        state.store.lock().unwrap().generation = tmp.path().join("other");
+        assert!(bug_unchanged(&state, &ctx).is_err());
+    }
     fn server(status: u16, mime: &str, body: Vec<u8>) -> (String, std::thread::JoinHandle<String>) {
+        sequence_server(vec![(status, mime.to_owned(), body)])
+    }
+    fn sequence_server(
+        responses: Vec<(u16, String, Vec<u8>)>,
+    ) -> (String, std::thread::JoinHandle<String>) {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let mime = mime.to_owned();
         let handle = std::thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
-            socket
-                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-                .unwrap();
-            let mut request = Vec::new();
-            loop {
-                let mut chunk = [0; 4096];
-                let count = socket.read(&mut chunk).unwrap();
-                if count == 0 {
-                    break;
-                }
-                request.extend_from_slice(&chunk[..count]);
-                if let Some(end) = request.windows(4).position(|s| s == b"\r\n\r\n") {
-                    let headers = String::from_utf8_lossy(&request[..end]).to_lowercase();
-                    let length = headers
-                        .lines()
-                        .find_map(|s| {
-                            s.strip_prefix("content-length:")
-                                .and_then(|s| s.trim().parse::<usize>().ok())
-                        })
-                        .unwrap_or(0);
-                    if request.len() >= end + 4 + length {
+            let mut requests = String::new();
+            for (status, mime, body) in responses {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0; 4096];
+                    let count = socket.read(&mut chunk).unwrap();
+                    if count == 0 {
                         break;
                     }
+                    request.extend_from_slice(&chunk[..count]);
+                    if let Some(end) = request.windows(4).position(|s| s == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]).to_lowercase();
+                        let length = headers
+                            .lines()
+                            .find_map(|s| {
+                                s.strip_prefix("content-length:")
+                                    .and_then(|s| s.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if request.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
                 }
+                write!(socket, "HTTP/1.1 {status} Response\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                socket.write_all(&body).unwrap();
+                requests.push_str(&String::from_utf8_lossy(&request));
             }
-            write!(socket, "HTTP/1.1 {status} Response\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
-            socket.write_all(&body).unwrap();
-            String::from_utf8_lossy(&request).into_owned()
+            requests
         });
         (base, handle)
     }
@@ -267,6 +473,66 @@ mod tests {
             "test-token".into(),
         )
         .unwrap()
+    }
+    #[tokio::test]
+    async fn bug_image_download_resolves_same_site_source_and_returns_binary_data() {
+        for directory in ["", "/zentao"] {
+            for representation in ["root", "absolute", "relative", "placeholder"] {
+                let (mut bug, mut remote) = bug_fixture();
+                let steps = format!(
+                    r#"<p><img src="{directory}/index.php?m=file&amp;f=read&amp;fileID=708&amp;t=png"></p>"#
+                );
+                bug["steps"] = json!(steps);
+                remote["steps"] = bug["steps"].clone();
+                let (base, handle) = sequence_server(vec![
+                    (
+                        200,
+                        "application/json".into(),
+                        json!({"profile":{"account":"me"}}).to_string().into_bytes(),
+                    ),
+                    (
+                        200,
+                        "application/json".into(),
+                        remote.to_string().into_bytes(),
+                    ),
+                    (
+                        200,
+                        "image/png".into(),
+                        b"\x89PNG\r\n\x1a\nfixture".to_vec(),
+                    ),
+                ]);
+                let site_base = format!("{base}{directory}");
+                let path = "index.php?m=file&f=read&fileID=708&t=png";
+                let source = match representation {
+                    "root" => format!("{directory}/{path}"),
+                    "absolute" => format!("{site_base}/{path}"),
+                    "relative" => path.into(),
+                    _ => "{708.png}".into(),
+                };
+                let image = read_bug_image(&test_adapter(&site_base), &site_base, &bug, &source)
+                    .await
+                    .unwrap();
+                assert!(image.starts_with("data:image/png;base64,"));
+                let requests = handle.join().unwrap();
+                assert!(requests.contains(&format!("GET {directory}/api.php/v1/bugs/419 ")));
+                assert!(requests.contains(&format!("GET {directory}/api.php/v1/files/708 ")));
+                assert!(!requests.contains(&format!("GET {directory}/index.php")));
+                assert_eq!(
+                    requests.to_lowercase().matches("token: test-token").count(),
+                    3
+                );
+            }
+        }
+        assert!(file_id(
+            "https://example.test/zentao",
+            "/index.php?m=file&f=read&fileID=708&t=png"
+        )
+        .is_err());
+        assert!(file_id(
+            "https://example.test/zentao",
+            "/other/index.php?m=file&f=read&fileID=708&t=png"
+        )
+        .is_err());
     }
     #[tokio::test]
     async fn download_uses_authenticated_v1_binary_endpoint() {

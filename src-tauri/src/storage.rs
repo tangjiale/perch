@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -22,6 +22,13 @@ pub struct Store {
     pub workspace_id: String,
     pub conn: Mutex<Connection>,
     _lock: File,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BackupProgress {
+    pub phase: &'static str,
+    pub completed: u64,
+    pub total: u64,
 }
 
 struct TemporaryFile(PathBuf);
@@ -229,7 +236,7 @@ impl Store {
             serde_json::from_reader(&mut entry).map_err(|e| e.to_string())?
         };
         if manifest["formatVersion"] != json!(1)
-            || !matches!(manifest["schemaVersion"].as_i64(), Some(1..=6))
+            || !matches!(manifest["schemaVersion"].as_i64(), Some(1..=8))
         {
             return Err("不支持的备份版本".into());
         }
@@ -310,7 +317,7 @@ impl Store {
         let version: i64 = db
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(|e| e.to_string())?;
-        if version > 6 {
+        if version > 8 {
             return Err("该数据库由更新版本创建，请升级应用".into());
         }
         if version >= 6 {
@@ -357,6 +364,7 @@ impl Store {
                 return Err("备份目录复制校验失败".into());
             }
         }
+        copy_natapp_data(&self.root, &target)?;
         fs::remove_file(archive).map_err(|e| e.to_string())?;
         Ok(restored)
     }
@@ -466,6 +474,32 @@ impl Store {
         self.save_batch_with_scope(changes, expected, true, Some(connection))
     }
 
+    /// 已核验远端转派成功后，在版本保护下移除个人 BUG 缓存。
+    pub fn remove_transferred_bug(&self, bug: &Value, connection: &Value) -> Result<(), String> {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        for (table, value) in [("bugs", bug), ("connections", connection)] {
+            let revision: i64 = tx
+                .query_row(
+                    &format!("SELECT revision FROM {table} WHERE id=?1"),
+                    [text(value, "id")],
+                    |row| row.get(0),
+                )
+                .map_err(|_| "BUG 或连接已删除，请重新同步")?;
+            if value["revision"].as_i64() != Some(revision) {
+                return Err("BUG 或连接已变化，请重新同步".into());
+            }
+        }
+        tx.execute("DELETE FROM bugs WHERE id=?1", [text(bug, "id")])
+            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM entity_history WHERE entity_type='bugs' AND entity_id=?1",
+            [text(bug, "id")],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
+    }
+
     /// 完整读取后一次发布当前连接 BUG；同步失败不清除既有缓存。
     pub fn save_bug_snapshot(
         &self,
@@ -504,9 +538,32 @@ impl Store {
             .map_err(|e| e.to_string())?;
         }
         let mut output = vec![];
-        for value in changes {
+        for mut value in changes {
             if text(&value, "connectionId") != id {
                 return Err("BUG 连接范围不一致".into());
+            }
+            let previous: Option<(i64, String)> = tx
+                .query_row(
+                    "SELECT revision,data FROM bugs WHERE id=?1",
+                    [text(&value, "id")],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            if let Some((revision, raw)) = previous {
+                if value["revision"].as_i64() != Some(revision) {
+                    return Err("数据已被修改，请刷新后重试".into());
+                }
+                let old = decode_entity(&self.workspace_id, "bugs", text(&value, "id"), &raw)?;
+                // 无变化同步保留版本与本地时间，避免已打开的操作表单误报冲突。
+                // 仅忽略存储生成的时间；远端版本及全部业务字段仍参与比较。
+                for key in ["createdAt", "updatedAt"] {
+                    value[key] = old[key].clone();
+                }
+                if value == old {
+                    output.push(old);
+                    continue;
+                }
             }
             output.push(Self::save_in_transaction(
                 &tx,
@@ -740,7 +797,7 @@ impl Store {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if version > 6 {
+        if version > 8 {
             return Err("该数据库由更新版本创建，请升级应用".into());
         }
         if version == 0 {
@@ -793,6 +850,15 @@ impl Store {
                 let mut value: Value = serde_json::from_str(&row).map_err(|e| e.to_string())?;
                 if value.get("dueDate").is_some() {
                     crate::data::migrate_task_end(&mut value);
+                    if value["status"] == "closed" {
+                        value["status"] = json!("done");
+                        value["completedAt"] = value
+                            .get("completedAt")
+                            .filter(|v| v.is_i64())
+                            .cloned()
+                            .or_else(|| value.get("closedAt").filter(|v| v.is_i64()).cloned())
+                            .unwrap_or(Value::Null);
+                    }
                     Self::save_in_transaction(&tx, &workspace_id, "tasks", value, true)?;
                 }
             }
@@ -845,6 +911,49 @@ impl Store {
         }
         verify_encryption_key(&conn, &workspace_id)?;
         finish_encryption_cleanup(&conn)?;
+        if version < 7 {
+            let sql = include_str!("../migrations/007_task_reminders.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(7,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=7")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
+        if version < 8 {
+            let sql = include_str!("../migrations/008_task_statuses.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            if tx
+                .prepare("PRAGMA foreign_key_check")
+                .map_err(|e| e.to_string())?
+                .query([])
+                .map_err(|e| e.to_string())?
+                .next()
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                return Err("任务状态升级关联校验失败".into());
+            }
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(8,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=8")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
         let integrity: String = conn
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
@@ -1041,19 +1150,26 @@ impl Store {
                     .get("completedAt")
                     .filter(|v| v.is_i64())
                     .cloned()
-                    .unwrap_or(json!(now))
+                    .unwrap_or_else(|| {
+                        let old_done = previous
+                            .as_ref()
+                            .and_then(|(_, raw)| serde_json::from_str::<Value>(raw).ok())
+                            .filter(|old| text(old, "status") == "done");
+                        if let Some(old) = old_done {
+                            old.get("completedAt")
+                                .filter(|v| v.is_i64())
+                                .cloned()
+                                .unwrap_or(Value::Null)
+                        } else if trusted_remote && value.get("completedAt") == Some(&Value::Null) {
+                            Value::Null
+                        } else {
+                            json!(now)
+                        }
+                    })
             } else {
                 Value::Null
             };
-            value["closedAt"] = if text(&value, "status") == "closed" {
-                value
-                    .get("closedAt")
-                    .filter(|v| v.is_i64())
-                    .cloned()
-                    .unwrap_or(json!(now))
-            } else {
-                Value::Null
-            };
+            value.as_object_mut().unwrap().remove("closedAt");
         }
         let stored_data = if table == "connections" {
             crate::credential_vault::encrypt_json(workspace, &format!("connections:{id}"), &value)?
@@ -1189,6 +1305,14 @@ impl Store {
     }
 
     pub fn backup(&self, destination: &Path) -> Result<(), String> {
+        self.backup_with_progress(destination, |_| {})
+    }
+
+    pub fn backup_with_progress(
+        &self,
+        destination: &Path,
+        mut progress: impl FnMut(BackupProgress),
+    ) -> Result<(), String> {
         if destination.exists() {
             return Err("备份目标文件已存在，请选择其他文件名".into());
         }
@@ -1201,9 +1325,33 @@ impl Store {
         let mut target = Connection::open(&staging).map_err(|e| e.to_string())?;
         let backup =
             rusqlite::backup::Backup::new(&conn, &mut target).map_err(|e| e.to_string())?;
-        backup
-            .run_to_completion(100, std::time::Duration::from_millis(5), None)
-            .map_err(|e| e.to_string())?;
+        progress(BackupProgress {
+            phase: "database",
+            completed: 0,
+            total: 0,
+        });
+        let mut busy_since = None;
+        loop {
+            let result = backup.step(100).map_err(|e| e.to_string())?;
+            let snapshot = backup.progress();
+            progress(BackupProgress {
+                phase: "database",
+                completed: (snapshot.pagecount - snapshot.remaining).max(0) as u64,
+                total: snapshot.pagecount.max(0) as u64,
+            });
+            match result {
+                rusqlite::backup::StepResult::Done => break,
+                rusqlite::backup::StepResult::More => busy_since = None,
+                rusqlite::backup::StepResult::Busy | rusqlite::backup::StepResult::Locked => {
+                    let started = busy_since.get_or_insert_with(std::time::Instant::now);
+                    if started.elapsed() > std::time::Duration::from_secs(30) {
+                        return Err("数据库持续繁忙，备份未完成，请稍后重试".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                _ => return Err("数据库备份返回未知状态".into()),
+            }
+        }
         drop(backup);
         drop(target);
         let archive_staging = destination.with_extension(format!("{}.tmp", uuid::Uuid::now_v7()));
@@ -1222,15 +1370,44 @@ impl Store {
             &self.generation,
             &mut files,
         )?;
+        let total = files.iter().try_fold(0u64, |sum, (path, _)| {
+            let size = fs::metadata(path).map_err(|e| e.to_string())?.len();
+            sum.checked_add(size)
+                .ok_or_else(|| "备份文件总大小超出范围".to_string())
+        })?;
+        let mut completed = 0u64;
+        let mut buffer = vec![0u8; 128 * 1024];
+        progress(BackupProgress {
+            phase: "packing",
+            completed,
+            total,
+        });
         for (path, name) in files {
-            let bytes = fs::read(path).map_err(|e| e.to_string())?;
+            let mut input = File::open(path).map_err(|e| e.to_string())?;
+            let mut digest = Sha256::new();
+            let mut size = 0u64;
             zip.start_file(&name, options).map_err(|e| e.to_string())?;
-            zip.write_all(&bytes).map_err(|e| e.to_string())?;
-            manifest.push(json!({"path":name,"size":bytes.len(),"sha256":format!("{:x}",Sha256::digest(&bytes))}));
+            loop {
+                let count = input.read(&mut buffer).map_err(|e| e.to_string())?;
+                if count == 0 {
+                    break;
+                }
+                zip.write_all(&buffer[..count]).map_err(|e| e.to_string())?;
+                digest.update(&buffer[..count]);
+                size += count as u64;
+                completed += count as u64;
+                progress(BackupProgress {
+                    phase: "packing",
+                    completed,
+                    total,
+                });
+            }
+            manifest
+                .push(json!({"path":name,"size":size,"sha256":format!("{:x}",digest.finalize())}));
         }
         zip.start_file("manifest.json", options)
             .map_err(|e| e.to_string())?;
-        zip.write_all(json!({"formatVersion":1,"schemaVersion":6,"workspaceId":self.workspace_id,"files":manifest}).to_string().as_bytes()).map_err(|e|e.to_string())?;
+        zip.write_all(json!({"formatVersion":1,"schemaVersion":8,"workspaceId":self.workspace_id,"files":manifest}).to_string().as_bytes()).map_err(|e|e.to_string())?;
         zip.finish()
             .map_err(|e| e.to_string())?
             .sync_all()
@@ -1270,6 +1447,56 @@ fn migrate_legacy_default(legacy: &Path, default: &Path) -> Result<(), String> {
             &bootstrap,
             &json!({"configVersion":1,"dataRoot":default,"workspaceId":current["workspaceId"]}),
         )?;
+    }
+    Ok(())
+}
+
+fn copy_natapp_data(source_root: &Path, target_root: &Path) -> Result<(), String> {
+    let tools = source_root.join("tools");
+    let source = tools.join("natapp");
+    // 工具包和脱敏日志随数据目录迁移；运行时明文凭据不进入迁移副本或备份。
+    for path in [&tools, &source] {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => (),
+            Ok(_) => return Err("工具目录必须是普通目录，不能是符号链接".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    for entry in walkdir::WalkDir::new(&source).follow_links(false) {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry.file_type().is_symlink() {
+            return Err("工具目录不允许符号链接".into());
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(source_root)
+            .map_err(|error| error.to_string())?;
+        let destination = target_root.join(relative);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+            fs::set_permissions(
+                &destination,
+                fs::metadata(entry.path())
+                    .map_err(|error| error.to_string())?
+                    .permissions(),
+            )
+            .map_err(|error| error.to_string())?;
+            continue;
+        }
+        if !entry.file_type().is_file() {
+            return Err("工具目录包含不支持的文件类型".into());
+        }
+        let name = entry.file_name().to_string_lossy();
+        if name == "config.ini" || name.ends_with(".tmp") || name.ends_with(".part") {
+            continue;
+        }
+        fs::copy(entry.path(), &destination).map_err(|error| error.to_string())?;
+        if Sha256::digest(fs::read(entry.path()).map_err(|error| error.to_string())?)
+            != Sha256::digest(fs::read(&destination).map_err(|error| error.to_string())?)
+        {
+            return Err("工具数据复制校验失败".into());
+        }
     }
     Ok(())
 }
@@ -1506,7 +1733,7 @@ mod tests {
             assert_eq!(
                 conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                     .unwrap(),
-                6
+                8
             );
         }
         assert_fixture_credentials_absent(&fs::read(&database).unwrap());
@@ -1782,7 +2009,7 @@ mod tests {
         }
         {
             let conn = store.conn.lock().unwrap();
-            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE bugs; DROP TABLE provider_credentials; DELETE FROM schema_migrations WHERE version>=3; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); PRAGMA user_version=2;").unwrap();
+            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE bugs; DROP TABLE provider_credentials; DROP TABLE task_reminder_deliveries; DELETE FROM schema_migrations WHERE version>=3; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); PRAGMA user_version=2;").unwrap();
             for (mut value, old) in saved.into_iter().zip(values) {
                 if let Some(due) = old.get("dueDate") {
                     value["dueDate"] = due.clone();
@@ -1946,7 +2173,7 @@ mod tests {
                     .unwrap()
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                6
+                8
             );
         }
     }
@@ -1978,6 +2205,104 @@ mod tests {
         assert_eq!(copied.workspace_id, store.workspace_id);
         assert!(store.migrate_copy(&store.root.join("nested")).is_err());
     }
+
+    #[test]
+    fn backup_reports_database_pages_and_chunked_packing_bytes() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let store = Store::open_at(sandbox.path().join("source")).unwrap();
+        let object = store.generation.join("objects/progress-test.bin");
+        let bytes = vec![42u8; 512 * 1024];
+        fs::write(&object, &bytes).unwrap();
+        let archive = sandbox.path().join("progress.zip");
+        let mut events = Vec::new();
+        store
+            .backup_with_progress(&archive, |event| events.push(event))
+            .unwrap();
+        let database: Vec<_> = events.iter().filter(|p| p.phase == "database").collect();
+        assert!(database
+            .last()
+            .is_some_and(|p| p.total > 0 && p.completed == p.total));
+        let packing: Vec<_> = events.iter().filter(|p| p.phase == "packing").collect();
+        assert!(packing
+            .iter()
+            .any(|p| p.completed > 0 && p.completed < p.total));
+        assert!(packing.windows(2).all(|p| p[0].completed <= p[1].completed));
+        assert!(packing
+            .last()
+            .is_some_and(|p| p.completed == p.total && p.total >= bytes.len() as u64));
+        let restored = Store::restore_to(&archive, &sandbox.path().join("restored")).unwrap();
+        assert_eq!(
+            fs::read(restored.generation.join("objects/progress-test.bin")).unwrap(),
+            bytes
+        );
+    }
+    #[test]
+    fn tools_follow_data_migration_without_copying_runtime_credentials() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let store = Store::open_at(sandbox.path().join("source")).unwrap();
+        let tool = store.root.join("tools/natapp");
+        let tunnel = tool.join("tunnels/example");
+        fs::create_dir_all(&tunnel).unwrap();
+        fs::write(tool.join("natapp"), b"test-client").unwrap();
+        fs::write(tool.join("package.zip"), b"test-package").unwrap();
+        fs::write(tunnel.join("output.log"), b"client started\n").unwrap();
+        fs::write(tunnel.join("config.ini"), b"authtoken=test-only\n").unwrap();
+        fs::write(tool.join("download.part"), b"incomplete").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(tool.join("natapp"), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let archive = sandbox.path().join("backup.zip");
+        store.backup(&archive).unwrap();
+        let zip = zip::ZipArchive::new(File::open(archive).unwrap()).unwrap();
+        assert!(zip.file_names().all(|name| !name.starts_with("tools/")));
+        let copied = store
+            .migrate_copy(&sandbox.path().join("migrated"))
+            .unwrap();
+        let destination = copied.root.join("tools/natapp");
+        assert_eq!(
+            fs::read(destination.join("natapp")).unwrap(),
+            b"test-client"
+        );
+        assert_eq!(
+            fs::read(destination.join("package.zip")).unwrap(),
+            b"test-package"
+        );
+        assert_eq!(
+            fs::read(destination.join("tunnels/example/output.log")).unwrap(),
+            b"client started\n"
+        );
+        assert!(!destination.join("tunnels/example/config.ini").exists());
+        assert!(!destination.join("download.part").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(destination.join("natapp"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn tool_migration_rejects_external_links() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let source = sandbox.path().join("source");
+        let target = sandbox.path().join("target");
+        fs::create_dir_all(source.join("tools/natapp")).unwrap();
+        let external = sandbox.path().join("external");
+        fs::write(&external, b"private").unwrap();
+        std::os::unix::fs::symlink(external, source.join("tools/natapp/output.log")).unwrap();
+        assert!(copy_natapp_data(&source, &target).is_err());
+        assert!(!target.join("tools/natapp/output.log").exists());
+    }
+
     #[test]
     fn chat_empty_stream_and_knowledge_references() {
         let sandbox = tempfile::tempdir().unwrap();
@@ -2175,5 +2500,214 @@ mod tests {
             serde_json::from_slice(&fs::read(default.join("bootstrap.json")).unwrap()).unwrap();
         assert_eq!(config["dataRoot"], json!(default));
         assert!(default.join("current.json").exists());
+    }
+    #[test]
+    fn task_status_v8_upgrade_preserves_unknown_dates_revision_history_and_reminder_links() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("legacy");
+        let store = Store::open_at(root.clone()).unwrap();
+        let project=store.save("project",json!({"id":"legacy-project","name":"项目仍可关闭","status":"closed","source":"local"})).unwrap();
+        let mut expected_history = Vec::new();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch("DROP TABLE task_reminder_deliveries; DROP TABLE tasks;")
+                .unwrap();
+            let initial = include_str!("../migrations/001_initial.sql");
+            let old_tasks = initial
+                .lines()
+                .find(|line| line.starts_with("CREATE TABLE tasks("))
+                .unwrap()
+                .replace(", due_date TEXT", "");
+            conn.execute_batch(&old_tasks).unwrap();
+            for index in initial
+                .lines()
+                .filter(|line| line.starts_with("CREATE INDEX tasks_"))
+            {
+                conn.execute_batch(index).unwrap();
+            }
+            conn.execute_batch(include_str!("../migrations/007_task_reminders.sql"))
+                .unwrap();
+            for (id, status, completed, closed) in [
+                ("known", "closed", None, Some(111_i64)),
+                ("prior", "closed", Some(222_i64), Some(111)),
+                ("unknown", "closed", None, None),
+                ("finished", "done", Some(333), None),
+                ("active", "doing", Some(444), Some(555)),
+            ] {
+                let value = json!({"id":id,"title":id,"source":"local","status":status,"priority":"normal","projectId":"legacy-project","timezone":"Asia/Shanghai","revision":3,"createdAt":17,"updatedAt":23,"completedAt":completed,"closedAt":closed,"notes":"<p>原备注</p>","custom":{"keep":true}});
+                let raw = value.to_string();
+                conn.execute("INSERT INTO tasks(id,title,project_id,source,status,priority,timezone,revision,data) VALUES(?1,?1,'legacy-project','local',?2,'normal','Asia/Shanghai',3,?3)",params![id,status,raw]).unwrap();
+                conn.execute("INSERT INTO entity_history(entity_type,entity_id,revision,data,created_at_ms) VALUES('tasks',?1,3,?2,23)",params![id,raw]).unwrap();
+                expected_history.push((id.to_string(), raw));
+            }
+            conn.execute(
+                "INSERT INTO task_reminder_deliveries VALUES('known',1000,15,999,'submitted')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO task_reminder_deliveries VALUES('active',2000,60,1999,'failed')",
+                [],
+            )
+            .unwrap();
+            conn.execute_batch(
+                "DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;",
+            )
+            .unwrap();
+        }
+        let old_archive = sandbox.path().join("schema7.zip");
+        store.backup(&old_archive).unwrap();
+        drop(store);
+        let store = Store::open_at(root.clone()).unwrap();
+        let snapshot = store.snapshot().unwrap();
+        let tasks = snapshot["tasks"].as_array().unwrap();
+        let get = |id: &str| tasks.iter().find(|t| text(t, "id") == id).unwrap();
+        for id in ["known", "prior", "unknown"] {
+            assert_eq!(get(id)["status"], "done");
+            assert_eq!(get(id)["revision"], 3);
+            assert_eq!(get(id)["updatedAt"], 23);
+            assert_eq!(get(id)["notes"], "<p>原备注</p>");
+            assert_eq!(get(id)["custom"]["keep"], true);
+            assert!(get(id).get("closedAt").is_none());
+        }
+        assert_eq!(get("known")["completedAt"], 111);
+        assert_eq!(get("prior")["completedAt"], 222);
+        assert_eq!(get("unknown")["completedAt"], Value::Null);
+        assert_eq!(get("finished")["completedAt"], 333);
+        assert_eq!(get("active")["completedAt"], Value::Null);
+        assert_eq!(snapshot["projects"][0], project);
+        {
+            let conn = store.conn.lock().unwrap();
+            assert_eq!(
+                conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                8
+            );
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM task_reminder_deliveries", [], |r| r
+                    .get::<_, i64>(
+                    0
+                ))
+                .unwrap(),
+                2
+            );
+            assert!(conn
+                .prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .query([])
+                .unwrap()
+                .next()
+                .unwrap()
+                .is_none());
+            for (id, raw) in &expected_history {
+                assert_eq!(conn.query_row("SELECT data FROM entity_history WHERE entity_type='tasks' AND entity_id=?1 AND revision=3",[id],|r|r.get::<_,String>(0)).unwrap(),*raw);
+            }
+            assert!(conn
+                .execute("DELETE FROM projects WHERE id='legacy-project'", [])
+                .is_err());
+        }
+        let mut unknown = get("unknown").clone();
+        unknown["notes"] = json!("只修改备注");
+        let unknown = store.save("task", unknown).unwrap();
+        assert_eq!(unknown["completedAt"], Value::Null);
+        let archive = sandbox.path().join("schema8.zip");
+        store.backup(&archive).unwrap();
+        let restored = Store::restore_to(&archive, &sandbox.path().join("restored8")).unwrap();
+        let mut restored_snapshot = restored.snapshot().unwrap();
+        let mut current_snapshot = store.snapshot().unwrap();
+        restored_snapshot
+            .as_object_mut()
+            .unwrap()
+            .remove("storagePath");
+        current_snapshot
+            .as_object_mut()
+            .unwrap()
+            .remove("storagePath");
+        assert_eq!(restored_snapshot, current_snapshot);
+        let old_restored =
+            Store::restore_to(&old_archive, &sandbox.path().join("restored7")).unwrap();
+        assert_eq!(
+            old_restored.snapshot().unwrap()["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|t| text(t, "id") == "known")
+                .unwrap()["completedAt"],
+            111
+        );
+        assert_eq!(
+            old_restored
+                .conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM task_reminder_deliveries", [], |r| r
+                    .get::<_, i64>(
+                    0
+                ))
+                .unwrap(),
+            2
+        );
+        store.delete("task", "known", Some(3)).unwrap();
+        assert_eq!(
+            store
+                .conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM task_reminder_deliveries", [], |r| r
+                    .get::<_, i64>(
+                    0
+                ))
+                .unwrap(),
+            1
+        );
+        drop(store);
+        let reopened = Store::open_at(root).unwrap();
+        assert_eq!(
+            reopened.snapshot().unwrap()["tasks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(
+            reopened
+                .conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM task_reminder_deliveries", [], |r| r
+                    .get::<_, i64>(
+                    0
+                ))
+                .unwrap(),
+            1
+        );
+    }
+    #[test]
+    fn tasks_accept_suspended_reject_closed_and_clear_completion_on_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let mut task = store
+            .save(
+                "task",
+                json!({"title":"状态测试","status":"suspended","source":"local","closedAt":123}),
+            )
+            .unwrap();
+        assert_eq!(task["status"], "suspended");
+        assert!(task.get("closedAt").is_none());
+        task["status"] = json!("closed");
+        assert!(store.save("task", task.clone()).is_err());
+        task["status"] = json!("done");
+        let mut task = store.save("task", task).unwrap();
+        assert!(task["completedAt"].is_i64());
+        task["status"] = json!("todo");
+        let task = store.save("task", task).unwrap();
+        assert_eq!(task["completedAt"], Value::Null);
+        assert!(task.get("closedAt").is_none());
+        assert!(store
+            .save(
+                "project",
+                json!({"name":"可关闭项目","status":"closed","source":"local"})
+            )
+            .is_ok());
     }
 }

@@ -97,7 +97,7 @@
   fixture.tasks = Array.from({ length: 36 }, (_, i) => ({
     id: `t${i}`,
     title: `任务 ${i}`,
-    status: ["todo", "doing", "done", "closed"][i % 4],
+    status: ["todo", "doing", "suspended", "done"][i % 4],
     source: i % 3 ? "local" : "zentao",
     priority: ["high", "normal", "low"][i % 3],
     projectId: `p${i % 4}`,

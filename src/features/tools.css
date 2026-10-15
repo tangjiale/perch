@@ -1,0 +1,344 @@
+.tools-page {
+  max-width: 1180px;
+  margin: 0 auto;
+  width: 100%;
+}
+.tools-heading {
+  margin-bottom: 24px;
+}
+.tools-heading > div,
+.tool-actions,
+.tool-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tools-heading h1 {
+  font-size: 23px;
+  margin: 0;
+}
+.tool-website {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--command);
+  text-underline-offset: 3px;
+}
+.tool-website:hover {
+  text-decoration: underline;
+}
+.tools-heading p,
+.tool-card p {
+  color: var(--muted);
+  margin: 5px 0 0;
+}
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+}
+.tool-card {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  align-content: start;
+  text-align: left;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+}
+.tool-card:hover {
+  border-color: var(--command);
+  transform: translateY(-1px);
+}
+.tool-card h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.tool-card p {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.tool-icon {
+  display: flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--command) 8%, transparent);
+  color: var(--command);
+  border-radius: 10px;
+}
+.tool-icon svg {
+  width: 21px;
+  height: 21px;
+}
+.tool-card-link {
+  display: block;
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--command);
+}
+.tool-panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px;
+  background: var(--surface);
+  margin-bottom: 18px;
+}
+.tool-panel h2 {
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+.tool-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 8px 0;
+}
+.tool-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 500;
+}
+.tool-field textarea,
+.tool-field input {
+  width: 100%;
+  font-weight: 400;
+}
+.totp-panel {
+  max-width: 680px;
+}
+.totp-display {
+  text-align: center;
+  padding: 28px 12px;
+}
+.totp-code {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  font-size: 46px;
+  letter-spacing: 4px;
+  line-height: 1.8;
+  font-weight: 600;
+}
+.totp-countdown {
+  max-width: 380px;
+  margin: 18px auto 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.totp-track {
+  height: 6px;
+  background: var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.totp-track span {
+  display: block;
+  height: 100%;
+  background: var(--command);
+  width: 100%;
+  transform-origin: left;
+  transition: transform 0.1s linear;
+}
+.totp-countdown.ending .totp-track span {
+  background: #d59b28;
+}
+.tool-actions {
+  flex-wrap: wrap;
+}
+.tool-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.tool-error {
+  color: #d15656;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.tool-error > button {
+  margin-left: 12px;
+}
+.tool-data-path {
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  margin: 4px 0 0;
+}
+.natapp-install {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.natapp-download {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--muted);
+}
+.natapp-download progress {
+  flex: 1;
+  height: 8px;
+  accent-color: var(--command);
+}
+.tool-section-heading {
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.tool-empty {
+  text-align: center;
+  padding: 35px 12px;
+  color: var(--muted);
+}
+.tool-empty svg {
+  opacity: 0.5;
+}
+.tool-empty p {
+  font-size: 15px;
+  margin: 8px 0;
+}
+.tool-empty span {
+  font-size: 12px;
+}
+.natapp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+.natapp-row-name {
+  min-width: 0;
+  flex: 1;
+}
+.natapp-row-name strong {
+  overflow-wrap: anywhere;
+}
+.natapp-row-name small {
+  display: inline-block;
+  margin-left: 10px;
+  color: var(--muted);
+}
+.natapp-status {
+  display: inline-flex;
+  margin-left: 12px;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11px;
+  background: #89899415;
+  color: var(--muted);
+}
+.natapp-status.running {
+  color: #289665;
+  background: #28966515;
+}
+.natapp-status.starting {
+  color: #ba8b1f;
+  background: #ba8b1f15;
+}
+.natapp-status.error {
+  color: #d15656;
+  background: #d1565615;
+}
+.tool-dialog-form {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+.tool-dialog-form > .tool-actions {
+  justify-content: flex-end;
+}
+.natapp-logs {
+  margin: 0;
+  min-height: 220px;
+  max-height: 52vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 15px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.tool-dialog-form .tool-section-heading {
+  margin: 0;
+}
+.tool-dialog-form .tool-hint {
+  margin: 0;
+}
+@media (max-width: 760px) {
+  .natapp-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .tool-section-heading {
+    align-items: flex-start;
+  }
+  .totp-code {
+    font-size: 36px;
+    letter-spacing: 2px;
+  }
+}
+
+.natapp-addresses {
+  margin: 7px 0 0;
+  font-size: 12px;
+}
+.natapp-addresses > div {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 3px;
+}
+.natapp-addresses dt {
+  color: var(--muted);
+}
+.natapp-addresses dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.natapp-address-link {
+  color: var(--command);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+button.natapp-copy-address {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.natapp-start-icon {
+  color: var(--theme-green, #289665);
+}
+.natapp-stop-icon {
+  color: var(--theme-red, #c73535);
+}

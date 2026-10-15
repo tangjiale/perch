@@ -333,6 +333,84 @@ pub async fn provider_test(
     checked(resp).await?;
     Ok("服务认证与模型目录可访问".into())
 }
+fn conversation_agent(snapshot: &Value, conversation: &Value) -> Result<Value, String> {
+    if conversation["agentSnapshot"].is_object() {
+        Ok(conversation["agentSnapshot"].clone())
+    } else {
+        get(snapshot, "agents", text(conversation, "agentId"))
+    }
+}
+fn live_chat_model(snapshot: &Value, model_id: &str) -> Result<(Value, Value), String> {
+    let model = get(snapshot, "models", model_id)?;
+    let provider = get(snapshot, "providers", text(&model, "providerId"))?;
+    if model["enabled"] == false || provider["enabled"] == false {
+        return Err("模型或供应商已停用".into());
+    }
+    if !matches!(text(&model, "capability"), "chat" | "vision") {
+        return Err("请选择文本或视觉聊天模型，向量模型不能用于聊天".into());
+    }
+    Ok((model, provider))
+}
+struct ChatRoute {
+    model: Value,
+    provider: Value,
+    vision: bool,
+}
+fn resolve_chat_route(snapshot: &Value, agent: &Value) -> Result<ChatRoute, String> {
+    let (live_model, live_provider) = live_chat_model(snapshot, text(agent, "modelId"))?;
+    let vision = text(&live_model, "capability") == "vision";
+    let model = if agent["model"].is_object() {
+        agent["model"].clone()
+    } else {
+        live_model
+    };
+    let provider = if agent["provider"].is_object() {
+        agent["provider"].clone()
+    } else {
+        live_provider
+    };
+    Ok(ChatRoute {
+        model,
+        provider,
+        vision,
+    })
+}
+fn set_conversation_model(
+    store: &crate::storage::Store,
+    active: &HashMap<String, CancellationToken>,
+    conversation_id: &str,
+    model_id: &str,
+    revision: Option<u64>,
+) -> Result<Value, String> {
+    if active.contains_key(&format!("conversation:{conversation_id}")) {
+        return Err("该会话正在生成回复，请停止或等待完成后切换模型".into());
+    }
+    let snapshot = store.snapshot()?;
+    let mut conversation = get(&snapshot, "conversations", conversation_id)?;
+    if revision.is_some_and(|expected| conversation["revision"].as_u64() != Some(expected)) {
+        return Err("会话已被修改，请刷新后重试".into());
+    }
+    let (model, provider) = live_chat_model(&snapshot, model_id)?;
+    let mut agent = conversation_agent(&snapshot, &conversation)?;
+    // 只替换当前会话的模型路由，保留提示词、技能及生成参数，不改 Agent 默认。
+    agent["modelId"] = json!(model_id);
+    agent["model"] = model;
+    agent["provider"] = provider;
+    conversation["agentSnapshot"] = agent;
+    store.save("conversation", conversation)
+}
+#[tauri::command]
+pub fn chat_set_model(
+    state: State<AppState>,
+    conversation_id: String,
+    model_id: String,
+    revision: Option<u64>,
+) -> Result<Value, String> {
+    // 与 chat_send 的启动预留共用锁，持锁完成保存，防止生成与切换同时起步。
+    let active = runs().lock().map_err(|e| e.to_string())?;
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    set_conversation_model(&store, &active, &conversation_id, &model_id, revision)
+}
 #[tauri::command]
 pub fn chat_cancel(generation_id: String) -> Result<(), String> {
     if let Some(token) = runs()
@@ -406,28 +484,13 @@ async fn chat_run(
     }) {
         return Err("该发送请求已经处理，请刷新会话".into());
     }
-    let agent = if conversation["agentSnapshot"].is_object() {
-        conversation["agentSnapshot"].clone()
-    } else {
-        get(&snapshot, "agents", text(&conversation, "agentId"))?
-    };
-    let live_model = get(&snapshot, "models", text(&agent, "modelId"))?;
-    let vision = text(&live_model, "capability") == "vision";
-    validate_chat(text(&live_model, "capability"), content, images)?;
-    let live_provider = get(&snapshot, "providers", text(&live_model, "providerId"))?;
-    if live_provider["enabled"] == false || live_model["enabled"] == false {
-        return Err("模型或供应商已停用".into());
-    }
-    let model = if agent["model"].is_object() {
-        agent["model"].clone()
-    } else {
-        live_model
-    };
-    let provider = if agent["provider"].is_object() {
-        agent["provider"].clone()
-    } else {
-        live_provider
-    };
+    let agent = conversation_agent(&snapshot, &conversation)?;
+    let ChatRoute {
+        model,
+        provider,
+        vision,
+    } = resolve_chat_route(&snapshot, &agent)?;
+    validate_chat(if vision { "vision" } else { "chat" }, content, images)?;
     let key = state
         .store
         .lock()
@@ -532,21 +595,7 @@ async fn chat_run(
         let store = state.store.lock().map_err(|e| e.to_string())?;
         store.save_batch(vec![("message",json!({"id":uuid::Uuid::now_v7().to_string(),"conversationId":conversation_id,"role":"user","content":content,"images":images,"status":"completed","generationId":generation_id})),("message",json!({"id":uuid::Uuid::now_v7().to_string(),"conversationId":conversation_id,"role":"assistant","content":"","status":"streaming","generationId":generation_id,"citations":citations}))],vec![],false)?.pop().ok_or("创建回复失败")?
     };
-    let max_tokens = agent["maxTokens"].as_u64().unwrap_or(4096);
-    let (path, body) = match protocol {
-        "anthropic-messages" => (
-            "messages",
-            json!({"model":model["remoteModelId"],"system":system,"messages":&messages[1..],"max_tokens":max_tokens,"stream":true}),
-        ),
-        "openai-responses" => (
-            "responses",
-            json!({"model":model["remoteModelId"],"input":messages,"max_output_tokens":max_tokens,"stream":true}),
-        ),
-        _ => (
-            "chat/completions",
-            json!({"model":model["remoteModelId"],"messages":messages,"temperature":agent["temperature"].as_f64().unwrap_or(0.5),"max_tokens":max_tokens,"stream":true,"stream_options":{"include_usage":true}}),
-        ),
-    };
+    let (path, body) = chat_request_payload(&agent, &model, protocol, &system, &messages);
     let mut output = String::new();
     let mut usage = crate::streaming::Usage::default();
     let started = std::time::Instant::now();
@@ -630,6 +679,29 @@ async fn chat_run(
     outcome.map(|_| ())
 }
 
+fn chat_request_payload(
+    agent: &Value,
+    model: &Value,
+    protocol: &str,
+    system: &str,
+    messages: &[Value],
+) -> (&'static str, Value) {
+    let max_tokens = agent["maxTokens"].as_u64().unwrap_or(4096);
+    match protocol {
+        "anthropic-messages" => (
+            "messages",
+            json!({"model":model["remoteModelId"],"system":system,"messages":&messages[1..],"max_tokens":max_tokens,"stream":true}),
+        ),
+        "openai-responses" => (
+            "responses",
+            json!({"model":model["remoteModelId"],"input":messages,"max_output_tokens":max_tokens,"stream":true}),
+        ),
+        _ => (
+            "chat/completions",
+            json!({"model":model["remoteModelId"],"messages":messages,"temperature":agent["temperature"].as_f64().unwrap_or(0.5),"max_tokens":max_tokens,"stream":true,"stream_options":{"include_usage":true}}),
+        ),
+    }
+}
 fn skill_enabled(snapshot: &Value, skill: &Value) -> bool {
     get(snapshot, "skills", text(skill, "id")).is_ok_and(|current| current["enabled"] == true)
 }
@@ -647,6 +719,267 @@ mod tests {
             &json!({"id":"deleted","enabled":true})
         ));
         assert!(skill_enabled(&snapshot, &json!({"id":"b","enabled":true})));
+    }
+    fn model_switch_fixture(
+        root: &std::path::Path,
+        new_base: &str,
+    ) -> (crate::storage::Store, Value, Value) {
+        let store = crate::storage::Store::open_at(root.to_path_buf()).unwrap();
+        let old_provider=store.save_provider_with_secret(json!({"id":"fixture-provider-old","name":"旧服务","baseUrl":"http://127.0.0.1:1/v1","protocol":"openai-completions","enabled":true}),Some("fixture-old-key")).unwrap();
+        let new_provider=store.save_provider_with_secret(json!({"id":"fixture-provider-new","name":"新服务","baseUrl":new_base,"protocol":"anthropic-messages","enabled":true}),Some("fixture-new-key")).unwrap();
+        let old=store.save("model",json!({"id":"fixture-model-old","name":"旧模型","providerId":old_provider["id"],"remoteModelId":"old-remote","capability":"chat","enabled":true})).unwrap();
+        let new=store.save("model",json!({"id":"fixture-model-new","name":"新模型","providerId":new_provider["id"],"remoteModelId":"new-remote","capability":"vision","enabled":true})).unwrap();
+        store.save("skill",json!({"id":"fixture-skill","name":"测试技能","content":"保留技能内容","enabled":true})).unwrap();
+        let agent=store.save("agent",json!({"id":"fixture-agent","name":"助手","modelId":old["id"],"systemPrompt":"保留这段提示词","temperature":0.3,"maxTokens":2345,"skillIds":["fixture-skill"],"enabled":true})).unwrap();
+        let mut pinned = agent.clone();
+        pinned["model"] = old;
+        pinned["provider"] = old_provider;
+        pinned["skills"] =
+            json!([{"id":"fixture-skill","name":"测试技能","content":"保留技能内容"}]);
+        let conversation = store
+            .save(
+                "conversation",
+                json!({"title":"现有会话","agentId":agent["id"],"agentSnapshot":pinned}),
+            )
+            .unwrap();
+        let _other = store
+            .save(
+                "conversation",
+                json!({"title":"其他会话","agentId":agent["id"],"agentSnapshot":pinned}),
+            )
+            .unwrap();
+        store.save("message",json!({"conversationId":conversation["id"],"role":"user","content":"历史消息","status":"completed"})).unwrap();
+        (store, conversation, new)
+    }
+    #[test]
+    fn model_switch_persists_only_current_conversation_and_preserves_agent_history() {
+        let root = tempfile::tempdir().unwrap();
+        let (store, conversation, model) =
+            model_switch_fixture(root.path(), "http://127.0.0.1:1/v1");
+        let before = store.snapshot().unwrap();
+        let saved = set_conversation_model(
+            &store,
+            &HashMap::new(),
+            text(&conversation, "id"),
+            text(&model, "id"),
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(saved["revision"], 2);
+        assert_eq!(saved["agentSnapshot"]["modelId"], model["id"]);
+        assert_eq!(
+            saved["agentSnapshot"]["provider"]["id"],
+            "fixture-provider-new"
+        );
+        let mut old_agent = conversation["agentSnapshot"].clone();
+        let mut new_agent = saved["agentSnapshot"].clone();
+        for field in ["modelId", "model", "provider"] {
+            old_agent.as_object_mut().unwrap().remove(field);
+            new_agent.as_object_mut().unwrap().remove(field);
+        }
+        assert_eq!(old_agent, new_agent);
+        let after = store.snapshot().unwrap();
+        assert_eq!(before["agents"], after["agents"]);
+        assert_eq!(before["messages"], after["messages"]);
+        assert_eq!(before["conversations"][1], after["conversations"][1]);
+        assert!(!saved.to_string().contains("fixture-new-key"));
+        drop(store);
+        let reopened = crate::storage::Store::open_at(root.path().to_path_buf()).unwrap();
+        let persisted = get(
+            &reopened.snapshot().unwrap(),
+            "conversations",
+            text(&conversation, "id"),
+        )
+        .unwrap();
+        assert_eq!(persisted["agentSnapshot"]["modelId"], model["id"]);
+    }
+    #[test]
+    fn legacy_conversation_snapshots_original_agent_before_switch() {
+        let root = tempfile::tempdir().unwrap();
+        let (store, _, model) = model_switch_fixture(root.path(), "http://127.0.0.1:1/v1");
+        let legacy = store
+            .save(
+                "conversation",
+                json!({"title":"旧会话","agentId":"fixture-agent"}),
+            )
+            .unwrap();
+        let original = get(&store.snapshot().unwrap(), "agents", "fixture-agent").unwrap();
+        let saved = set_conversation_model(
+            &store,
+            &HashMap::new(),
+            text(&legacy, "id"),
+            text(&model, "id"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            saved["agentSnapshot"]["systemPrompt"],
+            original["systemPrompt"]
+        );
+        assert_eq!(saved["agentSnapshot"]["skillIds"], original["skillIds"]);
+        assert_eq!(saved["agentSnapshot"]["maxTokens"], original["maxTokens"]);
+        assert_eq!(
+            get(&store.snapshot().unwrap(), "agents", "fixture-agent").unwrap(),
+            original
+        );
+    }
+    #[test]
+    fn model_switch_rejects_conflicts_running_and_unavailable_choices_without_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let (store, conversation, model) =
+            model_switch_fixture(root.path(), "http://127.0.0.1:1/v1");
+        let cid = text(&conversation, "id");
+        let baseline = store.snapshot().unwrap();
+        assert!(
+            set_conversation_model(&store, &HashMap::new(), cid, text(&model, "id"), Some(0))
+                .is_err()
+        );
+        let mut active = HashMap::new();
+        active.insert(format!("conversation:{cid}"), CancellationToken::new());
+        assert!(
+            set_conversation_model(&store, &active, cid, text(&model, "id"), Some(1))
+                .unwrap_err()
+                .contains("正在生成")
+        );
+        assert!(
+            set_conversation_model(&store, &HashMap::new(), cid, "missing-model", Some(1)).is_err()
+        );
+        assert_eq!(store.snapshot().unwrap(), baseline);
+        for (capability, enabled) in [("embedding", true), ("vision", false), ("invalid", true)] {
+            let choice=store.save("model",json!({"name":"不可用模型","providerId":"fixture-provider-new","remoteModelId":"unavailable","capability":capability,"enabled":enabled})).unwrap();
+            let before = store.snapshot().unwrap();
+            assert!(set_conversation_model(
+                &store,
+                &HashMap::new(),
+                cid,
+                text(&choice, "id"),
+                Some(1)
+            )
+            .is_err());
+            assert_eq!(store.snapshot().unwrap(), before);
+        }
+        let mut provider = get(
+            &store.snapshot().unwrap(),
+            "providers",
+            "fixture-provider-new",
+        )
+        .unwrap();
+        provider["enabled"] = json!(false);
+        store.save("provider", provider).unwrap();
+        let before = store.snapshot().unwrap();
+        assert!(
+            set_conversation_model(&store, &HashMap::new(), cid, text(&model, "id"), Some(1))
+                .is_err()
+        );
+        assert_eq!(store.snapshot().unwrap(), before);
+    }
+    #[tokio::test]
+    async fn switched_route_uses_new_provider_protocol_model_and_encrypted_key() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0u8; 4096];
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buffer[..n]);
+                if let Some(end) = request.windows(4).position(|b| b == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                    let len = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.strip_prefix("content-length:")
+                                .map(|s| s.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap();
+                    if request.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+            }
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            )
+            .unwrap();
+            request
+        });
+        let root = tempfile::tempdir().unwrap();
+        let (store, conversation, model) =
+            model_switch_fixture(root.path(), &format!("http://{address}/v1"));
+        let saved = set_conversation_model(
+            &store,
+            &HashMap::new(),
+            text(&conversation, "id"),
+            text(&model, "id"),
+            Some(1),
+        )
+        .unwrap();
+        let snapshot = store.snapshot().unwrap();
+        let agent = conversation_agent(&snapshot, &saved).unwrap();
+        let route = resolve_chat_route(&snapshot, &agent).unwrap();
+        assert!(route.vision);
+        let protocol = text(&route.provider, "protocol");
+        let system = text(&agent, "systemPrompt");
+        let mut messages = vec![json!({"role":"system","content":system})];
+        messages.extend(
+            chat_history(
+                &snapshot,
+                text(&conversation, "id"),
+                protocol,
+                route.vision,
+                0,
+            )
+            .unwrap(),
+        );
+        messages.push(message_payload(protocol, "user", "新问题", &[]));
+        let (path, body) = chat_request_payload(&agent, &route.model, protocol, system, &messages);
+        let key = store.provider_secret(text(&route.provider, "id")).unwrap();
+        let response = auth(
+            http()
+                .unwrap()
+                .post(endpoint(text(&route.provider, "baseUrl"), path).unwrap()),
+            &route.provider,
+            &key,
+        )
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+        assert!(response.status().is_success());
+        let request = server.join().unwrap();
+        let end = request.windows(4).position(|b| b == b"\r\n\r\n").unwrap();
+        let headers = String::from_utf8_lossy(&request[..end]);
+        assert!(headers.starts_with("POST /v1/messages "));
+        assert!(headers
+            .to_ascii_lowercase()
+            .contains("x-api-key: fixture-new-key"));
+        assert!(!headers.contains("fixture-old-key"));
+        let sent: Value = serde_json::from_slice(&request[end + 4..]).unwrap();
+        assert_eq!(sent["model"], "new-remote");
+        assert_eq!(sent["system"], "保留这段提示词");
+        assert_eq!(sent["max_tokens"], 2345);
+        assert_eq!(sent["messages"][0]["content"], "历史消息");
+        let image = fixture_image("image/png", b"\x89PNG\r\n\x1a\nfixture");
+        assert!(validate_chat("vision", "", std::slice::from_ref(&image)).is_ok());
+        assert_eq!(
+            message_payload(protocol, "user", "", &[image])["content"][0]["type"],
+            "image"
+        );
+        let original = get(&snapshot, "agents", "fixture-agent").unwrap();
+        let old_route = resolve_chat_route(&snapshot, &original).unwrap();
+        assert!(!old_route.vision);
+        assert!(validate_chat(
+            "chat",
+            "描述",
+            &[fixture_image("image/png", b"\x89PNG\r\n\x1a\nfixture")]
+        )
+        .is_err());
     }
     fn fixture_image(mime: &str, bytes: &[u8]) -> ChatImage {
         use base64::Engine;

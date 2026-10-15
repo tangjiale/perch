@@ -1,17 +1,24 @@
 mod agent_presets;
+mod backup;
+mod backup_cron;
 mod credential_vault;
 mod data;
 mod dingtalk_calendar;
+mod exchange_rates;
+mod image_actions;
 mod integrations;
 mod knowledge;
 mod local_skills;
 mod mail;
 mod mail_history;
 mod mcp;
+mod natapp;
 mod parser;
 mod provider_models;
+mod s3_backup;
 pub mod storage;
 mod streaming;
+mod task_reminders;
 mod tray;
 mod updater;
 mod website_icon;
@@ -88,6 +95,7 @@ fn delete_task(state: State<AppState>, id: String, revision: Option<i64>) -> Res
 }
 #[tauri::command]
 fn data_backup(state: State<AppState>, destination: String) -> Result<(), String> {
+    let _backup_guard = backup::maintenance_guard()?;
     state
         .store
         .lock()
@@ -95,7 +103,13 @@ fn data_backup(state: State<AppState>, destination: String) -> Result<(), String
         .backup(std::path::Path::new(&destination))
 }
 #[tauri::command]
-fn storage_move(state: State<AppState>, target: String) -> Result<Value, String> {
+fn storage_move(
+    state: State<AppState>,
+    manager: State<natapp::NatappManager>,
+    target: String,
+) -> Result<Value, String> {
+    let _backup_guard = backup::maintenance_guard()?;
+    let _tools_guard = manager.maintenance_guard()?;
     integrations::ensure_idle()?;
     mail::ensure_idle()?;
     let mut store = state.store.lock().map_err(|e| e.to_string())?;
@@ -105,7 +119,14 @@ fn storage_move(state: State<AppState>, target: String) -> Result<Value, String>
     Ok(store.info())
 }
 #[tauri::command]
-fn data_restore(state: State<AppState>, archive: String, target: String) -> Result<Value, String> {
+fn data_restore(
+    state: State<AppState>,
+    manager: State<natapp::NatappManager>,
+    archive: String,
+    target: String,
+) -> Result<Value, String> {
+    let _backup_guard = backup::maintenance_guard()?;
+    let _tools_guard = manager.maintenance_guard()?;
     integrations::ensure_idle()?;
     mail::ensure_idle()?;
     let mut store = state.store.lock().map_err(|e| e.to_string())?;
@@ -120,6 +141,7 @@ fn data_restore(state: State<AppState>, archive: String, target: String) -> Resu
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(natapp::NatappManager::default())
         .plugin(
             tauri::plugin::Builder::<tauri::Wry>::new("desktop-interaction")
                 // 在文档加载前覆盖所有 frame，不放宽邮件 iframe 的沙箱限制。
@@ -133,8 +155,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let store = storage::Store::open_default().map_err(std::io::Error::other)?;
+            if let Err(error) = app
+                .state::<natapp::NatappManager>()
+                .cleanup_stale_configs(&store.root.join("tools/natapp"))
+            {
+                eprintln!("NATAPP 临时配置清理失败：{error}");
+            }
             app.manage(AppState {
                 store: Mutex::new(store),
             });
@@ -142,11 +171,24 @@ pub fn run() {
             mail::start_background(app.handle().clone());
             zentao::background::start(app.handle().clone());
             dingtalk_calendar::start(app.handle().clone());
+            task_reminders::start(app.handle().clone());
+            backup::start(app.handle().clone());
             Ok(())
         })
         .on_window_event(tray::on_window_event)
         .invoke_handler(tauri::generate_handler![
+            exchange_rates::get_exchange_rates,
             workspace_snapshot,
+            backup::backup_state,
+            backup::backup_save,
+            backup::backup_test,
+            backup::backup_refresh,
+            backup::backup_create,
+            backup::backup_verify,
+            backup::backup_retry,
+            backup::backup_restore,
+            backup::backup_download,
+            task_reminders::task_reminder_permission,
             tray::tray_preferences,
             tray::tray_preferences_save,
             mail::mail_accounts,
@@ -179,6 +221,13 @@ pub fn run() {
             dingtalk_calendar::dingtalk_calendar_save,
             dingtalk_calendar::dingtalk_calendar_sync,
             storage_info,
+            natapp::natapp_state,
+            natapp::natapp_install,
+            natapp::natapp_save,
+            natapp::natapp_delete,
+            natapp::natapp_start,
+            natapp::natapp_stop,
+            natapp::natapp_logs,
             save_task,
             delete_task,
             save_project,
@@ -214,13 +263,19 @@ pub fn run() {
             provider_models::provider_models,
             provider_models::provider_models_import,
             integrations::chat_send,
+            integrations::chat_set_model,
             integrations::chat_cancel,
             zentao::zentao_sync,
             zentao::assignment::zentao_task_assignment,
+            zentao::bug_history::zentao_bug_history,
             zentao::media::zentao_task_image_read,
+            zentao::media::zentao_bug_image_read,
+            image_actions::image_clipboard_write,
+            image_actions::image_download,
             zentao::media::zentao_task_image_upload,
             zentao::bugs::zentao_bugs_sync,
             zentao::bugs::zentao_bug_save,
+            zentao::users::zentao_bug_assignees,
             zentao::bugs::zentao_bug_transition,
             knowledge::knowledge_import,
             knowledge::knowledge_retry,
@@ -229,5 +284,10 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("无法启动栖点")
-        .run(tray::on_run_event);
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<natapp::NatappManager>().shutdown();
+            }
+            tray::on_run_event(app, event);
+        });
 }

@@ -10,6 +10,7 @@
 - 已修复方案需 `resolvedBuild`；重复方案需 `duplicateBug`。重新激活需 `openedBuild` 数组和指派账号。主干版本标识为 `trunk`。
 - API 会将空指派人或特殊账号格式化成 `null`；关闭 BUG 会把指派人设为 `closed`，因此后续个人同步会将其移出。
 - BUG 详情可能携带 HTML、图片和 action 历史。前端仅展示安全排版，禁止远端脚本、图片及嵌入请求；缓存仅保存业务字段与冲突核验版本。
+- 详情历史通过独立只读 IPC 按需读取 `GET /bugs/{id}?fields=actions`，核对 Token 当前账号、BUG 关联和远端基线，返回前检查工作空间 generation、连接及本地记录。官方 `bug.php` 的 GET 返回 `actions`，`module/action/model.php` 的 `processActionForAPI` 将 actor 和 assigned 事件 extra 转为显示姓名，history 的人员 old/new 也可能是姓名；展示姓名不能用于授权。指派来源取最新 `assignedTo` 变更或 assigned 事件并核对当前指派对象，创建人独立；历史按时间、动作 ID 正序排列，保留备注与字段变化。前端清理备注 HTML，历史不进入数据库；缺失／异常历史、跨 BUG 记录与超限响应报错并允许重试。
 
 源码依据：[v1 路由](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/config/apiv1.php)、[BUG 列表](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/api/v1/entries/bugs.php)、[BUG 详情和编辑](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/api/v1/entries/bug.php)、[解决](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/api/v1/entries/bugresolve.php)、[激活](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/api/v1/entries/bugactive.php)。仅源码及本地模拟验收，未调用真实 BUG 写入接口。
 
@@ -46,7 +47,7 @@
 
 - 同服务根路径使用 v1 /user 读取 profile.account，不能用连接显示名称推断身份。
 - v1 /projects?involved=1&status=all 完整读取当前账号参与项目；包含创建者、PM、项目团队、干系人或白名单成员。v2 involved 查询参数无已验证的等效过滤，因此个人同步固定使用 v1。
-- v1 /executions?fields=PM,desc&status=all 完整读取执行目录。只导入相关项目内 PM.account 与当前账号相同的执行，包含 status 为 closed 的执行并映射为本地已关闭。无负责人跳过，负责人字段缺失或无法识别时失败；不能按 realname 或项目负责人筛选。
+- v1 /executions?fields=PM,desc&status=all 完整读取执行目录。只导入相关项目内 PM.account 与当前账号相同的执行，包含 status 为 closed 的执行并映射为本地已完成；suspended 映射为已挂起。任务四态与执行状态双向对应 wait↔todo、doing↔doing、suspended↔suspended、closed↔done，拖到已完成实际写入 closed。无负责人跳过，负责人字段缺失或无法识别时失败；不能按 realname 或项目负责人筛选。
 - 项目 PM 保存到 owner，执行 PM 保存到 remoteExecutionOwner / remoteExecutionOwnerAccount。
 - 任务详情按需只读查询 v1 `/executions/{id}?fields=actions`，核验项目和当前 `PM.account` 后，显示最新 PM 变更动作的操作者、时间及独立的创建人。22.0 的 action API 会将 actor、人员历史 old/new 转成显示姓名，不能用姓名授权或把 actor 当账号；缺失、矛盾或没有负责人变更记录时不推断指派人。来源：官方 `zentaopms_22.0_20260318` 的 `api/v1/entries/execution.php` 与 `module/action/model.php`。不增加全量同步请求，不读取执行下任务。
 - 远端 wait / doing / done / closed 对应本地 todo / doing / done / closed；begin / end 转为全天跨日排期，末日包含当天。
@@ -105,3 +106,20 @@ POST 提交意图写入现有 settings 表，不存凭据。未知结果不重�
 依据官方源码 tag `zentaopms_22.0_20260318`：`api/v1/entries/file.php` 的 GET 调用文件下载，路径为 `GET /api.php/v1/files/{id}`；`api/v1/entries/files.php` 的 POST 调用 `file.ajaxUpload`，表单字段为 `imgFile`，返回 `id` 与 `url`。均复用 Token 认证。描述中的 `{ID.png}` 是图片引用，不能直接作为浏览器 URL；也支持同源 `index.php?m=file&f=read&t=png&fileID=ID` 与 `file-read-ID.png`。
 
 原生读取先核对当前账号与执行的项目／负责人及远端描述引用，再通过固定文件 API 下载。上传先核验远端版本、执行负责人和项目关联，不自动重试 POST。上传返回的编号与 URL 必须一致；前端存储原始引用而不是预览 data URL，描述更新继续走原 `save_task` 冲突与回写逻辑。
+
+## BUG 指派人员下拉
+
+通过 BUG 本地关联连接读取 `GET /api.php/v1/users?browse=all&type=bydept&page=N&limit=100&order=id_asc`，复用 Token 身份校验及只读自动续登。官方 `users.php` 默认返回 `account/realname`，没有对象 ID，因此分页去重键必须是账号；分页采用 `page/total/limit`，重复页或异常元数据报错，不能返回部分名单。`full=1` 额外需要 `company-browse` 权限，本功能不请求完整人员资料。
+
+官方 `dept.model::getUsers()` 强制 `deleted=0`，并限制当前 vision；`browse=all` 包含内部与外部用户。标准默认响应不暴露账号停用字段；扩展响应中的显式 `deleted/disabled/enabled=false/status=disabled` 防御性过滤。登录 `locked` 为临时锁定，不作为不可指派依据。前端显示姓名、保存账号，名单不能推断项目团队限制；禅道仍负责保存权限校验。完整读取返回前核对工作空间 generation、连接和 BUG 快照，过期结果报错。
+
+官方证据：[人员入口](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/api/v1/entries/users.php)、[公司人员查询](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/module/company/model.php)、[部门人员过滤](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/module/dept/model.php)。验证仅用模拟 HTTP 与临时工作空间，不访问真实禅道。
+
+
+## BUG 确认与独立指派
+
+官方 22.0 固定源码提供 `POST /api.php/v1/bugs/{id}/confirm` 与 `POST /api.php/v1/bugs/{id}/assign`。确认入口字段包括 `assignedTo/mailto/comment/pri/type/status/deadline`，未传字段沿用原 BUG；栖点确认只提交可选 `comment`，保留指派、优先级和状态。指派入口提交 `assignedTo` 和可选 `comment`，使用独立 action 记录禅道指派历史，不借编辑接口模拟。
+
+`confirmed` 是独立确认字段，整数或字符串 `0/1` 规范化为布尔值；缺失或 null 保留为未知，禁止显示为未确认。已激活且明确未确认的 BUG 可确认；已确认、已关闭或未知确认状态拒绝重复提交。远端确认字段纳入乐观冲突校验，旧缓存需同步获得新字段。确认返回必须明确 `confirmed=1`；指派返回必须与目标账号、原状态、项目关联和确认状态一致，才能更新本地。转派给其他账号后，在连接与 BUG revision 保护的事务中移出个人缓存。失败、超时、无效响应不保存本地也不自动重放。
+
+官方证据：[确认入口](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/api/v1/entries/bugconfirm.php)、[指派入口](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/api/v1/entries/bugassign.php)、[确认操作可用条件与历史记录](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/module/bug/model.php)。验证使用模拟 HTTP 和临时库，不访问真实禅道。

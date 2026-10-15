@@ -15,8 +15,9 @@ import {
   CircleDashed,
   CircleDot,
   CircleCheck,
-  CircleX,
+  CirclePause,
   ArrowUpRight,
+  ExternalLink,
   FolderKanban,
   Pencil,
   Trash2,
@@ -44,16 +45,18 @@ import GlassSelect from "../components/GlassSelect";
 import { zentaoDetailUrl } from "../lib/zentao-links";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../lib/api";
-import { createSchedule, taskScheduleDates } from "../lib/schedule";
+import { createSchedule, taskScheduleDates, taskScheduleLabel } from "../lib/schedule";
 import { isTaskExpired } from "../lib/task-expiry";
 import { useExpiryRefresh } from "../lib/use-expiry-refresh";
 import { buildBugStatistics } from "../lib/bug-statistics";
 import {
   statuses,
+  taskStatuses,
   type Task,
   type Project,
   type PageProps,
   type Status,
+  type TaskStatus,
   type Application,
 } from "../lib/types";
 
@@ -112,7 +115,7 @@ const statusIcons = {
   todo: CircleDashed,
   doing: CircleDot,
   done: CircleCheck,
-  closed: CircleX,
+  suspended: CirclePause,
 };
 
 // 空列可能和最长任务列一样高；按四角距离会误选相邻卡片。
@@ -126,7 +129,7 @@ const boardCollision: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
   const exact = hits.filter((hit) => String(hit.id).startsWith("slot:"));
   if (exact.length) return exact;
-  const column = hits.find((hit) => String(hit.id) in statuses);
+  const column = hits.find((hit) => String(hit.id) in taskStatuses);
   if (!column) return [];
   return closestCorners({
     ...args,
@@ -149,7 +152,7 @@ function BoardSlot({
   beforeId,
   active,
 }: {
-  status: Status;
+  status: TaskStatus;
   beforeId: string | null;
   active: boolean;
 }) {
@@ -170,31 +173,6 @@ function BoardSlot({
 const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const dateLabel = (date?: string) =>
   date ? DateTime.fromISO(date).toFormat("M月d日") : "未排期";
-function scheduleLabel(t: Task) {
-  if (!t.schedule) return "未排期";
-  if (t.schedule.kind === "all_day")
-    return dateLabel(t.schedule.start) + " 全天";
-  return (
-    DateTime.fromISO(t.schedule.start)
-      .setZone(t.schedule.timezone)
-      .toFormat("M月d日 HH:mm") +
-    (t.schedule.end
-      ? " – " +
-        DateTime.fromISO(t.schedule.end)
-          .setZone(t.schedule.timezone)
-          .toFormat(
-            DateTime.fromISO(t.schedule.end)
-              .setZone(t.schedule.timezone)
-              .hasSame(
-                DateTime.fromISO(t.schedule.start).setZone(t.schedule.timezone),
-                "day",
-              )
-              ? "HH:mm"
-              : "M月d日 HH:mm",
-          )
-      : "")
-  );
-}
 const blankTask = (): Task => ({
   id: crypto.randomUUID(),
   title: "",
@@ -274,6 +252,13 @@ export function TaskEditor({
   const [timezone, setTimezone] = useState(task.schedule?.timezone || zone);
   const requiredExecutionDates = Boolean(zentaoSchedule && (creatingExecution || task.schedule || start || end));
   const requiredStart = requiredExecutionDates || Boolean(end);
+  async function openRemoteTask() {
+    try {
+      await openUrl(zentaoDetailUrl(task, data.connections));
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (saving.current || saved || mediaBusy) return;
@@ -286,6 +271,11 @@ export function TaskEditor({
       if (creatingExecution && (!start || !end))
         throw Error("创建禅道执行需要填写计划开始和结束日期");
       const schedule = createSchedule(start, end, timezone, allDay);
+      if (value.reminder?.enabled) {
+        if (!schedule?.end) throw Error("开启到期提醒需要填写结束日期时间");
+        if (!(await api.taskReminderPermission()))
+          throw Error("请在系统设置允许栖点通知后再保存到期提醒");
+      }
       await api.save("task", { ...value, schedule });
       setSaved(true);
       try {
@@ -318,7 +308,15 @@ export function TaskEditor({
       busy={busy || mediaBusy}
     >
       <form onSubmit={submit} className="form-grid">
-        {isTaskExpired(value) && <span className="tag expired">已过期</span>}
+        {task.source === "zentao" ? (
+          <div className="task-detail-bar">
+            {isTaskExpired(value) && <span className="tag expired">已过期</span>}
+            <button type="button" disabled={busy || mediaBusy} onClick={() => void openRemoteTask()}>
+              <ExternalLink size={15} />
+              在禅道打开
+            </button>
+          </div>
+        ) : isTaskExpired(value) && <span className="tag expired">已过期</span>}
         <label>
           <span>任务名称<RequiredMark /></span>
           <input
@@ -398,9 +396,9 @@ export function TaskEditor({
               value={value.status}
               disabled={creatingExecution || busy || saved}
               onValueChange={(status) =>
-                setValue({ ...value, status: status as Status })
+                setValue({ ...value, status: status as TaskStatus })
               }
-              options={Object.entries(statuses).map(([value, label]) => ({
+              options={Object.entries(taskStatuses).map(([value, label]) => ({
                 value,
                 label,
               }))}
@@ -474,6 +472,47 @@ export function TaskEditor({
             />
           </label>
         </div>
+        <label className="check-label">
+          <input
+            type="checkbox"
+            aria-label="到期提醒"
+            checked={value.reminder?.enabled ?? false}
+            disabled={busy || saved || (!end && !value.reminder?.enabled)}
+            onChange={(e) => setValue({
+              ...value,
+              reminder: {
+                enabled: e.target.checked,
+                advanceMinutes: value.reminder?.advanceMinutes ?? 0,
+              },
+            })}
+          />
+          到期提醒
+        </label>
+        {value.reminder?.enabled && (
+          <label>
+            <span>提醒时间</span>
+            <GlassSelect
+              aria-label="提醒时间"
+              value={String(value.reminder.advanceMinutes)}
+              disabled={busy || saved}
+              onValueChange={(advanceMinutes) => setValue({
+                ...value,
+                reminder: { enabled: true, advanceMinutes: Number(advanceMinutes) },
+              })}
+              options={[
+                { value: "0", label: "到期时" },
+                { value: "15", label: "提前 15 分钟" },
+                { value: "60", label: "提前 1 小时" },
+                { value: "1440", label: "提前 1 天" },
+              ]}
+            />
+          </label>
+        )}
+        <p className="muted">
+          {!end && "设置结束时间后可开启提醒。"}
+          {allDay && "全天任务在结束日期次日零点到期。"}
+          通过系统通知提醒；应用在托盘运行时仍会提醒，完全退出后停止。
+        </p>
         {value.source === "zentao" && (
           <div className="notice task-remote-notice">
             <p>禅道 {value.remoteType} #{value.remoteId} · {value.remoteStatus}</p>
@@ -557,7 +596,7 @@ function Card({
   return (
     <article
       ref={setNodeRef}
-      className={`task-card${task.status === "closed" ? " task-is-closed" : ""}`}
+      className={`task-card${task.status === "done" ? " task-is-done" : ""}`}
       style={{ opacity: isDragging ? 0.3 : undefined }}
     >
       <div className="card-meta">
@@ -624,7 +663,7 @@ function Column({
   children,
   count,
 }: {
-  status: Status;
+  status: TaskStatus;
   children: React.ReactNode;
   count: number;
 }) {
@@ -637,7 +676,7 @@ function Column({
     >
       <h3 className={status}>
         <Icon size={16} />
-        {statuses[status]}
+        {taskStatuses[status]}
         <span>{count}</span>
       </h3>
       {children}
@@ -702,7 +741,7 @@ export default function Work({
     setDragging(null);
     const t = data.tasks.find((task) => task.id === event.active.id);
     const placement = event.over?.data.current?.placement as
-      { status: Status; beforeId: string | null } | undefined;
+      { status: TaskStatus; beforeId: string | null } | undefined;
     if (moveLock.current || !t || !placement || placement.beforeId === t.id)
       return;
     const original = data.tasks
@@ -770,7 +809,7 @@ export default function Work({
           {items.map((t) => (
             <tr
               key={t.id}
-              className={t.status === "closed" ? "task-is-closed" : undefined}
+              className={t.status === "done" ? "task-is-done" : undefined}
             >
               <td>
                 <button className="text-link" onClick={() => setEditing(t)}>
@@ -787,12 +826,12 @@ export default function Work({
                   "未关联"}
               </td>
               <td>
-                <span className={"tag " + t.status}>{statuses[t.status]}</span>
+                <span className={"tag " + t.status}>{taskStatuses[t.status]}</span>
                 {isTaskExpired(t) && (
                   <span className="tag expired">已过期</span>
                 )}
               </td>
-              <td>{scheduleLabel(t)}</td>
+              <td>{taskScheduleLabel(t.schedule)}</td>
             </tr>
           ))}
         </tbody>
@@ -838,13 +877,13 @@ export default function Work({
       {page === "overview" ? (
         <>
           <div className="metrics overview-metrics">
-            {(Object.keys(statuses) as Status[]).map((s) => {
+            {(Object.keys(taskStatuses) as TaskStatus[]).map((s) => {
               const Icon = statusIcons[s];
               return (
                 <button key={s} onClick={() => navigate("/tasks")}>
                   <span className={s}>
                     <Icon size={17} />
-                    {statuses[s]}
+                    {taskStatuses[s]}
                   </span>
                   <strong>
                     {data.tasks.filter((t) => t.status === s).length}
@@ -979,7 +1018,7 @@ export default function Work({
               onValueChange={setStatus}
               options={[
                 { value: "all", label: "全部状态" },
-                ...Object.entries(statuses).map(([value, label]) => ({
+                ...Object.entries(taskStatuses).map(([value, label]) => ({
                   value,
                   label,
                 })),
@@ -1040,7 +1079,7 @@ export default function Work({
               collisionDetection={boardCollision}
             >
               <div className="board">
-                {(Object.keys(statuses) as Status[]).map((s) => (
+                {(["todo", "doing", "done", "suspended"] as const).map((s) => (
                   <Column
                     key={s}
                     status={s}
@@ -1120,7 +1159,7 @@ export function Projects({
   const [edit, setEdit] = useState<Project | null>(null),
     [error, setError] = useState(""),
     [task, setTask] = useState<Task | null>(null);
-  const taskCounts = new Map<string, Record<Status, number>>();
+  const taskCounts = new Map<string, Record<TaskStatus, number>>();
   const bugGroups = buildBugProjectIndex(data.projects, data.bugs);
   for (const item of data.tasks) {
     if (!item.projectId) continue;
@@ -1128,7 +1167,7 @@ export function Projects({
       todo: 0,
       doing: 0,
       done: 0,
-      closed: 0,
+      suspended: 0,
     };
     counts[item.status]++;
     taskCounts.set(item.projectId, counts);
@@ -1154,7 +1193,7 @@ export function Projects({
           todo: 0,
           doing: 0,
           done: 0,
-          closed: 0,
+          suspended: 0,
         },
       };
     })
@@ -1222,7 +1261,7 @@ export function Projects({
             <tbody>
               {projects.map(({ project: p, description, counts }) => {
                 const total =
-                  counts.todo + counts.doing + counts.done + counts.closed;
+                  counts.todo + counts.doing + counts.done + counts.suspended;
                 const bugKey = projectBugKey(p);
                 const bugs = bugKey ? bugGroups.get(bugKey) : undefined;
                 return (
@@ -1322,7 +1361,7 @@ export function Projects({
                           className="project-progress-track"
                           aria-hidden="true"
                         >
-                          {(Object.keys(statuses) as Status[]).map(
+                          {(Object.keys(taskStatuses) as TaskStatus[]).map(
                             (status) =>
                               counts[status] > 0 && (
                                 <span
@@ -1337,7 +1376,7 @@ export function Projects({
                         </span>
                         <span className="project-task-breakdown">
                           {total
-                            ? `待做 ${counts.todo} · 正在做 ${counts.doing}${counts.closed ? ` · 关闭 ${counts.closed}` : ""}`
+                            ? `待做 ${counts.todo} · 正在做 ${counts.doing}${counts.suspended ? ` · 挂起 ${counts.suspended}` : ""}`
                             : "暂无关联任务"}
                         </span>
                       </button>

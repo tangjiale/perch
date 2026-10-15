@@ -5,7 +5,7 @@ export function isTaskExpired(
   task: Task,
   now: DateTime = DateTime.now(),
 ): boolean {
-  if (task.status === "closed") return false;
+  if (task.status === "done") return false;
   const zone = task.schedule?.timezone || now.zoneName || "Asia/Shanghai";
   const current = now.setZone(zone);
   if (!current.isValid) return false;

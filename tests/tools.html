@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>工具模拟接口测试</title>
+  </head>
+  <body>
+    <div id="root" style="height: 100vh"></div>
+    <script>
+      // 仅模拟本地 IPC，不下载、不启动隧道，不读取真实凭据。
+      globalThis.isTauri = !new URLSearchParams(location.search).has("preview");
+      window.__calls = [];
+      window.__notice = "";
+      window.__state = {
+        installed: false,
+        installing: false,
+        platform: "macOS ARM64",
+        version: "",
+        dataDir: "/mock/perch/tools/natapp",
+        downloadedBytes: 0,
+        tunnels: [],
+      };
+      window.__TAURI_INTERNALS__ = {
+        invoke: async (name, args) => {
+          window.__calls.push({ name, args });
+          if (window.__fail) throw "模拟操作失败";
+          if (name === "natapp_state") return structuredClone(window.__state);
+          if (name === "natapp_install") {
+            window.__state.installed = true;
+            return;
+          }
+          if (name === "natapp_save") {
+            const value = args.value;
+            const existing = window.__state.tunnels.find(
+              (t) => t.id === value.id,
+            );
+            if (existing) {
+              existing.name = value.name;
+              existing.revision++;
+              existing.hasAuthToken =
+                !!value.authToken || existing.hasAuthToken;
+            } else
+              window.__state.tunnels.push({
+                id: "mock-" + window.__state.tunnels.length,
+                name: value.name,
+                revision: 1,
+                hasAuthToken: !!value.authToken,
+                status: "stopped",
+              });
+            return;
+          }
+          if (name === "natapp_start") {
+            window.__state.tunnels.find((t) => t.id === args.id).status =
+              "running";
+            return;
+          }
+          if (name === "natapp_stop") {
+            window.__state.tunnels.find((t) => t.id === args.id).status =
+              "stopped";
+            return;
+          }
+          if (name === "natapp_delete") {
+            window.__state.tunnels = window.__state.tunnels.filter(
+              (t) => t.id !== args.id,
+            );
+            return;
+          }
+          if (name === "natapp_logs")
+            return {
+              text: "模拟日志：客户端已连接\nTunnel started",
+              truncated: false,
+            };
+          throw Error("未知mock命令 " + name);
+        },
+      };
+    </script>
+    <script type="module" src="./ToolsFixture.tsx"></script>
+  </body>
+</html>

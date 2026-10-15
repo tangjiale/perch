@@ -386,6 +386,9 @@ small {
 .done {
   color: #28835d !important;
 }
+.suspended {
+  color: #9b7136;
+}
 .closed {
   color: #8c8c94;
 }
@@ -454,6 +457,9 @@ td:first-child {
 }
 .tag.doing {
   background: #edf3ff;
+}
+.tag.suspended {
+  background: #fff4e5;
 }
 .tag.done {
   background: #eaf5ee;
@@ -555,18 +561,18 @@ html[data-theme="dark"] .tag.expired {
   background: none;
   color: #476da9;
 }
-html .task-card.task-is-closed .task-title,
-html tr.task-is-closed td:first-child .text-link {
+html .task-card.task-is-done .task-title,
+html tr.task-is-done td:first-child .text-link {
   color: var(--muted);
   text-decoration: line-through;
   text-decoration-thickness: 1px;
   text-decoration-color: currentColor;
 }
-html .task-card.task-is-closed .source-remote,
-html tr.task-is-closed {
+html .task-card.task-is-done .source-remote,
+html tr.task-is-done {
   color: var(--muted);
 }
-html .task-card.task-is-closed .tag:not(.expired) {
+html .task-card.task-is-done .tag:not(.expired) {
   color: var(--muted);
 }
 .task-card p {

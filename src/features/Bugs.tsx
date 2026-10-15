@@ -1,22 +1,27 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type MouseEvent } from "react";
 import {
   Bug,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
   CheckCircle2,
+  BadgeCheck,
   ExternalLink,
   RefreshCw,
   Search,
   Settings2,
   XCircle,
+  UserRoundCheck,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { DateTime } from "luxon";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import DOMPurify from "dompurify";
 import GlassSelect from "../components/GlassSelect";
+import ZentaoAssigneeSelect from "../components/ZentaoAssigneeSelect";
 import Modal from "../components/Modal";
+import BugSteps from "../components/BugSteps";
+import BugHistory from "../components/BugHistory";
+import { BugRichTextEditor } from "../components/TaskRichTextEditor";
 import { command } from "../lib/api";
 import type { PageProps, ZentaoBug } from "../lib/types";
 import { bugProjectKey, buildBugProjectIndex } from "../lib/bug-projects";
@@ -36,12 +41,38 @@ const levels = [1, 2, 3, 4].map((value) => ({
   value: String(value),
   label: String(value),
 }));
-type Action = "resolve" | "close" | "activate";
+type Action = "confirm" | "assign" | "resolve" | "close" | "activate";
 const actionNames: Record<Action, string> = {
+  confirm: "确认 BUG",
+  assign: "指派 BUG",
   resolve: "解决 BUG",
   close: "关闭 BUG",
   activate: "激活 BUG",
 };
+
+function ConfirmationBadge({ confirmed }: { confirmed: ZentaoBug["confirmed"] }) {
+  const state = confirmed === true ? "yes" : confirmed === false ? "no" : "unknown";
+  return (
+    <span className={`bug-confirmation bug-confirmation-${state}`}
+      title={state === "unknown" ? "请同步 BUG 获取禅道中的确认状态" : undefined}>
+      {state === "yes" ? "已确认" : state === "no" ? "未确认" : "待同步"}
+    </span>
+  );
+}
+
+function SeverityBadge({ severity }: { severity: number }) {
+  const level = [1, 2, 3, 4].includes(severity) ? severity : undefined;
+  const label = level ? `严重程度 ${level}` : "严重程度未知";
+  return (
+    <span className="bug-severity" data-severity={level} role="img" aria-label={label} title={label}>
+      {/* 与禅道 22.0 ZUI 的 severity 图形保持一致，数字与轮廓共用等级颜色。 */}
+      <svg viewBox="0 0 27 30" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M2.267 19.913c-.056 4.557 4.911 8.235 11.308 8.022 6.095-.203 11.157-4.713 11.159-9.517.001-2.764-.97-5.625-2.71-8.106a4.65 4.65 0 0 1-1.263 1.788l-1.633 1.409c-.272.233-.707.106-.793-.233l-.513-2.027c-.793-3.13-2.841-6.29-5.016-7.984-.676 4.138-2.935 8.507-6.138 11.387l-1.394 1.254c-.247.222-.652.138-.779-.162l-.578-1.364c-1.19 2.264-1.628 3.711-1.65 5.533M19.706 5.856c-.193-.446.375-.837.76-.523 3.993 3.26 6.536 8.154 6.534 13-.002 5.781-5.822 11.407-13.346 11.657C5.877 30.249-.069 25.543.001 19.804c.027-2.297.621-4.064 1.921-6.527.018-.035.638-1.192.802-1.512.28-.544.482-.985.639-1.405.218-.583.342-1.112.372-1.63.025-.43.602-.594.87-.247.647.838.992 1.915 1.159 3.26q0 .166.045.614l.18-.176q.112-.113.174-.182c-.015.026-.018.035-.02.046.025-.042.063-.124.124-.191 2.986-3.33 4.577-8.139 4.473-11.38-.01-.334.344-.566.667-.438 2.827 1.118 5.034 3.318 6.7 6.187a21 21 0 0 1 1.614 3.484c.408-.926.594-2.441-.015-3.85" />
+        <text x="13.5" y="26" textAnchor="middle" fill="currentColor">{level ?? "?"}</text>
+      </svg>
+    </span>
+  );
+}
 
 function dateLabel(value?: string) {
   if (!value || value.startsWith("0000")) return "未设置";
@@ -49,39 +80,6 @@ function dateLabel(value?: string) {
   return date.isValid
     ? date.toFormat(value.length === 10 ? "yyyy-MM-dd" : "yyyy-MM-dd HH:mm")
     : "未设置";
-}
-
-// 只展示文本排版；禁止远端图片、链接和嵌入内容在详情中发起请求。
-function safeSteps(value: string) {
-  return DOMPurify.sanitize(value, {
-    ALLOWED_TAGS: [
-      "p",
-      "br",
-      "b",
-      "strong",
-      "em",
-      "i",
-      "u",
-      "s",
-      "ul",
-      "ol",
-      "li",
-      "pre",
-      "code",
-      "blockquote",
-      "table",
-      "thead",
-      "tbody",
-      "tr",
-      "td",
-      "th",
-      "h1",
-      "h2",
-      "h3",
-      "h4",
-    ],
-    ALLOWED_ATTR: [],
-  });
 }
 
 export default function Bugs({
@@ -103,6 +101,7 @@ export default function Bugs({
     setParams(next);
   };
   const [severity, setSeverity] = useState("all");
+  const [confirmation, setConfirmation] = useState("all");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [sortField, setSortField] = useState<BugSortField>("openedDate");
@@ -138,6 +137,9 @@ export default function Bugs({
     (bug) =>
       (filter === "all" || bug.status === filter) &&
       (severity === "all" || bug.severity === Number(severity)) &&
+      (confirmation === "all" ||
+        (confirmation === "confirmed" && bug.confirmed === true) ||
+        (confirmation === "unconfirmed" && bug.confirmed === false)) &&
       words.every((word) =>
         `${bug.remoteId} ${bug.title} ${bug.productName ?? ""} ${bug.projectName ?? ""} ${bug.assignedToName ?? ""} ${bug.assignedTo}`
           .toLocaleLowerCase()
@@ -203,7 +205,9 @@ export default function Bugs({
     setAction(null);
     setError("");
   }
-  function beginAction(next: Action) {
+  function beginAction(next: Action, event: MouseEvent<HTMLButtonElement>) {
+    // 阻止同一次点击在切换表单后触发新确认按钮的默认提交。
+    event.preventDefault();
     setAction(next);
     setResolution("fixed");
     setBuild(next === "activate" ? "" : "trunk");
@@ -215,10 +219,8 @@ export default function Bugs({
   async function transition(event: FormEvent) {
     event.preventDefault();
     if (!edit || !action) return;
-    const payload: Record<string, unknown> = {
-      comment,
-      assignedTo: assignee.trim(),
-    };
+    const payload: Record<string, unknown> = { comment };
+    if (action !== "confirm" && action !== "close") payload.assignedTo = assignee.trim();
     if (action === "resolve") {
       payload.resolution = resolution;
       if (resolution === "fixed") payload.resolvedBuild = build.trim();
@@ -383,6 +385,19 @@ export default function Bugs({
                   })),
                 ]}
               />
+              <GlassSelect
+                aria-label="是否确认"
+                value={confirmation}
+                onValueChange={(value) => {
+                  setConfirmation(value);
+                  setPage(0);
+                }}
+                options={[
+                  { value: "all", label: "全部确认状态" },
+                  { value: "confirmed", label: "已确认" },
+                  { value: "unconfirmed", label: "未确认" },
+                ]}
+              />
               <Search size={16} />
               <input
                 aria-label="搜索 BUG"
@@ -415,7 +430,7 @@ export default function Bugs({
               </h3>
               <p>
                 {allBugs.length
-                  ? "试试切换项目、状态、严重程度或调整关键词。"
+                  ? "试试切换项目、状态、严重程度、是否确认或调整关键词。"
                   : "点击“同步我的 BUG”，获取禅道中的最新指派。"}
               </p>
             </div>
@@ -427,8 +442,10 @@ export default function Bugs({
                     <tr>
                       <th scope="col">BUG</th>
                       <th scope="col" aria-sort={columnOrder(["status"])}>{sortButton("status", "状态")}</th>
-                      <th scope="col" aria-sort={columnOrder(["priority", "severity"])}>{sortButton("priority", "优先级")} / {sortButton("severity", "严重程度")}</th>
+                      <th scope="col" aria-sort={columnOrder(["priority"])}>{sortButton("priority", "优先级")}</th>
+                      <th scope="col" className="bugs-severity-cell" aria-sort={columnOrder(["severity"])}>{sortButton("severity", "严重程度")}</th>
                       <th scope="col">产品 / 项目</th>
+                      <th scope="col" aria-sort={columnOrder(["confirmed"])}>{sortButton("confirmed", "是否确认")}</th>
                       <th scope="col">指派给</th>
                       <th scope="col" aria-sort={columnOrder(["openedDate", "deadline"])}>{sortButton("openedDate", "创建")} / {sortButton("deadline", "截止日期")}</th>
                     </tr>
@@ -463,8 +480,8 @@ export default function Bugs({
                             >
                               P{bug.priority}
                             </span>
-                            <small>严重程度 {bug.severity}</small>
                           </td>
+                          <td className="bugs-severity-cell"><SeverityBadge severity={bug.severity} /></td>
                           <td>
                             {bug.productName ||
                               (bug.productId
@@ -477,6 +494,7 @@ export default function Bugs({
                                   : "未关联项目")}
                             </small>
                           </td>
+                          <td><ConfirmationBadge confirmed={bug.confirmed} /></td>
                           <td>
                             {bug.assignedToName || bug.assignedTo || "未指派"}
                             <small>
@@ -530,7 +548,7 @@ export default function Bugs({
             </div>
           )}
           {action ? (
-            <form className="form-grid bugs-form" onSubmit={transition}>
+            <form key="action" className="form-grid bugs-form" onSubmit={transition}>
               <p className="bugs-full">
                 <strong>{edit.title}</strong>
               </p>
@@ -579,21 +597,18 @@ export default function Bugs({
                   />
                 </label>
               )}
-              {action !== "close" && (
+              {action !== "close" && action !== "confirm" && (
                 <label>
-                  处理后指派给
-                  <input
-                    value={assignee}
-                    required
-                    disabled={busy}
-                    onChange={(event) => setAssignee(event.target.value)}
-                  />
-                  <small>填写禅道账号；转派给其他人后将移出“我的 BUG”。</small>
+                  {action === "assign" ? "指派给" : "处理后指派给"}
+                  <ZentaoAssigneeSelect key={edit.id} bugId={edit.id} value={assignee} currentName={edit.assignedToName}
+                    label={action === "assign" ? "指派给" : "处理后指派给"} disabled={busy} onChange={account => setAssignee(account)} />
+                  <small>可按姓名或账号搜索；转派给其他人后将移出“我的 BUG”。</small>
                 </label>
               )}
               <label className="bugs-full">
                 操作备注
                 <textarea
+                  aria-label="操作备注"
                   rows={4}
                   value={comment}
                   disabled={busy}
@@ -601,7 +616,7 @@ export default function Bugs({
                 />
               </label>
               <p className="bugs-full muted">
-                确认后将直接更新禅道中的此 BUG。
+                {action === "confirm" ? "提交后将调用禅道的确认功能，将此 BUG 标记为已确认。" : "确认后将直接更新禅道中的此 BUG。"}
               </p>
               <footer>
                 <button
@@ -614,13 +629,14 @@ export default function Bugs({
                 >
                   返回详情
                 </button>
-                <button className="primary" disabled={busy}>
-                  {busy ? "正在提交…" : `确认${actionNames[action]}`}
+                <button type="submit" className="primary" disabled={busy || (action === "assign" && !assignee.trim())}>
+                  {busy ? "正在提交…" : action === "confirm" ? "确认 BUG" : action === "assign" ? "提交指派" : `确认${actionNames[action]}`}
                 </button>
               </footer>
             </form>
           ) : (
             <form
+              key="detail"
               className="form-grid bugs-form"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -634,9 +650,12 @@ export default function Bugs({
               }}
             >
               <div className="bugs-full bugs-detail-bar">
-                <span className={`bug-status bug-status-${edit.status}`}>
-                  {statusNames[edit.status]}
-                </span>
+                <div className="bugs-detail-badges">
+                  <span className={`bug-status bug-status-${edit.status}`}>
+                    {statusNames[edit.status]}
+                  </span>
+                  <ConfirmationBadge confirmed={edit.confirmed} />
+                </div>
                 <button
                   type="button"
                   disabled={busy}
@@ -686,41 +705,30 @@ export default function Bugs({
                 />
               </label>
               <label className="bugs-full">
-                指派给（禅道账号）
-                <input
-                  required
-                  disabled={busy || !editing}
-                  value={edit.assignedTo}
-                  onChange={(event) =>
-                    setEdit({ ...edit, assignedTo: event.target.value })
-                  }
-                />
+                指派给
+                <ZentaoAssigneeSelect key={edit.id} bugId={edit.id} value={edit.assignedTo} currentName={edit.assignedToName}
+                  active={editing} disabled={busy} onChange={(account, realname) =>
+                    setEdit(previous => previous ? { ...previous, assignedTo: account, assignedToName: realname } : previous)
+                  } />
               </label>
               {editing ? (
-                <label className="bugs-full">
-                  复现步骤
-                  <textarea
-                    rows={8}
+                <section className="bugs-full bugs-step-editor" aria-labelledby="bug-steps-title">
+                  <h3 id="bug-steps-title">复现步骤</h3>
+                  <BugRichTextEditor
+                    key={`${edit.id}:${edit.revision}`}
+                    bugId={edit.id}
                     value={edit.steps}
                     disabled={busy}
-                    onChange={(event) =>
-                      setEdit({ ...edit, steps: event.target.value })
+                    onChange={(steps) =>
+                      setEdit(previous => previous ? { ...previous, steps } : previous)
                     }
                   />
-                  <small>
-                    支持纯文本和已有 HTML 格式；复杂排版、附件可在禅道中编辑。
-                  </small>
-                </label>
+                </section>
               ) : (
                 <section className="bugs-full">
                   <h3>复现步骤</h3>
                   {edit.steps ? (
-                    <div
-                      className="bugs-steps"
-                      dangerouslySetInnerHTML={{
-                        __html: safeSteps(edit.steps),
-                      }}
-                    />
+                    <BugSteps key={`${edit.id}:${edit.revision}`} bugId={edit.id} value={edit.steps} />
                   ) : (
                     <p className="muted">暂无复现步骤</p>
                   )}
@@ -747,6 +755,7 @@ export default function Bugs({
                   <span>解决：{dateLabel(edit.resolvedDate)}</span>
                 )}
               </div>
+              {!editing && <BugHistory key={`${edit.id}:${edit.revision}`} bugId={edit.id} revision={edit.revision} />}
               <footer className="bugs-detail-footer">
                 {editing ? (
                   <>
@@ -785,9 +794,30 @@ export default function Bugs({
                     {edit.status === "active" && (
                       <button
                         type="button"
+                        disabled={busy || edit.confirmed !== false}
+                        title={edit.confirmed === true ? "此 BUG 已确认" : edit.confirmed !== false ? "请先同步 BUG 获取确认状态" : undefined}
+                        onClick={(event) => beginAction("confirm", event)}
+                      >
+                        <BadgeCheck size={15} />
+                        确认
+                      </button>
+                    )}
+                    {edit.status !== "closed" && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={(event) => beginAction("assign", event)}
+                      >
+                        <UserRoundCheck size={15} />
+                        指派
+                      </button>
+                    )}
+                    {edit.status === "active" && (
+                      <button
+                        type="button"
                         className="primary"
                         disabled={busy}
-                        onClick={() => beginAction("resolve")}
+                        onClick={(event) => beginAction("resolve", event)}
                       >
                         <CheckCircle2 size={15} />
                         解决
@@ -797,7 +827,7 @@ export default function Bugs({
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => beginAction("close")}
+                        onClick={(event) => beginAction("close", event)}
                       >
                         <XCircle size={15} />
                         关闭
@@ -807,7 +837,7 @@ export default function Bugs({
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => beginAction("activate")}
+                        onClick={(event) => beginAction("activate", event)}
                       >
                         <RefreshCw size={15} />
                         激活

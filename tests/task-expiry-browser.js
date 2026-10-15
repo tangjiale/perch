@@ -12,7 +12,7 @@
   const count = () =>
     [...host.querySelectorAll(".tag")].filter((e) => e.textContent === "已过期")
       .length;
-  if (count() !== 3) throw Error("看板仅非关闭状态显示过期标签");
+  if (count() !== 3) throw Error("看板仅未完成状态显示过期标签");
   const originalTheme = document.documentElement.getAttribute("data-theme");
   const colors = {};
   for (const theme of ["light", "dark"]) {
@@ -31,9 +31,9 @@
     .find((b) => b.textContent.trim() === "列表")
     .click();
   await wait();
-  if (count() !== 3) throw Error("列表仅非关闭状态显示过期标签");
+  if (count() !== 3) throw Error("列表仅未完成状态显示过期标签");
   [...host.querySelectorAll("button")]
-    .find((b) => b.textContent.trim() === "过期-closed")
+    .find((b) => b.textContent.trim() === "过期-done")
     .click();
   await wait();
   if (
@@ -41,7 +41,7 @@
       (e) => e.textContent === "已过期",
     )
   )
-    throw Error("已关闭任务详情不应显示过期标签");
+    throw Error("已完成任务详情不应显示过期标签");
   const detailText = document.querySelector("dialog").textContent;
   if (
     detailText.includes("截止日期") ||
@@ -67,7 +67,7 @@
   return {
     board: true,
     list: true,
-    closedDetails: true,
+    completedDetails: true,
     unifiedDates: true,
     remoteEditor: true,
     colors,

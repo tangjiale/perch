@@ -1,6 +1,6 @@
 {
   "name": "perch",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,7 @@
     "release:tag": "node scripts/release.mjs tag",
     "release:configure": "node scripts/configure-updater.mjs",
     "runtime:prepare": "node scripts/prepare-parser.mjs",
-    "test:release": "node --test scripts/release-checks.mjs",
+    "test:release": "node --test scripts/release-checks.mjs scripts/site-release-checks.cjs",
     "dev:hooks": "git config core.hooksPath .githooks"
   },
   "dependencies": {

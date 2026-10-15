@@ -197,8 +197,8 @@ export default function CalendarView({
               />
             </label>
           ))}
-          <p className="wb-almanac-legend"><span className="wb-holiday-mark is-rest">休</span> 放假　<span className="wb-holiday-mark is-work">班</span> 调休上班</p>
-          {!hasHolidaySchedule(month.year) && <p className="wb-almanac-legend">{month.year} 年放假调休数据尚未收录，仅显示农历与节气。</p>}
+          <p className="wb-almanac-legend"><span className="wb-holiday-mark is-rest">休</span> 休息　<span className="wb-holiday-mark is-work">班</span> 调休上班</p>
+          {!hasHolidaySchedule(month.year) && <p className="wb-almanac-legend">{month.year} 年放假调休数据尚未收录，显示农历、节气与普通周末休息，不推算调休。</p>}
         </section>
         <section className="wb-calendar-unscheduled">
           <h3>
@@ -210,7 +210,7 @@ export default function CalendarView({
               <button
                 key={task.id}
                 title={task.title}
-                className={["done", "closed"].includes(task.status) ? "wb-calendar-unscheduled-done" : undefined}
+                className={task.status === "done" ? "wb-calendar-unscheduled-done" : undefined}
                 onClick={() => onEdit(task)}
               >
                 <GripVertical size={13} />
@@ -292,6 +292,9 @@ export default function CalendarView({
           noEventsText="当前时段暂无任务或日程"
           moreLinkText={(count) => `+${count} 项`}
           dayMaxEvents={3}
+          eventOrder="completionOrder,start,-duration,allDay,title"
+          // 严格遵循未完成优先，避免跨天事件为填补空位而挤占可见名额。
+          eventOrderStrict
           eventTimeFormat={{
             hour: "2-digit",
             minute: "2-digit",
@@ -342,9 +345,12 @@ export default function CalendarView({
               start: task.schedule!.start,
               end: task.schedule!.end,
               allDay: task.schedule!.kind === "all_day",
-              extendedProps: { expired: isTaskExpired(task) },
+              extendedProps: {
+                expired: isTaskExpired(task),
+                completionOrder: task.status === "done" ? 1 : 0,
+              },
               classNames: [
-                `wb-calendar-event-${["done", "closed"].includes(task.status) ? "done" : task.source}`,
+                `wb-calendar-event-${task.status === "done" ? "done" : task.source}`,
               ],
             })), ...dingEvents.map(event => ({
               id: `dingtalk:${event.id}`,
@@ -355,7 +361,7 @@ export default function CalendarView({
               editable: false,
               startEditable: false,
               durationEditable: false,
-              extendedProps: { dingtalk: true, eventId: event.id },
+              extendedProps: { dingtalk: true, eventId: event.id, completionOrder: 0 },
               classNames: ["wb-calendar-event-dingtalk"],
             }))]}
           eventContent={(info) => (

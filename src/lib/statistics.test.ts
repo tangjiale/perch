@@ -72,8 +72,8 @@ describe("统计聚合", () => {
     expect(result.taskStatus.map((item) => item.name)).toEqual([
       "待做",
       "正在做",
+      "已挂起",
       "已完成",
-      "已关闭",
     ]);
     expect(result.taskMetrics.completionRate).toBeNull();
     expect(Object.values(result.metrics).every((value) => value === 0)).toBe(
@@ -109,8 +109,8 @@ describe("统计聚合", () => {
           timezone: "Asia/Shanghai",
         },
       }),
-      task("closed", {
-        status: "closed",
+      task("suspended", {
+        status: "suspended",
         completedAt,
         schedule: {
           kind: "all_day",
@@ -133,12 +133,12 @@ describe("统计聚合", () => {
     const result = buildStatistics(data, 7, now, "Asia/Shanghai");
     expect(result.taskMetrics).toEqual({
       total: 7,
-      open: 4,
+      open: 5,
       done: 2,
-      closed: 1,
+      suspended: 1,
       overdue: 2,
       unscheduled: 3,
-      completionRate: 2 / 6,
+      completionRate: 2 / 7,
     });
     expect(result.taskTrend[5]).toEqual({
       date: "2026-09-07",
@@ -155,16 +155,16 @@ describe("统计聚合", () => {
       todo: 3,
       doing: 1,
       done: 2,
-      closed: 1,
+      suspended: 1,
       total: 7,
     });
     expect(
       buildStatistics(
-        { ...data, tasks: [task("closed", { status: "closed" })] },
+        { ...data, tasks: [task("suspended", { status: "suspended" })] },
         7,
         now,
       ).taskMetrics.completionRate,
-    ).toBeNull();
+    ).toBe(0);
   });
 
   it.each([
@@ -291,7 +291,7 @@ describe("统计聚合", () => {
         todo: 1,
         doing: 0,
         done: 0,
-        closed: 0,
+        suspended: 0,
         total: 1,
       },
       {
@@ -300,7 +300,7 @@ describe("统计聚合", () => {
         todo: 0,
         doing: 0,
         done: 0,
-        closed: 0,
+        suspended: 0,
         total: 0,
       },
     ]);

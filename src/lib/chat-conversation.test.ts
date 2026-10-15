@@ -63,3 +63,39 @@ it("配置缺失或停用时给出明确指引", () => {
     ),
   ).toThrow("聊天模型");
 });
+it("新会话模型覆盖只写会话快照，不改变Agent默认", () => {
+  const alternative = {
+    ...data.models[0],
+    id: "other",
+    name: "另一个模型",
+    capability: "chat" as const,
+  };
+  const value = newChatConversation(
+    { ...data, models: [...data.models, alternative] },
+    "a",
+    "",
+    "new-id",
+    "other",
+  );
+  expect(value.agentSnapshot?.modelId).toBe("other");
+  expect(value.agentSnapshot?.model?.id).toBe("other");
+  expect(data.agents[0].modelId).toBe("m");
+});
+it("覆盖模型也必须启用且可聊天，供应商必须启用", () => {
+  for (const model of [
+    { ...data.models[0], id: "other", enabled: false },
+    { ...data.models[0], id: "other", capability: "embedding" as const },
+  ])
+    expect(() =>
+      newChatConversation({ ...data, models: [model] }, "a", "", "id", "other"),
+    ).toThrow("聊天模型");
+  expect(() =>
+    newChatConversation(
+      { ...data, providers: [{ ...data.providers[0], enabled: false }] },
+      "a",
+      "",
+      "id",
+      "m",
+    ),
+  ).toThrow("供应商");
+});

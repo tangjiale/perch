@@ -17,9 +17,12 @@ const fixture = window as typeof window & {
     reject: (error: Error) => void;
   }[];
   closeCount: number;
+  reminderPermission: boolean;
 };
 fixture.calls = [];
 fixture.closeCount = 0;
+fixture.reminderPermission = true;
+api.taskReminderPermission = async () => fixture.reminderPermission;
 api.save = ((kind: string, value: Task) =>
   new Promise<Task>((resolve, reject) =>
     fixture.calls.push({ kind, value, resolve, reject }),

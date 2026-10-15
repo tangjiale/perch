@@ -1,14 +1,17 @@
+use crate::data::optional;
 use crate::integrations::*;
 use std::collections::HashSet;
 pub mod assignment;
 pub mod background;
 mod board;
+pub mod bug_history;
 pub mod bugs;
 mod create;
 mod description;
 mod edit;
 mod execution_context;
 pub mod media;
+pub mod users;
 mod validation;
 
 const PAGE_SIZE: usize = 100;
@@ -244,6 +247,11 @@ impl<'a> Adapter<'a> {
             let mut url = endpoint(&self.base, path)?;
             {
                 let mut query = url.query_pairs_mut();
+                if resource == "users" {
+                    query
+                        .append_pair("browse", "all")
+                        .append_pair("type", "bydept");
+                }
                 if self.personal && resource == "projects" {
                     query.append_pair("involved", "1");
                 }
@@ -305,7 +313,12 @@ impl<'a> Adapter<'a> {
                 return Ok(output);
             }
             for row in rows {
-                if !ids.insert(remote_id(&row["id"])?) {
+                let id = if resource == "users" {
+                    users::user_account(&row)?.to_owned()
+                } else {
+                    remote_id(&row["id"])?
+                };
+                if !ids.insert(id) {
                     return Err(format!(
                         "禅道 {resource} 分页返回重复对象，请核验分页协议后重试"
                     ));
@@ -530,13 +543,7 @@ fn merge(
         task["remoteType"] = json!(kind);
         task["connectionId"] = json!(connection);
         task["remoteStatus"] = row["status"].clone();
-        if let Some(status) = match text(&row, "status") {
-            "wait" => Some("todo"),
-            "doing" => Some("doing"),
-            "done" => Some("done"),
-            "closed" | "cancel" => Some("closed"),
-            _ => None,
-        } {
+        if let Some(status) = execution_local_status(text(&row, "status")) {
             task["status"] = json!(status);
         }
         let (account, owner) = owner_identity(&row["PM"]);
@@ -552,6 +559,10 @@ fn merge(
         } else if task["remoteScheduleManaged"] == true {
             task["schedule"] = Value::Null;
             task["remoteScheduleManaged"] = json!(false);
+        }
+        // 远端撤销排期时停用提醒，但保留用户选择的提前时间。
+        if optional(&task["schedule"], "end").is_none() && task["reminder"]["enabled"] == true {
+            task["reminder"]["enabled"] = json!(false);
         }
         changes.push(("task", task));
     }
@@ -574,6 +585,17 @@ fn remote_date_range(begin: &Value, end: &Value) -> Option<Value> {
     )
 }
 
+fn execution_local_status(remote: &str) -> Option<&'static str> {
+    match remote {
+        "wait" => Some("todo"),
+        "doing" => Some("doing"),
+        "suspended" => Some("suspended"),
+        // 保留历史完成/取消状态的终态语义，原始值仍写入 remoteStatus；新完成统一写 closed。
+        "closed" | "done" | "cancel" => Some("done"),
+        _ => None,
+    }
+}
+
 fn execution_patch(old: &Value, value: &Value) -> Result<Value, String> {
     let mut patch = json!({});
     for (local, remote) in [("title", "name"), ("notes", "desc")] {
@@ -585,8 +607,8 @@ fn execution_patch(old: &Value, value: &Value) -> Result<Value, String> {
         patch["status"] = json!(match text(value, "status") {
             "todo" => "wait",
             "doing" => "doing",
-            "done" => "done",
-            "closed" => "closed",
+            "suspended" => "suspended",
+            "done" => "closed",
             _ => return Err("无效的任务状态".into()),
         });
     }
@@ -682,13 +704,8 @@ fn apply_execution_result(
             return Err("禅道已处理请求，但返回内容与修改不一致，请重新同步核对".into());
         }
     }
-    let status = match text(result, "status") {
-        "wait" => "todo",
-        "doing" => "doing",
-        "done" => "done",
-        "closed" | "cancel" => "closed",
-        _ => return Err("禅道返回无法映射的状态，请重新同步核对".into()),
-    };
+    let status = execution_local_status(text(result, "status"))
+        .ok_or("禅道返回无法映射的状态，请重新同步核对")?;
     if text(result, "name").trim().is_empty() {
         return Err("禅道返回名称无效，请重新同步核对".into());
     }
@@ -754,6 +771,7 @@ impl Adapter<'_> {
 }
 
 pub async fn save_task(state: State<'_, AppState>, mut value: Value) -> Result<Value, String> {
+    crate::data::validate_task_reminder(&value)?;
     let placement = board::take_placement(&mut value)?;
     let create_project = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -1428,8 +1446,8 @@ mod tests {
         for (status, expected) in [
             ("todo", "wait"),
             ("doing", "doing"),
-            ("done", "done"),
-            ("closed", "closed"),
+            ("suspended", "suspended"),
+            ("done", "closed"),
         ] {
             let mut original = old.clone();
             original["status"] = json!("other");
@@ -1684,6 +1702,41 @@ mod tests {
         assert_eq!(server.join().unwrap().len(), 1);
     }
     #[test]
+    fn reminder_stays_local_and_survives_remote_schedule_changes() {
+        let mut old = json!({"id":"local-task","title":"任务","source":"zentao","connectionId":"c","remoteType":"execution","remoteId":"3","status":"todo","notes":"","reminder":{"enabled":true,"advanceMinutes":60},"remoteScheduleManaged":true,"schedule":{"kind":"all_day","start":"2026-10-12","end":"2026-10-13","timezone":"Asia/Shanghai"}});
+        let mut edited = old.clone();
+        edited["reminder"]["advanceMinutes"] = json!(15);
+        assert_eq!(execution_patch(&old, &edited).unwrap(), json!({}));
+        edited["title"] = json!("新名称");
+        assert_eq!(
+            execution_patch(&old, &edited).unwrap(),
+            json!({"name":"新名称"})
+        );
+        for (end, enabled) in [(Some("2026-10-15"), true), (None, false)] {
+            let changes = merge(
+                &json!({"projects":[],"tasks":[old.clone()]}),
+                "c",
+                RemoteSnapshot {
+                    projects: vec![json!({"id":8,"name":"项目"})],
+                    items: vec![("8".into(), "execution".into(), json!({"id":3,"name":"任务","status":"wait","begin":"2026-10-12","end":end}))],
+                },
+            ).unwrap();
+            let task = &changes[1].1;
+            assert_eq!(
+                task["reminder"],
+                json!({"enabled":enabled,"advanceMinutes":60})
+            );
+            if enabled {
+                assert_eq!(task["schedule"]["end"], "2026-10-16");
+            } else {
+                assert!(task["schedule"].is_null());
+            }
+            assert!(crate::data::validate_task_reminder(task).is_ok());
+            old = task.clone();
+        }
+    }
+
+    #[test]
     fn merge_updates_remote_status_and_retains_notes_and_manual_schedule() {
         let snapshot = json!({"projects":[],"tasks":[{"id":"local-task","source":"zentao","connectionId":"c","remoteType":"execution","remoteId":"3","projectId":"old","status":"doing","notes":"personal","priority":"high","schedule":{"kind":"all_day","start":"2026-09-01"}}]});
         let data = RemoteSnapshot {
@@ -1840,7 +1893,7 @@ mod tests {
         assert_eq!(changes[0].1["owner"], "project-owner");
         assert_eq!(changes[1].1["remoteExecutionOwnerAccount"], "alice");
         assert_eq!(changes[1].1["remoteExecutionOwner"], "甲");
-        assert_eq!(changes[2].1["status"], "closed");
+        assert_eq!(changes[2].1["status"], "done");
         assert_eq!(changes[2].1["remoteStatus"], "closed");
         let temporary = tempfile::tempdir().unwrap();
         let store = crate::storage::Store::open_at(temporary.path().to_path_buf()).unwrap();
@@ -1863,7 +1916,7 @@ mod tests {
         let snapshot = store.snapshot().unwrap();
         let closed = existing(&snapshot, "tasks", "connection", "execution", "35").unwrap();
         assert_eq!(closed["id"], closed_id);
-        assert_eq!(closed["status"], "closed");
+        assert_eq!(closed["status"], "done");
         assert_eq!(snapshot["tasks"].as_array().unwrap().len(), 1);
         let requests = server.join().unwrap();
         assert!(requests[0].starts_with("GET /api.php/v1/user "));
@@ -1889,5 +1942,125 @@ mod tests {
         assert!(SyncGuard::acquire("test", "conn").is_ok());
         assert!(validate_parent(&json!({"project":{"id":9}}), "project", "8").is_err());
         assert!(remote_id(&json!("../tokens")).is_err());
+    }
+    #[tokio::test]
+    async fn board_status_change_sends_closed_or_suspended_and_applies_remote_result() {
+        for (local, remote_status) in [("done", "closed"), ("suspended", "suspended")] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let expected = remote_status.to_string();
+            let mock = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut data = Vec::new();
+                let end = loop {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap();
+                    assert!(n > 0);
+                    data.extend_from_slice(&buf[..n]);
+                    if let Some(i) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break i + 4;
+                    }
+                };
+                let header = String::from_utf8_lossy(&data[..end]).to_string();
+                assert!(header.starts_with("PUT /api.php/v1/executions/42 HTTP/1.1"));
+                let length = header
+                    .lines()
+                    .filter_map(|l| l.split_once(':'))
+                    .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                    .unwrap()
+                    .1
+                    .trim()
+                    .parse::<usize>()
+                    .unwrap();
+                while data.len() < end + length {
+                    let mut buf = [0u8; 4096];
+                    let n = stream.read(&mut buf).unwrap();
+                    assert!(n > 0);
+                    data.extend_from_slice(&buf[..n]);
+                }
+                let body: Value = serde_json::from_slice(&data[end..end + length]).unwrap();
+                assert_eq!(body, json!({"status":expected}));
+                assert!(body.get("boardBeforeId").is_none());
+                let result=json!({"id":42,"name":"任务","status":expected,"project":3,"PM":{"account":"me"}}).to_string();
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",result.len(),result).unwrap();
+            });
+            let adapter = Adapter::personal(
+                &json!({"baseUrl":url,"apiVersion":"v2"}),
+                "mock-token".into(),
+            )
+            .unwrap();
+            let old = json!({"id":"local","title":"任务","notes":"","status":"doing","remoteStatus":"doing"});
+            let mut edited = old.clone();
+            edited["status"] = json!(local);
+            edited["boardBeforeId"] = Value::Null;
+            let placement = board::take_placement(&mut edited).unwrap();
+            assert_eq!(placement, Some(None));
+            let patch = execution_patch(&old, &edited).unwrap();
+            let result = adapter.execution_request("42", Some(&patch)).await.unwrap();
+            verify_execution_scope(&result, "3", "me").unwrap();
+            apply_execution_result(&url, &mut edited, &old, &result, &patch).unwrap();
+            assert_eq!(edited["status"], local);
+            assert_eq!(edited["remoteStatus"], remote_status);
+            mock.join().unwrap();
+        }
+    }
+    #[test]
+    fn execution_sync_preserves_remote_status_and_maps_all_four_local_states() {
+        for (remote, local) in [
+            ("wait", "todo"),
+            ("doing", "doing"),
+            ("suspended", "suspended"),
+            ("closed", "done"),
+            ("done", "done"),
+            ("cancel", "done"),
+        ] {
+            let changes = merge(
+                &json!({"projects":[],"tasks":[]}),
+                "connection",
+                RemoteSnapshot {
+                    projects: vec![json!({"id":3,"name":"项目"})],
+                    items: vec![(
+                        "3".into(),
+                        "execution".into(),
+                        json!({"id":42,"name":"任务","status":remote}),
+                    )],
+                },
+            )
+            .unwrap();
+            let task = &changes.iter().find(|(kind, _)| *kind == "task").unwrap().1;
+            assert_eq!(task["status"], local);
+            assert_eq!(task["remoteStatus"], remote);
+        }
+        assert!(execution_patch(&json!({"status":"doing"}), &json!({"status":"closed"})).is_err());
+    }
+    #[test]
+    fn closed_to_suspended_reopen_keeps_identity_and_status_conflict_checks() {
+        let old = json!({"status":"done","remoteStatus":"closed"});
+        let edited = json!({"status":"suspended"});
+        let patch = execution_patch(&old, &edited).unwrap();
+        assert_eq!(patch, json!({"status":"suspended"}));
+        let remote = json!({"status":"closed","project":3,"PM":{"account":"me"}});
+        assert!(
+            verify_execution_edit("https://example.test", &old, &remote, &patch, "3", "me").is_ok()
+        );
+        assert!(
+            verify_execution_edit("https://example.test", &old, &remote, &patch, "3", "other")
+                .unwrap_err()
+                .contains("负责人")
+        );
+        assert!(
+            verify_execution_edit("https://example.test", &old, &remote, &patch, "4", "me")
+                .unwrap_err()
+                .contains("项目")
+        );
+        let changed = json!({"status":"doing","project":3,"PM":{"account":"me"}});
+        assert!(
+            verify_execution_edit("https://example.test", &old, &changed, &patch, "3", "me")
+                .unwrap_err()
+                .contains("状态")
+        );
     }
 }

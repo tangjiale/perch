@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>聊天模型模拟验收</title>
+  </head>
+  <body>
+    <div id="root" style="height: 100vh"></div>
+    <script>
+      // 只模拟IPC，不调用模型服务。
+      window.isTauri = true;
+      window.__calls = [];
+      window.__TAURI_INTERNALS__ = {
+        transformCallback: () => 1,
+        unregisterCallback: () => {},
+        invoke: async (name, args) => {
+          window.__calls.push({ name, args });
+          const store = window.__chatStore;
+          if (name === "chat_set_model") {
+            if (window.__modelFail) throw "模拟模型保存失败";
+            const conversation = store.conversations.find(
+              (c) => c.id === args.conversationId,
+            );
+            if (args.revision !== conversation.revision)
+              throw "模拟revision冲突";
+            const apply = () => {
+              const model = store.models.find((m) => m.id === args.modelId);
+              const provider = store.providers.find(
+                (p) => p.id === model.providerId,
+              );
+              const saved = {
+                ...conversation,
+                revision: conversation.revision + 1,
+                agentSnapshot: {
+                  ...conversation.agentSnapshot,
+                  modelId: model.id,
+                  model,
+                  provider,
+                },
+              };
+              store.conversations = store.conversations.map((c) =>
+                c.id === saved.id ? saved : c,
+              );
+              return structuredClone(saved);
+            };
+            if (window.__modelPending)
+              return new Promise(
+                (resolve) => (window.__resolveModel = () => resolve(apply())),
+              );
+            return apply();
+          }
+          if (name === "save_conversation") {
+            const previous = store.conversations.find(
+              (c) => c.id === args.value.id,
+            );
+            const saved = {
+              ...args.value,
+              revision: (previous?.revision || 0) + 1,
+            };
+            store.conversations = [
+              ...store.conversations.filter((c) => c.id !== saved.id),
+              saved,
+            ];
+            return structuredClone(saved);
+          }
+          if (name === "chat_send") {
+            window.__sentModel = store.conversations.find(
+              (c) => c.id === args.conversationId,
+            ).agentSnapshot.modelId;
+            if (window.__sendPending)
+              return new Promise((resolve) => (window.__resolveSend = resolve));
+            return;
+          }
+          return;
+        },
+      };
+    </script>
+    <script type="module" src="./ChatModelsFixture.tsx"></script>
+  </body>
+</html>

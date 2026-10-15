@@ -30,6 +30,15 @@ pub fn validate(value: &Value, kind: &str) -> Result<(), String> {
         return Err("名称不能为空".into());
     }
     if kind == "tasks" {
+        if let Some(status) = value.get("status") {
+            if !matches!(
+                status.as_str(),
+                Some("todo" | "doing" | "suspended" | "done")
+            ) {
+                return Err("任务状态必须是待办、进行中、已挂起或已完成".into());
+            }
+        }
+        validate_task_reminder(value)?;
         if let Some(timezone) = optional(value, "timezone") {
             timezone
                 .parse::<chrono_tz::Tz>()
@@ -54,6 +63,50 @@ pub fn validate(value: &Value, kind: &str) -> Result<(), String> {
         if !["http", "https"].contains(&url.scheme()) || url.host_str().is_none() {
             return Err("应用网址必须是 HTTP 或 HTTPS 地址".into());
         }
+    }
+    Ok(())
+}
+
+/// 提醒是本地偏好；开启前必须有合法结束时间，不能仅依赖前端校验。
+pub fn validate_task_reminder(value: &Value) -> Result<(), String> {
+    let Some(reminder) = value.get("reminder").filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+    let enabled = reminder["enabled"]
+        .as_bool()
+        .ok_or("提醒启用状态必须为布尔值")?;
+    let advance = reminder["advanceMinutes"]
+        .as_u64()
+        .ok_or("提醒提前时间无效")?;
+    if ![0, 15, 60, 1440].contains(&advance) {
+        return Err("提醒提前时间只能为到期时、15分钟、1小时或1天".into());
+    }
+    if !enabled {
+        return Ok(());
+    }
+    let schedule = &value["schedule"];
+    let timezone = text(schedule, "timezone")
+        .parse::<chrono_tz::Tz>()
+        .map_err(|_| "开启到期提醒需要有效的排期时区")?;
+    let valid = match text(schedule, "kind") {
+        "timed" => chrono::DateTime::parse_from_rfc3339(text(schedule, "start"))
+            .ok()
+            .zip(chrono::DateTime::parse_from_rfc3339(text(schedule, "end")).ok())
+            .is_some_and(|(start, end)| end > start),
+        "all_day" => chrono::NaiveDate::parse_from_str(text(schedule, "start"), "%Y-%m-%d")
+            .ok()
+            .zip(chrono::NaiveDate::parse_from_str(text(schedule, "end"), "%Y-%m-%d").ok())
+            .is_some_and(|(start, end)| {
+                use chrono::TimeZone;
+                end > start
+                    && end.and_hms_opt(0, 0, 0).is_some_and(|midnight| {
+                        timezone.from_local_datetime(&midnight).earliest().is_some()
+                    })
+            }),
+        _ => false,
+    };
+    if !valid {
+        return Err("开启到期提醒需要有效的排期结束时间".into());
     }
     Ok(())
 }
@@ -100,6 +153,47 @@ pub fn migrate_task_end(value: &mut Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn task_reminder_validates_options_and_requires_valid_end() {
+        let mut task = json!({"title":"任务","reminder":{"enabled":true,"advanceMinutes":15},"schedule":{"kind":"all_day","start":"2026-10-12","end":"2026-10-13","timezone":"Asia/Shanghai"}});
+        for advance in [0, 15, 60, 1440] {
+            task["reminder"]["advanceMinutes"] = json!(advance);
+            assert!(validate(&task, "tasks").is_ok());
+        }
+        for invalid in [json!(1), json!(-15), json!("15"), json!(15.5)] {
+            task["reminder"]["advanceMinutes"] = invalid;
+            assert!(validate(&task, "tasks").is_err());
+        }
+        task["reminder"]["advanceMinutes"] = json!(15);
+        task["schedule"]["end"] = Value::Null;
+        assert!(validate(&task, "tasks").is_err());
+        task["reminder"]["enabled"] = json!(false);
+        assert!(validate(&task, "tasks").is_ok());
+        task["reminder"]["enabled"] = json!("true");
+        assert!(validate(&task, "tasks").is_err());
+        task["reminder"] = Value::Null;
+        assert!(validate(&task, "tasks").is_ok());
+    }
+
+    #[test]
+    fn timed_reminder_rejects_missing_offset_and_reversed_end() {
+        let mut task = json!({"reminder":{"enabled":true,"advanceMinutes":0},"schedule":{"kind":"timed","start":"2026-10-12T10:00:00+08:00","end":"2026-10-12T11:00:00+08:00","timezone":"Asia/Shanghai"}});
+        assert!(validate_task_reminder(&task).is_ok());
+        for timezone in [Value::Null, json!("invalid")] {
+            task["schedule"]["timezone"] = timezone;
+            assert!(validate_task_reminder(&task).is_err());
+        }
+        task["schedule"]["timezone"] = json!("Asia/Shanghai");
+        for end in [
+            "2026-10-12T09:00:00+08:00",
+            "2026-10-12T11:00:00",
+            "invalid",
+        ] {
+            task["schedule"]["end"] = json!(end);
+            assert!(validate_task_reminder(&task).is_err());
+        }
+    }
 
     #[test]
     fn legacy_deadline_uses_timezone_and_never_reverses_dates() {

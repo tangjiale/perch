@@ -198,3 +198,17 @@ html[data-theme="dark"] .chat-image-gallery .icon-button {
   height: 28px;
   padding: 5px;
 }
+
+.chat-layout .chat-model-select {
+  max-width: 280px;
+  min-width: 140px;
+}
+.chat-layout .chat-model-select .glass-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 760px) {
+  .chat-layout .chat-model-select {
+    max-width: 220px;
+  }
+}
