@@ -42,6 +42,39 @@ if (typeof document !== 'undefined') {
     document.documentElement.classList.toggle('dark');
     try { localStorage.setItem('perch-theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light'); } catch { /* 存储不可用不阻断交互。 */ }
   });
+  const film = $('#perch-film');
+  if (film) {
+    const chapterButtons = Array.from(document.querySelectorAll('.film-chapters [data-video-start]'));
+    let requestedTime = null;
+    function seekFilm() {
+      if (requestedTime !== null && film.readyState >= 1) {
+        film.currentTime = requestedTime;
+        requestedTime = null;
+      }
+    }
+    // 首次选择章节时才加载视频；元数据就绪后再跳转，兼容 Safari。
+    film.addEventListener('loadedmetadata', seekFilm);
+    document.querySelectorAll('[data-video-start]').forEach(control => {
+      control.addEventListener('click', () => {
+        requestedTime = Number(control.dataset.videoStart);
+        $('#film-status').textContent = '';
+        seekFilm();
+        film.play().catch(() => {
+          $('#film-status').textContent = '请使用视频上的播放按钮继续；也可以下载 MP4 观看。';
+        });
+      });
+    });
+    film.addEventListener('timeupdate', () => {
+      const active = chapterButtons.filter(button => Number(button.dataset.videoStart) <= film.currentTime).at(-1);
+      chapterButtons.forEach(button => {
+        if (button === active) button.setAttribute('aria-current', 'true');
+        else button.removeAttribute('aria-current');
+      });
+    });
+    film.addEventListener('error', () => {
+      $('#film-status').textContent = '视频暂时无法播放，请稍后重试或使用上方的下载链接。';
+    });
+  }
   let pending = false;
   let lastRefresh = 0;
   function setLink(selector, url, availableLabel, missingLabel) {

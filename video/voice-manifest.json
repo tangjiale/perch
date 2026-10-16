@@ -1,0 +1,128 @@
+[
+  {
+    "id": "overview",
+    "file": "audio/taozi/overview.wav",
+    "duration": 3.95,
+    "text": "打开栖点，先在总览看一下今天的安排。"
+  },
+  {
+    "id": "overview_detail",
+    "file": "audio/taozi/overview_detail.wav",
+    "duration": 5.15,
+    "text": "任务进度、待处理的问题和常用入口，都在这一屏。"
+  },
+  {
+    "id": "tasks_menu",
+    "file": "audio/taozi/tasks_menu.wav",
+    "duration": 3.2935,
+    "text": "点击左侧的我的任务，进入任务看板。"
+  },
+  {
+    "id": "task_new",
+    "file": "audio/taozi/task_new.wav",
+    "duration": 3.69175,
+    "text": "点击新建任务，输入整理本周工作计划。"
+  },
+  {
+    "id": "task_schedule",
+    "file": "audio/taozi/task_schedule.wav",
+    "duration": 3.87,
+    "text": "打开全天安排，选好开始和结束日期。"
+  },
+  {
+    "id": "task_reminder",
+    "file": "audio/taozi/task_reminder.wav",
+    "duration": 3.612083,
+    "text": "开启到期提醒，选择提前十五分钟。"
+  },
+  {
+    "id": "task_save",
+    "file": "audio/taozi/task_save.wav",
+    "duration": 3.71,
+    "text": "点击保存，新任务就出现在待做列里。"
+  },
+  {
+    "id": "task_status",
+    "file": "audio/taozi/task_status.wav",
+    "duration": 3.47,
+    "text": "再次打开它，把任务状态改成正在做。"
+  },
+  {
+    "id": "task_saved",
+    "file": "audio/taozi/task_saved.wav",
+    "duration": 3.63,
+    "text": "保存之后，看板就会显示新的进度。"
+  },
+  {
+    "id": "calendar_menu",
+    "file": "audio/taozi/calendar_menu.wav",
+    "duration": 2.75,
+    "text": "接着点击日历，看看任务排期。"
+  },
+  {
+    "id": "calendar_week",
+    "file": "audio/taozi/calendar_week.wav",
+    "duration": 3.71,
+    "text": "切换到周视图，这一周的安排就更清楚了。"
+  },
+  {
+    "id": "calendar_sources",
+    "file": "audio/taozi/calendar_sources.wav",
+    "duration": 4.43,
+    "text": "左侧可以选择不同来源，钉钉日历是只读查看。"
+  },
+  {
+    "id": "chat_menu",
+    "file": "audio/taozi/chat_menu.wav",
+    "duration": 3.23,
+    "text": "再打开聊天，先选择工作伙伴。"
+  },
+  {
+    "id": "chat_knowledge",
+    "file": "audio/taozi/chat_knowledge.wav",
+    "duration": 4.91,
+    "text": "按需选择模型和知识库，让对话带上相关资料。"
+  },
+  {
+    "id": "chat_input",
+    "file": "audio/taozi/chat_input.wav",
+    "duration": 4.857375,
+    "text": "在这里输入具体问题，比如，帮我整理本周的工作计划。"
+  },
+  {
+    "id": "chat_send",
+    "file": "audio/taozi/chat_send.wav",
+    "duration": 4.91,
+    "text": "配置好自己的模型服务后，就可以发送并开始对话。"
+  },
+  {
+    "id": "tools_menu",
+    "file": "audio/taozi/tools_menu.wav",
+    "duration": 4.11,
+    "text": "常用的小工具，也可以从左侧直接打开。"
+  },
+  {
+    "id": "tools_exchange",
+    "file": "audio/taozi/tools_exchange.wav",
+    "duration": 4.91,
+    "text": "进入汇率转换，输入金额，几种货币就会同时换算。"
+  },
+  {
+    "id": "backup_menu",
+    "file": "audio/taozi/backup_menu.wav",
+    "duration": 3.55,
+    "text": "最后打开设置，进入数据与备份。"
+  },
+  {
+    "id": "backup_local",
+    "file": "audio/taozi/backup_local.wav",
+    "duration": 5.55,
+    "text": "可以导出完整备份，也可以按需配置对象存储和定时备份。"
+  },
+  {
+    "id": "ending",
+    "file": "audio/taozi/ending.wav",
+    "duration": 5.23,
+    "text": "把日常安排和常用工具放在一起，工作就更从容了。"
+  }
+]

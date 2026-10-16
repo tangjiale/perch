@@ -1,0 +1,33 @@
+{
+  "name": "perch-intro-video",
+  "version": "1.0.0",
+  "description": "栖点 Perch 全屏软件操作讲解视频",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "@remotion/cli": "4.0.535",
+    "@remotion/media": "4.0.535",
+    "@remotion/transitions": "4.0.535",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.535"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.535",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "9.39.5",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio --no-open",
+    "build": "remotion bundle",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc",
+    "render": "remotion render src/index.ts PerchIntro out/perch-intro-render.mp4 --codec=h264 --crf=22 --concurrency=4 && ffmpeg -y -i out/perch-intro-render.mp4 -c copy -movflags +faststart ../docs/assets/perch-intro.mp4",
+    "poster": "remotion still src/index.ts PerchIntro ../docs/assets/perch-intro-poster.jpg --frame=210 --image-format=jpeg",
+    "audio": "python3 scripts/clone-voice-batch.py",
+    "sync:site": "python3 scripts/sync-site.py"
+  }
+}

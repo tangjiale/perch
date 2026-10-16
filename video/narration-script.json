@@ -1,0 +1,107 @@
+[
+  {
+    "id": "overview",
+    "scene": "overview",
+    "text": "打开栖点，先在总览看一下今天的安排。"
+  },
+  {
+    "id": "overview_detail",
+    "scene": "overview",
+    "text": "任务进度、待处理的问题和常用入口，都在这一屏。"
+  },
+  {
+    "id": "tasks_menu",
+    "scene": "tasks",
+    "text": "点击左侧的我的任务，进入任务看板。"
+  },
+  {
+    "id": "task_new",
+    "scene": "tasks",
+    "text": "点击新建任务，输入整理本周工作计划。"
+  },
+  {
+    "id": "task_schedule",
+    "scene": "tasks",
+    "text": "打开全天安排，选好开始和结束日期。"
+  },
+  {
+    "id": "task_reminder",
+    "scene": "tasks",
+    "text": "开启到期提醒，选择提前十五分钟。"
+  },
+  {
+    "id": "task_save",
+    "scene": "tasks",
+    "text": "点击保存，新任务就出现在待做列里。"
+  },
+  {
+    "id": "task_status",
+    "scene": "tasks",
+    "text": "再次打开它，把任务状态改成正在做。"
+  },
+  {
+    "id": "task_saved",
+    "scene": "tasks",
+    "text": "保存之后，看板就会显示新的进度。"
+  },
+  {
+    "id": "calendar_menu",
+    "scene": "calendar",
+    "text": "接着点击日历，看看任务排期。"
+  },
+  {
+    "id": "calendar_week",
+    "scene": "calendar",
+    "text": "切换到周视图，这一周的安排就更清楚了。"
+  },
+  {
+    "id": "calendar_sources",
+    "scene": "calendar",
+    "text": "左侧可以选择不同来源，钉钉日历是只读查看。"
+  },
+  {
+    "id": "chat_menu",
+    "scene": "chat",
+    "text": "再打开聊天，先选择工作伙伴。"
+  },
+  {
+    "id": "chat_knowledge",
+    "scene": "chat",
+    "text": "按需选择模型和知识库，让对话带上相关资料。"
+  },
+  {
+    "id": "chat_input",
+    "scene": "chat",
+    "text": "在这里输入具体问题，比如，帮我整理本周的工作计划。"
+  },
+  {
+    "id": "chat_send",
+    "scene": "chat",
+    "text": "配置好自己的模型服务后，就可以发送并开始对话。"
+  },
+  {
+    "id": "tools_menu",
+    "scene": "tools",
+    "text": "常用的小工具，也可以从左侧直接打开。"
+  },
+  {
+    "id": "tools_exchange",
+    "scene": "tools",
+    "text": "进入汇率转换，输入金额，几种货币就会同时换算。"
+  },
+  {
+    "id": "backup_menu",
+    "scene": "backup",
+    "text": "最后打开设置，进入数据与备份。"
+  },
+  {
+    "id": "backup_local",
+    "scene": "backup",
+    "text": "可以导出完整备份，也可以按需配置对象存储和定时备份。"
+  },
+  {
+    "id": "ending",
+    "scene": "backup",
+    "text": "把日常安排和常用工具放在一起，工作就更从容了。"
+  }
+]

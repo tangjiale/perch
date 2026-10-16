@@ -1,0 +1,239 @@
+[
+  {
+    "id": "overview",
+    "title": "工作总览",
+    "file": "recordings/overview.mp4",
+    "duration": 11.1,
+    "steps": [
+      {
+        "id": "overview",
+        "start": 0.0,
+        "end": 4.702,
+        "zoom": 1,
+        "x": 0.5,
+        "y": 0.5,
+        "delay": 0.2
+      },
+      {
+        "id": "overview_detail",
+        "start": 4.702,
+        "end": 10.605,
+        "zoom": 1.22,
+        "x": 0.54,
+        "y": 0.43,
+        "delay": 0.2
+      }
+    ]
+  },
+  {
+    "id": "tasks",
+    "title": "创建与推进任务",
+    "file": "recordings/tasks.mp4",
+    "duration": 32.5,
+    "steps": [
+      {
+        "id": "tasks_menu",
+        "start": 0.0,
+        "end": 4.049,
+        "zoom": 1,
+        "x": 0.5,
+        "y": 0.5,
+        "delay": 0.2
+      },
+      {
+        "id": "task_new",
+        "start": 4.049,
+        "end": 9.05,
+        "zoom": 1.35,
+        "x": 0.5,
+        "y": 0.3,
+        "delay": 1.6
+      },
+      {
+        "id": "task_schedule",
+        "start": 9.05,
+        "end": 14.05,
+        "zoom": 1.5,
+        "x": 0.5,
+        "y": 0.43,
+        "delay": 0.2
+      },
+      {
+        "id": "task_reminder",
+        "start": 14.051,
+        "end": 18.551,
+        "zoom": 1.5,
+        "x": 0.5,
+        "y": 0.58,
+        "delay": 0.2
+      },
+      {
+        "id": "task_save",
+        "start": 18.551,
+        "end": 23.014,
+        "zoom": 1,
+        "x": 0.5,
+        "y": 0.5,
+        "delay": 0.1
+      },
+      {
+        "id": "task_status",
+        "start": 23.014,
+        "end": 28.017,
+        "zoom": 1.4,
+        "x": 0.5,
+        "y": 0.32,
+        "delay": 1
+      },
+      {
+        "id": "task_saved",
+        "start": 28.017,
+        "end": 32.399,
+        "zoom": 1,
+        "x": 0.5,
+        "y": 0.5,
+        "delay": 0.1
+      }
+    ]
+  },
+  {
+    "id": "calendar",
+    "title": "日历排期",
+    "file": "recordings/calendar.mp4",
+    "duration": 13.233333,
+    "steps": [
+      {
+        "id": "calendar_menu",
+        "start": 0.0,
+        "end": 3.502,
+        "zoom": 1,
+        "x": 0.5,
+        "y": 0.5,
+        "delay": 0.2
+      },
+      {
+        "id": "calendar_week",
+        "start": 3.502,
+        "end": 7.962,
+        "zoom": 1.18,
+        "x": 0.6,
+        "y": 0.46,
+        "delay": 1.1
+      },
+      {
+        "id": "calendar_sources",
+        "start": 7.963,
+        "end": 13.147,
+        "zoom": 1.4,
+        "x": 0.35,
+        "y": 0.53,
+        "delay": 0.2
+      }
+    ]
+  },
+  {
+    "id": "chat",
+    "title": "AI 工作伙伴",
+    "file": "recordings/chat.mp4",
+    "duration": 21.0,
+    "steps": [
+      {
+        "id": "chat_menu",
+        "start": 0.0,
+        "end": 3.985,
+        "zoom": 1,
+        "x": 0.5,
+        "y": 0.5,
+        "delay": 0.2
+      },
+      {
+        "id": "chat_knowledge",
+        "start": 3.985,
+        "end": 9.648,
+        "zoom": 1.45,
+        "x": 0.65,
+        "y": 0.79,
+        "delay": 0.4
+      },
+      {
+        "id": "chat_input",
+        "start": 9.648,
+        "end": 15.259,
+        "zoom": 1.5,
+        "x": 0.63,
+        "y": 0.78,
+        "delay": 0.2
+      },
+      {
+        "id": "chat_send",
+        "start": 15.259,
+        "end": 20.924,
+        "zoom": 1.25,
+        "x": 0.69,
+        "y": 0.75,
+        "delay": 0.2
+      }
+    ]
+  },
+  {
+    "id": "tools",
+    "title": "日常工具",
+    "file": "recordings/tools.mp4",
+    "duration": 10.633333,
+    "steps": [
+      {
+        "id": "tools_menu",
+        "start": 0.0,
+        "end": 4.862,
+        "zoom": 1,
+        "x": 0.5,
+        "y": 0.5,
+        "delay": 0.2
+      },
+      {
+        "id": "tools_exchange",
+        "start": 4.862,
+        "end": 10.525,
+        "zoom": 1.4,
+        "x": 0.53,
+        "y": 0.46,
+        "delay": 1.6
+      }
+    ]
+  },
+  {
+    "id": "backup",
+    "title": "数据与备份",
+    "file": "recordings/backup.mp4",
+    "duration": 16.666667,
+    "steps": [
+      {
+        "id": "backup_menu",
+        "start": 0.0,
+        "end": 4.305,
+        "zoom": 1.15,
+        "x": 0.55,
+        "y": 0.28,
+        "delay": 1.6
+      },
+      {
+        "id": "backup_local",
+        "start": 4.305,
+        "end": 10.608,
+        "zoom": 1.35,
+        "x": 0.55,
+        "y": 0.47,
+        "delay": 0.2
+      },
+      {
+        "id": "ending",
+        "start": 10.608,
+        "end": 16.591,
+        "zoom": 1,
+        "x": 0.5,
+        "y": 0.5,
+        "delay": 0.2
+      }
+    ]
+  }
+]

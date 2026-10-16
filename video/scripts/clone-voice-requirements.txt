@@ -1,0 +1,4 @@
+# 任务专用 uv venv；禁止全局安装。Apple Silicon / Python 3.12。
+mlx-audio==0.5.9
+mlx-whisper==0.4.3
+numpy==2.5.4
