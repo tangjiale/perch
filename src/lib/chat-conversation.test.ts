@@ -85,6 +85,7 @@ it("覆盖模型也必须启用且可聊天，供应商必须启用", () => {
   for (const model of [
     { ...data.models[0], id: "other", enabled: false },
     { ...data.models[0], id: "other", capability: "embedding" as const },
+    { ...data.models[0], id: "other", capability: "speech" as const },
   ])
     expect(() =>
       newChatConversation({ ...data, models: [model] }, "a", "", "id", "other"),

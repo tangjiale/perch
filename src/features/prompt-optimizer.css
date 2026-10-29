@@ -1,0 +1,54 @@
+.prompt-tool { min-width: 0; font-size: 13px; }
+.prompt-navigation { display: flex; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 18px; }
+.prompt-navigation button { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; }
+.prompt-tool .prompt-navigation .active { color: var(--command); background: color-mix(in srgb, var(--command) 10%, var(--surface)); border-color: color-mix(in srgb, var(--command) 35%, var(--line)); }
+.prompt-navigation button span { font-variant-numeric: tabular-nums; color: var(--muted); }
+.prompt-settings { display: grid; grid-template-columns: minmax(145px, .7fr) minmax(150px, .8fr) minmax(180px, 1.5fr); gap: 12px; }
+.prompt-settings label, .prompt-test-controls label { display: flex; flex-direction: column; gap: 7px; min-width: 0; font-weight: 500; }
+.prompt-settings .glass-select-trigger, .prompt-test-controls .glass-select-trigger { width: 100%; }
+.prompt-strategy-hint { color: var(--muted); margin: 10px 0 16px; font-size: 12px; line-height: 1.6; }
+.prompt-editors, .prompt-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.prompt-pane { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); display: flex; flex-direction: column; min-width: 0; }
+.prompt-pane > header, .prompt-pane > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; min-height: 49px; }
+.prompt-pane > header { border-bottom: 1px solid var(--line); }
+.prompt-pane > header label { font-size: 14px; font-weight: 600; flex-shrink: 0; }
+.prompt-pane > header > span { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.prompt-pane > header .glass-select-trigger { height: 28px; min-height: 28px; max-width: 190px; font-size: 11px; }
+.prompt-tool .prompt-pane > textarea { flex: 1; border: 0; box-shadow: none; border-radius: 0; background: transparent; width: 100%; min-height: 250px; resize: vertical; padding: 14px; font-size: 13px; line-height: 1.8; color: var(--text); }
+.prompt-tool textarea::placeholder { color: var(--muted); opacity: 1; }
+.prompt-tool textarea { caret-color: var(--command); }
+.prompt-tool textarea:focus-visible { outline: 2px solid var(--command); outline-offset: -2px; }
+.prompt-pane > footer { border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.prompt-pane > footer > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.prompt-pane > footer > div, .prompt-action-bar, .prompt-action-bar > div { display: flex; align-items: center; gap: 8px; }
+.prompt-pane > footer > div { margin-left: auto; }
+.prompt-pane > footer button { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 6px 8px; }
+.prompt-instructions { margin-top: 16px; }
+.prompt-instructions > label { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; font-weight: 500; }
+.prompt-instructions > label > span, .prompt-hint, .prompt-run-meta { font-size: 11px; color: var(--muted); font-weight: 400; }
+.prompt-instructions > textarea { margin-top: 8px; width: 100%; min-height: 65px; resize: vertical; line-height: 1.6; }
+.prompt-action-bar { justify-content: space-between; margin-top: 10px; flex-wrap: wrap; }
+.prompt-action-bar > div { margin-left: auto; }
+.prompt-action-bar button, .prompt-test-controls > button { display: inline-flex; gap: 7px; align-items: center; justify-content: center; }
+.prompt-notice { color: var(--muted); background: var(--surface); border: 1px solid var(--line); padding: 12px; border-radius: 8px; line-height: 1.6; }
+.prompt-notice a { color: var(--command); text-decoration: underline; text-underline-offset: 3px; }
+.prompt-tool .prompt-error { color: var(--theme-red, #ac3038); line-height: 1.6; overflow-wrap: anywhere; }
+.prompt-status { display: flex; gap: 8px; align-items: center; color: var(--command); font-size: 12px; }
+.prompt-test { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 16px; }
+.prompt-test > summary { cursor: pointer; display: flex; gap: 8px; align-items: center; font-weight: 600; list-style: none; }
+.prompt-test > summary::after { content: "+"; margin-left: auto; font-size: 18px; color: var(--muted); }
+.prompt-test[open] > summary::after { content: "−"; }
+.prompt-test > summary > span { font-size: 12px; color: var(--muted); font-weight: 400; }
+.prompt-test-controls { display: grid; grid-template-columns: minmax(160px, .8fr) minmax(200px, 1.5fr) auto; align-items: end; gap: 12px; margin-top: 16px; }
+.prompt-test-controls textarea { width: 100%; resize: vertical; min-height: 66px; }
+.prompt-comparison { margin-top: 16px; }
+.prompt-comparison > section { min-width: 0; padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.prompt-comparison header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.prompt-comparison h3 { margin: 0; font-size: 13px; }
+.prompt-comparison header svg { color: var(--command); }
+.prompt-comparison pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: 13px; line-height: 1.8; max-height: 360px; overflow-y: auto; }
+.prompt-spinning { animation: prompt-spin 1s linear infinite; }
+@keyframes prompt-spin { to { transform: rotate(360deg); } }
+@media (max-width: 1000px) { .prompt-tool .prompt-pane > textarea { min-height: 180px; } .prompt-pane > footer { min-height: 54px; } .prompt-test-controls { grid-template-columns: minmax(160px, 1fr) minmax(200px, 1.5fr); } .prompt-test-controls > button { grid-column: 2; justify-self: end; } }
+@media (max-width: 650px) { .prompt-editors, .prompt-comparison { grid-template-columns: 1fr; } .prompt-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompt-settings .prompt-model { grid-column: 1 / -1; } .prompt-test-controls { grid-template-columns: 1fr; } .prompt-test-controls > button { grid-column: auto; } .prompt-test > summary > span { display: none; } }
+@media (prefers-reduced-motion: reduce) { .prompt-spinning { animation: none; } }

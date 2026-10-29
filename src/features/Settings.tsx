@@ -122,14 +122,14 @@ export default function Settings({
       .getElementById(`settings-tab-${tab}`)
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [tab]);
-  async function run(fn: () => Promise<unknown>) {
+  async function run(fn: () => Promise<unknown>, notificationTarget?: "statusbar") {
     setBusy(true);
     try {
       const result = await fn();
       await refresh();
       await onInfo();
-      if (typeof result === "string") notify(result);
-      else notify("操作完成");
+      if (typeof result === "string") notify(result, notificationTarget);
+      else notify("操作完成", notificationTarget);
     } catch (e) {
       notify((e as Error).message);
     } finally {
@@ -349,6 +349,7 @@ export default function Settings({
                                   chat: "文本",
                                   vision: "视觉",
                                   embedding: "向量",
+                                  speech: "语音",
                                 }[m.capability]
                               }
                             </td>
@@ -433,8 +434,9 @@ export default function Settings({
                 <button
                   disabled={busy || zentaoSaving || !zentao.revision}
                   onClick={() =>
-                    run(() =>
-                      command("zentao_sync", { connectionId: zentao.id }),
+                    run(
+                      () => command("zentao_sync", { connectionId: zentao.id }),
+                      "statusbar",
                     )
                   }
                 >
@@ -692,6 +694,21 @@ export default function Settings({
                 }
               />
             </div>
+            {model.capability === "speech" && (
+              <label>
+                语音转录能力
+                <GlassSelect
+                  value={model.speechMode || "transcription"}
+                  onValueChange={(speechMode) => setModel({ ...model, speechMode: speechMode as Model["speechMode"] })}
+                  options={[
+                    { value: "transcription", label: "普通转录" },
+                    { value: "diarization", label: "转录并识别说话人" },
+                  ]}
+                  aria-label="语音转录能力"
+                />
+                <small className="muted">使用 OpenAI 兼容语音接口。说话人识别需服务支持 diarized_json，例如 gpt-4o-transcribe-diarize；普通 Whisper 模型请选择普通转录。</small>
+              </label>
+            )}
             <label className="check-label">
               <input
                 type="checkbox"

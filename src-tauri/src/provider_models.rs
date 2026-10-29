@@ -249,7 +249,7 @@ fn import_models(
     for model in models {
         if !valid_label(&model.id)
             || !valid_label(&model.name)
-            || !["chat", "vision", "embedding"].contains(&model.capability.as_str())
+            || !["chat", "vision", "embedding", "speech"].contains(&model.capability.as_str())
         {
             return Err("模型 ID、名称或类型无效，请重新选择".into());
         }

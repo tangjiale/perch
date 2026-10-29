@@ -21,13 +21,29 @@ pub fn validate(value: &Value, kind: &str) -> Result<(), String> {
             return Err("凭据必须通过专用接口加密保存".into());
         }
     }
-    let name_key = if ["tasks", "bugs"].contains(&kind) {
+    let name_key = if ["tasks", "bugs", "prompts"].contains(&kind) {
         "title"
     } else {
         "name"
     };
     if !["messages", "conversations"].contains(&kind) && text(value, name_key).trim().is_empty() {
         return Err("名称不能为空".into());
+    }
+    if kind == "prompts" {
+        crate::prompt_optimizer::validate_entry(value)?;
+    }
+    if kind == "models" {
+        if !matches!(
+            text(value, "capability"),
+            "chat" | "vision" | "embedding" | "speech"
+        ) {
+            return Err("模型类型必须为文本、视觉、向量或语音".into());
+        }
+        if let Some(mode) = value.get("speechMode").filter(|mode| !mode.is_null()) {
+            if !matches!(mode.as_str(), Some("transcription" | "diarization")) {
+                return Err("语音转录能力无效".into());
+            }
+        }
     }
     if kind == "tasks" {
         if let Some(status) = value.get("status") {
@@ -153,6 +169,18 @@ pub fn migrate_task_end(value: &mut Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn speech_model_requires_a_known_transcription_mode() {
+        let mut model = json!({"name":"会议语音","capability":"speech","speechMode":"diarization"});
+        assert!(validate(&model, "models").is_ok());
+        model["speechMode"] = json!("invented");
+        assert!(validate(&model, "models").is_err());
+        model["speechMode"] = Value::Null;
+        assert!(validate(&model, "models").is_ok());
+        model["capability"] = json!("unknown");
+        assert!(validate(&model, "models").is_err());
+    }
 
     #[test]
     fn task_reminder_validates_options_and_requires_valid_end() {

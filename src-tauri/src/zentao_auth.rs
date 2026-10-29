@@ -433,11 +433,30 @@ fn save_connection(
         .or(previous.as_deref())
         .ok_or("请通过账号登录或填写访问令牌")?;
     validate_token(next)?;
+    let old = store.snapshot()?["connections"]
+        .as_array()
+        .and_then(|values| {
+            values
+                .iter()
+                .find(|value| text(value, "id") == text(&connection, "id"))
+        })
+        .cloned();
     connection["hasCredential"] = json!(true);
     if secret.is_some() {
         secrets.write(Some(next))?;
     }
-    match store.save("connection", connection) {
+    let changed_identity = secret.is_some_and(|value| Some(value) != previous.as_deref())
+        || old.as_ref().is_some_and(|old| {
+            ["baseUrl", "loginAccount"]
+                .iter()
+                .any(|key| text(old, key) != text(&connection, key))
+        });
+    let saved = if changed_identity {
+        store.save_connection_with_assignment_reset(connection)
+    } else {
+        store.save("connection", connection)
+    };
+    match saved {
         Ok(saved) => Ok(saved),
         Err(error) => {
             // SQLite 与加密凭据文件无法共用事务；数据库失败时恢复原凭据。
@@ -774,6 +793,32 @@ mod tests {
     }
     fn draft() -> Value {
         json!({"id":"test-connection","name":"测试禅道","baseUrl":"https://example.test/zentao/","apiVersion":"v2","enabled":true,"managementEnabled":false})
+    }
+    #[test]
+    fn changed_explicit_token_resets_assignments_but_unchanged_token_preserves_them() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let secrets = MemorySecrets {
+            value: RefCell::new(None),
+            fail: false,
+            writes: Cell::new(0),
+        };
+        let connection = normalize(&draft(), &store.snapshot().unwrap()).unwrap();
+        let saved =
+            save_connection(&store, connection, Some("fixture-token-old"), &secrets).unwrap();
+        {
+            let mut conn = store.conn.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            crate::assignment_inbox::reconcile(&tx, "test-connection", "me", "bug", &[]).unwrap();
+            crate::assignment_inbox::reconcile(&tx,"test-connection","me","bug",&[json!({"id":"b","remoteId":"1","title":"fixture","assignedTo":"me","status":"active"})]).unwrap();
+            tx.commit().unwrap();
+        }
+        let saved = save_connection(&store, saved, Some("fixture-token-old"), &secrets).unwrap();
+        assert_eq!(crate::assignment_inbox::list(&store).unwrap().len(), 1);
+        let saved = save_connection(&store, saved, None, &secrets).unwrap();
+        assert_eq!(crate::assignment_inbox::list(&store).unwrap().len(), 1);
+        save_connection(&store, saved, Some("fixture-token-new"), &secrets).unwrap();
+        assert!(crate::assignment_inbox::list(&store).unwrap().is_empty());
     }
     #[test]
     fn connection_and_credentials_preserve_previous_state_on_failure() {

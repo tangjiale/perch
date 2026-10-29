@@ -47,6 +47,7 @@ export interface Task extends Base {
   remoteExecutionOwnerAccount?: string;
   connectionId?: string;
   completedAt?: number | null;
+  completedAtSource?: "local" | "remote";
 }
 export interface ZentaoTaskAssignment {
   assignedBy: string | null;
@@ -103,7 +104,8 @@ export interface Model extends Base {
   providerId: string;
   name: string;
   remoteModelId: string;
-  capability: "chat" | "vision" | "embedding";
+  capability: "chat" | "vision" | "embedding" | "speech";
+  speechMode?: "transcription" | "diarization";
   enabled: boolean;
   dimensions?: number;
 }
@@ -277,7 +279,7 @@ export interface StorageInfo {
 export interface PageProps {
   data: Snapshot;
   refresh: () => Promise<unknown>;
-  notify: (text: string) => void;
+  notify: (text: string, target?: "statusbar") => void;
 }
 export const statuses: Record<Status, string> = {
   todo: "待做",

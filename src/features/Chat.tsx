@@ -116,7 +116,7 @@ export default function Chat({ data, refresh, notify }: PageProps) {
   const availableModels = data.models.filter(
     (model) =>
       model.enabled &&
-      model.capability !== "embedding" &&
+      (model.capability === "chat" || model.capability === "vision") &&
       data.providers.some(
         (provider) => provider.id === model.providerId && provider.enabled,
       ),

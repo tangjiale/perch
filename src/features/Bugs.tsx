@@ -1,4 +1,6 @@
-import { useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { assignmentApi, assignmentKey, useAssignmentGeneration } from "../lib/assignment-notifications";
+import { QueryClientContext } from "@tanstack/react-query";
+import { useContext, useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import {
   Bug,
   ArrowDown,
@@ -22,7 +24,7 @@ import Modal from "../components/Modal";
 import BugSteps from "../components/BugSteps";
 import BugHistory from "../components/BugHistory";
 import { BugRichTextEditor } from "../components/TaskRichTextEditor";
-import { command } from "../lib/api";
+import { command, native } from "../lib/api";
 import type { PageProps, ZentaoBug } from "../lib/types";
 import { bugProjectKey, buildBugProjectIndex } from "../lib/bug-projects";
 import { sortBugs, type BugSortField, type BugSortDirection } from "../lib/bug-sort";
@@ -87,7 +89,8 @@ export default function Bugs({
   refresh,
   notify,
   search = "",
-}: PageProps & { search?: string }) {
+  workspaceId = "",
+}: PageProps & { search?: string; workspaceId?: string }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const filter = ["all", "active", "resolved", "closed"].includes(
@@ -108,6 +111,29 @@ export default function Bugs({
   const [sortDirection, setSortDirection] = useState<BugSortDirection>("desc");
   const [edit, setEdit] = useState<ZentaoBug | null>(null);
   const [editing, setEditing] = useState(false);
+  const notificationClient = useContext(QueryClientContext);
+  const notificationGeneration = useAssignmentGeneration(workspaceId);
+  const readNotificationTarget = useRef("");
+  const requestedBugId = params.get("bugId");
+  const notificationTarget = `${workspaceId}:${requestedBugId}:${params.get("notificationId") || ""}`;
+  const openedNotificationId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requestedBugId) { openedNotificationId.current = null; return; }
+    if (openedNotificationId.current === notificationTarget) return;
+    const bug = data.bugs?.find(value => value.id === requestedBugId);
+    if (bug) { openedNotificationId.current = notificationTarget; setEdit({...bug}); setEditing(false); setAction(null); setError(""); }
+  }, [requestedBugId, notificationTarget, data.bugs]);
+  useEffect(() => {
+    if (!edit?.id) { readNotificationTarget.current = ""; return; }
+    if (!native || !workspaceId || !notificationGeneration) return;
+    const target = `${workspaceId}:${edit.id}`;
+    if (readNotificationTarget.current === target) return;
+    readNotificationTarget.current = target;
+    void assignmentApi.readEntity(workspaceId, "bug", edit.id, notificationGeneration)
+      .then(() => notificationClient?.invalidateQueries({queryKey: assignmentKey(workspaceId)}))
+      .catch(error => notify(`无法清除 BUG 未读提醒：${error instanceof Error ? error.message : String(error)}`));
+  }, [workspaceId, edit?.id, notificationClient, notificationGeneration]);
+
   const [action, setAction] = useState<Action | null>(null);
   const [resolution, setResolution] = useState("fixed");
   const [build, setBuild] = useState("trunk");
@@ -171,6 +197,7 @@ export default function Bugs({
     operation: () => Promise<unknown>,
     message: string,
     mutation = false,
+    notificationTarget?: "statusbar",
   ) {
     if (lock.current) return;
     lock.current = true;
@@ -190,7 +217,7 @@ export default function Bugs({
         );
         return;
       }
-      notify(typeof result === "string" ? result : message);
+      notify(typeof result === "string" ? result : message, notificationTarget);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -292,6 +319,8 @@ export default function Bugs({
                     connectionId: connection!.id,
                   }),
                 "BUG 同步完成",
+                false,
+                "statusbar",
               )
             }
           >

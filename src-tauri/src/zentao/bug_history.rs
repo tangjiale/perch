@@ -36,7 +36,7 @@ fn date(value: &Value, offset: Option<chrono::FixedOffset>) -> Option<String> {
         })?;
     Some(when.format("%Y-%m-%d %H:%M:%S").to_string())
 }
-fn history(remote: &Value, id: &str) -> Result<Value, String> {
+pub(super) fn history(remote: &Value, id: &str) -> Result<Value, String> {
     if remote_id(&remote["id"]).ok().as_deref() != Some(id)
         || remote["deleted"] == true
         || remote["deleted"] == "1"
@@ -125,7 +125,7 @@ fn history(remote: &Value, id: &str) -> Result<Value, String> {
     Ok(output)
 }
 impl Adapter<'_> {
-    async fn bug_history(&self, id: &str) -> Result<Value, String> {
+    pub(super) async fn bug_history(&self, id: &str) -> Result<Value, String> {
         let mut url = endpoint(&self.base, &format!("bugs/{id}"))?;
         url.query_pairs_mut().append_pair("fields", "actions");
         let mut stream = checked_zentao(self.read(url).await?).await?.bytes_stream();
@@ -173,6 +173,9 @@ pub async fn zentao_bug_history(
         }
         Ok(())
     };
+    let scope = super::history_media_cache::scope(&workspace, &generation, &connection);
+    let cache_key = super::history_media_cache::history_key(&scope, &old);
+    super::history_media_cache::invalidate(&cache_key);
     // 只读历史不占同步写锁；用户可在加载期间操作 BUG，变化后的读取结果会被丢弃。
     let token = credential(&workspace, text(&connection, "id"))?
         .get_password()
@@ -188,6 +191,7 @@ pub async fn zentao_bug_history(
     bugs::verify_baseline(&old, &remote, &account)?;
     let output = history(&remote, &id)?;
     unchanged()?;
+    super::history_media_cache::put_history(cache_key, output.clone());
     Ok(output)
 }
 #[cfg(test)]

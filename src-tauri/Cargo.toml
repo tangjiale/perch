@@ -1,6 +1,6 @@
 [package]
 name = "perch"
-version = "0.1.19"
+version = "0.1.20"
 edition = "2021"
 
 [lib]
@@ -35,6 +35,7 @@ libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 url = "2"
 base64 = "0.22"
@@ -50,6 +51,12 @@ mailparse = "0.16"
 tempfile = "3"
 roxmltree = "0.20"
 ical = "0.11"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-usernotifications = "0.3.1"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify-rust = "4.18.2"
 
 [profile.release]
 strip = "none"

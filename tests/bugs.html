@@ -19,7 +19,7 @@
         entries: [
           { id: "1", actor: "测试用户（tester）", action: "opened", date: "2026-09-08 09:00:00", comment: "<p>创建问题</p>", changes: [] },
           { id: "2", actor: "吴敏政（wuminzheng）", action: "assigned", date: "2026-09-08 10:00:00", extra: "测试用户（tester）", comment: "<p>请处理<b>知识库接入</b></p>", changes: [{ field: "assignedTo", old: "待指派", new: "测试用户（tester）" }] },
-          { id: "3", actor: "测试用户（tester）", action: "edited", date: "2026-09-09 11:00:00", comment: '<p><strong>仅支持 dify</strong><br>后续扩展其他知识库</p><img src="https://history-tracking.invalid/pixel" onerror="window.__unsafeHistory=true"><script>window.__unsafeHistory=true<\/script><a href="https://history-tracking.invalid/link">外部链接</a><svg onload="window.__unsafeHistory=true"></svg>', changes: [{ field: "备注", old: "原始备注", new: "仅支持 dify" }, { field: "title", old: "旧标题", new: "新的知识库标题" }] },
+          { id: "3", actor: "测试用户（tester）", action: "edited", date: "2026-09-09 11:00:00", comment: '<p><strong>仅支持 dify</strong><br>后续扩展其他知识库</p><p>提示文字重复，取消箭头部分<img src="index.php?m=file&amp;f=read&amp;t=png&amp;fileID=768" alt="历史上传截图" onerror="window.__unsafeHistory=true"></p><img src="https://history-tracking.invalid/pixel" onerror="window.__unsafeHistory=true"><script>window.__unsafeHistory=true<\/script><a href="https://history-tracking.invalid/link">外部链接</a><svg onload="window.__unsafeHistory=true"></svg>', changes: [{ field: "备注", old: "原始备注", new: "仅支持 dify" }, { field: "title", old: "旧标题", new: "新的知识库标题" }] },
         ],
       };
       window.__bugAssignees = [
@@ -60,6 +60,14 @@
             if (window.__bugAssigneeMode === "pending")
               return await new Promise(resolve => { window.__resolveAssignees = resolve; });
             return window.__bugAssignees;
+          }
+          if (name === "zentao_bug_history_image_read") {
+            if (args.actionId !== "3" || args.source !== "index.php?m=file&f=read&t=png&fileID=768")
+              throw "该图片未被当前历史记录引用";
+            if (window.__historyImageMode === "fail") throw "模拟：历史图片加载失败";
+            if (window.__historyImageMode === "pending")
+              return await new Promise(resolve => { window.__resolveHistoryImage = resolve; });
+            return { dataUrl: window.__historyImageMode === "invalid" ? "data:text/html;base64,PHNjcmlwdD4=" : window.__bugImageData };
           }
 if (name === 'image_clipboard_write' || name === 'image_download') {
   const mode = window.__imageActionMode;

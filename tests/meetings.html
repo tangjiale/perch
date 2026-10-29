@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>会议模拟验收</title>
+  </head>
+  <body>
+    <div id="root" style="margin-left:220px;height:calc(100vh - 86px);margin-top:58px"></div>
+    <script>
+      window.isTauri = true;
+      window.__calls = [];
+      window.__meetings = [
+        {
+          id: "meeting-1",
+          revision: 1,
+          title: "产品迭代评审",
+          createdAt: 1792110000000,
+          updatedAt: 1792110000000,
+          durationMs: 1260000,
+          audioChunks: 12,
+          speakerNames: { speaker_0: "林晓", speaker_1: "陈舟" },
+          context: { background: "对齐会议记录功能的交付范围", participants: ["林晓", "陈舟"], notes: "", glossary: ["Perch"], summaryStyle: "standard" },
+          markers: [],
+          segments: [
+            {
+              id: "seg-1",
+              startMs: 12000,
+              endMs: 23000,
+              speaker: "speaker_0",
+              text: "本周先完成会议记录闭环。重点是录音不丢失，转录后可以核对每个人的发言。",
+            },
+            {
+              id: "seg-2",
+              startMs: 24000,
+              endMs: 34000,
+              speaker: "speaker_1",
+              text: "同意。下周三由我负责验证不同说话人的识别，纪要里面列出负责人和交付日期。",
+            },
+          ],
+          analysis: {
+            summary:
+              "团队确认会议记录的交付范围，以稳定的录音与可核对的转录为优先，会议纪要需要包含清晰的行动项。",
+            decisions: [
+              "优先实现录音、转录、纪要的完整闭环",
+              "人声识别在会后完整转录时统一核对",
+            ],
+            actionItems: [
+              { id: "action-1", task: "验证不同说话人识别", owner: "陈舟", deadline: "下周三" },
+              { id: "action-2", task: "完成会议工作台交互验收", owner: "林晓" },
+            ],
+            mindMap: {
+              label: "产品迭代评审",
+              children: [
+                {
+                  label: "交付范围",
+                  children: [
+                    { label: "会议录音与实时转录" },
+                    { label: "AI 纪要与行动项" },
+                  ],
+                },
+                {
+                  label: "质量保障",
+                  children: [
+                    { label: "录音分片先保存" },
+                    { label: "会后统一核对说话人" },
+                  ],
+                },
+              ],
+            },
+            modelId: "chat",
+            generatedAt: 1792110000000,
+          },
+        },
+      ];
+      window.__TAURI_INTERNALS__ = {
+        transformCallback: (callback) => {
+          const id = window.__nextCallback++;
+          window.__callbacks[id] = callback;
+          return id;
+        },
+        unregisterCallback: (id) => delete window.__callbacks[id],
+        invoke: async (name, args) => {
+          window.__calls.push({ name, args });
+          if (name === "meeting_list")
+            return structuredClone(window.__meetings);
+          if (name === "meeting_save") {
+            if (window.__saveFail) throw "模拟保存失败：草稿应保留";
+            const value = { ...args.value, revision: args.value.revision + 1 };
+            window.__meetings = [
+              value,
+              ...window.__meetings.filter((m) => m.id !== value.id),
+            ];
+            return structuredClone(value);
+          }
+          if (name === "meeting_generate") {
+            if (window.__generateFail) throw "模拟模型服务不可用";
+            const meeting = window.__meetings.find((m) => m.id === args.id);
+            if (meeting.analysis) {
+              meeting.analysis.stale = false;
+              meeting.analysis.background = meeting.context?.background || "";
+              meeting.analysis.participants = meeting.context?.participants || [];
+              meeting.revision++;
+            }
+            return structuredClone(meeting);
+          }
+          if (name === "meeting_add_marker") {
+            if (window.__markerFail) throw "模拟重点保存失败";
+            if (window.__markerPending) await new Promise(resolve => { window.__releaseMarker = resolve; });
+            const meeting = window.__meetings.find((m) => m.id === args.id);
+            meeting.markers ||= [];
+            if (!meeting.markers.some(marker => marker.id === args.markerId)) {
+              meeting.markers.push({ id: args.markerId, atMs: args.atMs, text: args.text });
+              if (meeting.analysis) meeting.analysis.stale = true;
+              meeting.revision++;
+            }
+            return structuredClone(meeting);
+          }
+          if (name === "meeting_action_complete" || name === "meeting_action_task") {
+            if (window.__actionFail) throw "模拟行动项保存失败";
+            const meeting = window.__meetings.find((m) => m.id === args.id);
+            const action = meeting.analysis.actionItems.find(item => item.id === args.actionId);
+            if (meeting.analysis.stale) throw "请先重新生成纪要";
+            if (name === "meeting_action_complete") {
+              action.completed = args.completed;
+              meeting.revision++;
+              return structuredClone(meeting);
+            }
+            if (!action.taskId) {
+              action.taskId = `task-${action.id}`;
+              window.__tasks.push({ id: action.taskId, title: action.task, source: "local", status: "todo", notes: "", priority: "normal", sortOrder: 1024 });
+              meeting.revision++;
+            }
+            return { meeting: structuredClone(meeting), task: structuredClone(window.__tasks.find(task => task.id === action.taskId)) };
+          }
+          if (name === "meeting_audio") {
+            if (window.__audioReadPending) await new Promise(resolve => { window.__releaseAudio = resolve; });
+            const rate = 16000, frames = rate * 60, buffer = new ArrayBuffer(44 + frames * 2), view = new DataView(buffer);
+            const label = (offset, text) => [...text].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
+            label(0, "RIFF"); view.setUint32(4, buffer.byteLength - 8, true); label(8, "WAVE"); label(12, "fmt ");
+            view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+            view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+            label(36, "data"); view.setUint32(40, frames * 2, true);
+            const bytes = new Uint8Array(buffer); let binary = "";
+            for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+            return { audioBase64: btoa(binary), mimeType: "audio/wav" };
+          }
+          if (name === "meeting_delete") {
+            window.__meetings = window.__meetings.filter(
+              (m) => m.id !== args.id,
+            );
+            return;
+          }
+          if (name === "meeting_append_audio") {
+            const meeting = window.__meetings.find((m) => m.id === args.id);
+            const bytes = Uint8Array.from(atob(args.audioBase64), (c) => c.charCodeAt(0));
+            const pcmBytes = new DataView(bytes.buffer).getUint32(40, true);
+            if (!window.__audioChunks.has(args.chunkId)) {
+              window.__audioChunks.set(args.chunkId, args.audioBase64);
+              meeting.audioChunks++;
+              meeting.durationMs += pcmBytes / 32;
+              meeting.revision++;
+              if (meeting.analysis) meeting.analysis.stale = true;
+            }
+            return structuredClone(meeting);
+          }
+          if (name === "meeting_realtime_start") {
+            if (window.__realtimeStartFail) throw window.__realtimeStartFail;
+            const meeting = window.__meetings.find((m) => m.id === args.id);
+            window.__realtimeSessions.set(args.sessionId, { ...args, text: "", startMs: meeting.durationMs, chunks: 0 });
+            window.__lastRealtimeSession = args.sessionId;
+            return;
+          }
+          if (name === "meeting_realtime_push") {
+            if (!window.__audioChunks.has(args.chunkId)) throw "必须先保存音频再发送";
+            const session = window.__realtimeSessions.get(args.sessionId);
+            if (window.__realtimePushFail) {
+              session.failure = window.__realtimePushFail;
+              throw session.failure;
+            }
+            session.chunks++;
+            window.__emitRealtime(`${session.text}实时识别第${session.chunks}句。`, args.sessionId);
+            return;
+          }
+          if (name === "meeting_realtime_stop") {
+            const session = window.__realtimeSessions.get(args.sessionId);
+            if (!session) throw "实时转录会话不存在";
+            const meeting = window.__meetings.find((m) => m.id === args.id);
+            if (session.text) {
+              meeting.segments.push({ id: `realtime-${args.sessionId}`, startMs: session.startMs, endMs: meeting.durationMs, text: session.text });
+              meeting.transcriptionModelId = session.modelId;
+              meeting.revision++;
+            }
+            window.__realtimeSessions.delete(args.sessionId);
+            if (session.failure) throw session.failure;
+            return structuredClone(meeting);
+          }
+          if (name === "meeting_transcribe") {
+            if (window.__transcribePending) await new Promise(resolve => { window.__releaseTranscribe = resolve; });
+            const meeting = window.__meetings.find((m) => m.id === args.id);
+            meeting.segments.push({ id: crypto.randomUUID(), startMs: Math.max(0, meeting.durationMs - 10000), endMs: meeting.durationMs, text: "分片转录已完成。" });
+            meeting.revision++;
+            return structuredClone(meeting);
+          }
+          throw "未模拟的IPC " + name;
+        },
+      };
+      window.__nextCallback = 1;
+      window.__tasks = [];
+      window.__callbacks = {};
+      window.__audioChunks = new Map();
+      window.__realtimeSessions = new Map();
+      window.__emitRealtime = (text, sessionId = window.__lastRealtimeSession, extra = {}) => {
+        const session = window.__realtimeSessions.get(sessionId);
+        if (!session) return;
+        session.text = text;
+        session.onEvent.onmessage({ sessionId, workspaceId: session.workspaceId, meetingId: session.id, type: "delta", text, ...extra });
+      };
+      // 隔离媒体设备，不访问真实麦克风；由浏览器验收脚本显式推送样本。
+      window.__micOpenCount = 0;
+      window.__micActive = false;
+      window.__micListeners = new Set();
+      Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+        configurable: true,
+        value: async () => {
+          window.__micOpenCount++;
+          if (window.__micFailure) throw new Error(window.__micFailure);
+          window.__micActive = true;
+          const track = {
+            stop: () => { window.__micActive = false; },
+            addEventListener: (_name, listener) => window.__micListeners.add(listener),
+            removeEventListener: (_name, listener) => window.__micListeners.delete(listener),
+          };
+          return { getTracks: () => [track] };
+        },
+      });
+      window.AudioContext = class {
+        sampleRate = 48000;
+        destination = {};
+        async resume() {}
+        async close() {}
+        createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+        createScriptProcessor() {
+          const processor = { onaudioprocess: null, connect() {}, disconnect() { processor.onaudioprocess = null; } };
+          window.__audioProcessor = processor;
+          return processor;
+        }
+      };
+      window.__emitAudio = (seconds) => {
+        let remaining = Math.round(48000 * seconds);
+        while (remaining > 0 && window.__micActive) {
+          const count = Math.min(4096, remaining);
+          const samples = new Float32Array(count).fill(0.1);
+          window.__audioProcessor?.onaudioprocess?.({ inputBuffer: { getChannelData: () => samples } });
+          remaining -= count;
+        }
+      };
+      window.__disconnectMicrophone = () => [...window.__micListeners].forEach((listener) => listener());
+    </script>
+    <script type="module" src="./MeetingsFixture.tsx"></script>
+  </body>
+</html>

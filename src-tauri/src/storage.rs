@@ -11,6 +11,7 @@ use std::{
 };
 
 const DEFAULT_DATA_DIR: &str = ".perch";
+pub(crate) const SCHEMA_VERSION: i64 = 12;
 const LEGACY_DATA_DIR: &str = ".self-workbanch";
 const ENCRYPTION_CHECK_KEY: &str = "credential-encryption-check";
 const ENCRYPTION_CHECK_PURPOSE: &str = "settings:credential-encryption-check";
@@ -236,7 +237,7 @@ impl Store {
             serde_json::from_reader(&mut entry).map_err(|e| e.to_string())?
         };
         if manifest["formatVersion"] != json!(1)
-            || !matches!(manifest["schemaVersion"].as_i64(), Some(1..=8))
+            || !matches!(manifest["schemaVersion"].as_i64(), Some(1..=SCHEMA_VERSION))
         {
             return Err("不支持的备份版本".into());
         }
@@ -317,7 +318,7 @@ impl Store {
         let version: i64 = db
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(|e| e.to_string())?;
-        if version > 8 {
+        if version > SCHEMA_VERSION {
             return Err("该数据库由更新版本创建，请升级应用".into());
         }
         if version >= 6 {
@@ -381,6 +382,22 @@ impl Store {
     }
     pub fn info(&self) -> Value {
         json!({"dataRoot":self.root,"defaultRoot":dirs::home_dir().map(|p|p.join(DEFAULT_DATA_DIR)),"workspaceId":self.workspace_id,"version":env!("CARGO_PKG_VERSION")})
+    }
+
+    pub fn prompt_list(&self) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT data FROM prompts ORDER BY json_extract(data,'$.updatedAt') DESC,id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.map(|raw| {
+            serde_json::from_str(&raw.map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+        })
+        .collect()
     }
 
     pub fn save(&self, kind: &str, value: Value) -> Result<Value, String> {
@@ -506,6 +523,15 @@ impl Store {
         changes: Vec<Value>,
         connection: &Value,
     ) -> Result<Vec<Value>, String> {
+        self.save_bug_snapshot_for_account(changes, connection, text(connection, "syncAccount"))
+    }
+
+    pub fn save_bug_snapshot_for_account(
+        &self,
+        changes: Vec<Value>,
+        connection: &Value,
+        account: &str,
+    ) -> Result<Vec<Value>, String> {
         let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         let id = text(connection, "id");
@@ -517,6 +543,7 @@ impl Store {
         if connection["revision"].as_i64() != Some(revision) {
             return Err("禅道连接已变化，请重新同步".into());
         }
+        crate::assignment_inbox::reconcile(&tx, id, account, "bug", &changes)?;
         let keep: std::collections::HashSet<_> = changes.iter().map(|v| text(v, "id")).collect();
         let ids = {
             let mut stmt = tx
@@ -604,6 +631,19 @@ impl Store {
             }
         }
         if let Some(connection) = connection {
+            let account = changes
+                .iter()
+                .find(|(kind, value)| *kind == "connection" && text(value, "id") == connection)
+                .map(|(_, value)| text(value, "syncAccount"))
+                .unwrap_or("");
+            let tasks = changes
+                .iter()
+                .filter(|(kind, value)| {
+                    *kind == "task" && text(value, "connectionId") == connection
+                })
+                .map(|(_, value)| value.clone())
+                .collect::<Vec<_>>();
+            crate::assignment_inbox::reconcile(&tx, connection, account, "task", &tasks)?;
             // 仅在整轮远端读取成功后，对当前连接发布的工作项快照做差集清理。
             let keep: std::collections::HashSet<&str> = changes
                 .iter()
@@ -684,6 +724,10 @@ impl Store {
             .map_err(|_| "该记录仍被引用，请先解除关联或停用".to_string())?;
         if changed == 0 {
             return Err("记录已修改或删除，请刷新重试".into());
+        }
+        if matches!(table, "tasks" | "bugs") {
+            let kind = if table == "tasks" { "task" } else { "bug" };
+            tx.execute("UPDATE assignment_notifications SET read_at=?1 WHERE kind=?2 AND entity_id=?3 AND read_at IS NULL", params![chrono::Utc::now().timestamp_millis(),kind,id]).map_err(|e|e.to_string())?;
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(())
@@ -797,7 +841,7 @@ impl Store {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if version > 8 {
+        if version > SCHEMA_VERSION {
             return Err("该数据库由更新版本创建，请升级应用".into());
         }
         if version == 0 {
@@ -954,6 +998,80 @@ impl Store {
                 .map_err(|e| e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;
         }
+        if version < 9 {
+            let sql = include_str!("../migrations/009_prompts.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(9,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=9")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
+        if version < 10 {
+            let sql = include_str!("../migrations/010_meetings.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(10,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=10")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
+        if version < 11 {
+            let sql = include_str!("../migrations/011_meeting_transcription_state.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            // schema 10 的开发构建有缺列和已含列两种状态；只给缺列库执行补列。
+            let has_column: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('meeting_audio_chunks') WHERE name='full_transcribed')",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if !has_column {
+                tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            }
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(11,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=11")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
+        if version < 12 {
+            let sql = include_str!("../migrations/012_assignment_notifications.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(12,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=12")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
         let integrity: String = conn
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
@@ -1024,12 +1142,60 @@ impl Store {
         Ok(output)
     }
 
+    /// 明确切换远端身份时，连接与指派基线在同一事务中更新。
+    pub fn save_connection_with_assignment_reset(&self, value: Value) -> Result<Value, String> {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let saved =
+            Self::save_in_transaction(&tx, &self.workspace_id, "connections", value, false)?;
+        let id = text(&saved, "id");
+        tx.execute(
+            "DELETE FROM assignment_notifications WHERE connection_id=?1",
+            [id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM assignment_scopes WHERE connection_id=?1", [id])
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(saved)
+    }
+
     fn save_table(&self, table: &str, value: Value) -> Result<Value, String> {
         let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         let output = Self::save_in_transaction(&tx, &self.workspace_id, table, value, false)?;
+        // 本机主动创建的禅道执行不属于新指派；仅更新已有账号基线。
+        if table == "tasks" && text(&output, "source") == "zentao" {
+            tx.execute("INSERT OR IGNORE INTO assignment_members(connection_id,account,kind,remote_id) SELECT connection_id,account,kind,?1 FROM assignment_scopes WHERE connection_id=?2 AND account=?3 AND kind='task'", params![text(&output,"remoteId"),text(&output,"connectionId"),text(&output,"remoteExecutionOwnerAccount")]).map_err(|e|e.to_string())?;
+        }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(output)
+    }
+
+    /// 会议行动项与本地任务在同一事务落库，禁止经此入口创建远端关联或覆盖既有任务。
+    pub(crate) fn create_local_task_in_transaction(
+        tx: &rusqlite::Transaction<'_>,
+        workspace: &str,
+        value: Value,
+    ) -> Result<Value, String> {
+        if text(&value, "source") != "local"
+            || ["projectId", "remoteId", "remoteType", "connectionId"]
+                .iter()
+                .any(|key| value.get(*key).is_some_and(|field| !field.is_null()))
+        {
+            return Err("会议行动项只能创建未关联项目的本地任务".into());
+        }
+        let id = text(&value, "id");
+        if id.is_empty() {
+            return Err("会议行动项任务标识不能为空".into());
+        }
+        let exists: bool = tx
+            .query_row("SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1)", [id], |row| row.get(0))
+            .map_err(|error| error.to_string())?;
+        if exists {
+            return Err("该本地任务已存在，不能重复创建".into());
+        }
+        Self::save_in_transaction(tx, workspace, "tasks", value, false)
     }
 
     fn save_in_transaction(
@@ -1113,6 +1279,29 @@ impl Store {
             value["createdAt"] = json!(now);
             1
         };
+        if table == "prompts" {
+            // 内容历史由数据库旧值派生，禁止调用者注入或覆盖历史。
+            let old = previous
+                .as_ref()
+                .map(|(_, raw)| serde_json::from_str::<Value>(raw))
+                .transpose()
+                .map_err(|e| e.to_string())?;
+            let mut versions = old
+                .as_ref()
+                .and_then(|v| v["versions"].as_array())
+                .cloned()
+                .unwrap_or_default();
+            if old
+                .as_ref()
+                .is_none_or(|v| v["content"] != value["content"])
+            {
+                versions.push(json!({"id":uuid::Uuid::now_v7().to_string(),"content":value["content"],"createdAt":now}));
+            }
+            if versions.len() > 30 {
+                versions.drain(..versions.len() - 30);
+            }
+            value["versions"] = json!(versions);
+        }
         value["id"] = json!(id);
         value["revision"] = json!(revision);
         value["updatedAt"] = json!(now);
@@ -1155,13 +1344,14 @@ impl Store {
                             .as_ref()
                             .and_then(|(_, raw)| serde_json::from_str::<Value>(raw).ok())
                             .filter(|old| text(old, "status") == "done");
-                        if let Some(old) = old_done {
+                        if trusted_remote && value.get("completedAt") == Some(&Value::Null) {
+                            // 同步明确未知时可纠正旧版误用的导入时间。
+                            Value::Null
+                        } else if let Some(old) = old_done {
                             old.get("completedAt")
                                 .filter(|v| v.is_i64())
                                 .cloned()
                                 .unwrap_or(Value::Null)
-                        } else if trusted_remote && value.get("completedAt") == Some(&Value::Null) {
-                            Value::Null
                         } else {
                             json!(now)
                         }
@@ -1183,6 +1373,7 @@ impl Store {
             rusqlite::types::Value::Text(stored_data.clone()),
         ];
         let fields: &[(&str, &str)] = match table {
+            "prompts" => &[("title", "title")],
             "bugs" => &[
                 ("title", "title"),
                 ("connection_id", "connectionId"),
@@ -1407,7 +1598,7 @@ impl Store {
         }
         zip.start_file("manifest.json", options)
             .map_err(|e| e.to_string())?;
-        zip.write_all(json!({"formatVersion":1,"schemaVersion":8,"workspaceId":self.workspace_id,"files":manifest}).to_string().as_bytes()).map_err(|e|e.to_string())?;
+        zip.write_all(json!({"formatVersion":1,"schemaVersion":SCHEMA_VERSION,"workspaceId":self.workspace_id,"files":manifest}).to_string().as_bytes()).map_err(|e|e.to_string())?;
         zip.finish()
             .map_err(|e| e.to_string())?
             .sync_all()
@@ -1560,6 +1751,7 @@ entity_api!(save_document, delete_document, "documents");
 
 fn entity_table(kind: &str) -> Result<&'static str, String> {
     match kind {
+        "prompt" => Ok("prompts"),
         "task" => Ok("tasks"),
         "bug" => Ok("bugs"),
         "project" => Ok("projects"),
@@ -1733,7 +1925,7 @@ mod tests {
             assert_eq!(
                 conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                     .unwrap(),
-                8
+                crate::storage::SCHEMA_VERSION
             );
         }
         assert_fixture_credentials_absent(&fs::read(&database).unwrap());
@@ -2009,7 +2201,7 @@ mod tests {
         }
         {
             let conn = store.conn.lock().unwrap();
-            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE bugs; DROP TABLE provider_credentials; DROP TABLE task_reminder_deliveries; DELETE FROM schema_migrations WHERE version>=3; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); PRAGMA user_version=2;").unwrap();
+            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE bugs; DROP TABLE provider_credentials; DROP TABLE task_reminder_deliveries; DELETE FROM schema_migrations WHERE version>=3; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); PRAGMA user_version=2;").unwrap();
             for (mut value, old) in saved.into_iter().zip(values) {
                 if let Some(due) = old.get("dueDate") {
                     value["dueDate"] = due.clone();
@@ -2173,7 +2365,7 @@ mod tests {
                     .unwrap()
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                8
+                crate::storage::SCHEMA_VERSION
             );
         }
     }
@@ -2551,7 +2743,7 @@ mod tests {
             )
             .unwrap();
             conn.execute_batch(
-                "DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;",
+                "DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;",
             )
             .unwrap();
         }
@@ -2581,7 +2773,7 @@ mod tests {
             assert_eq!(
                 conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                8
+                crate::storage::SCHEMA_VERSION
             );
             assert_eq!(
                 conn.query_row("SELECT COUNT(*) FROM task_reminder_deliveries", [], |r| r

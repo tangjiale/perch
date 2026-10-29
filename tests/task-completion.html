@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>任务完成回顾 · 隔离验收</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      globalThis.isTauri = true;
+      const callbacks = {};
+      let serial = 0;
+      window.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+        transformCallback: (fn) => { callbacks[++serial] = fn; return serial; },
+        unregisterCallback: (id) => delete callbacks[id],
+        invoke: async () => { throw Error("隔离入口尚未就绪"); },
+      };
+      window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+    </script>
+    <script type="module" src="./TaskCompletionFixture.ts"></script>
+  </body>
+</html>

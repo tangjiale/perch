@@ -6,6 +6,7 @@ const choices = [
   { value: "chat", label: "文本" },
   { value: "vision", label: "视觉" },
   { value: "embedding", label: "向量" },
+  { value: "speech", label: "语音" },
 ] as const;
 
 export default function ModelCapability({

@@ -58,8 +58,8 @@ fn validate_images(images: &[ChatImage]) -> Result<usize, String> {
 }
 
 fn validate_chat(capability: &str, content: &str, images: &[ChatImage]) -> Result<(), String> {
-    if capability == "embedding" {
-        return Err("向量模型用于知识库索引，不能用于聊天".into());
+    if !matches!(capability, "chat" | "vision") {
+        return Err("请选择文本或视觉模型，向量和语音模型不能用于聊天".into());
     }
     if !images.is_empty() && capability != "vision" {
         return Err("当前为文本模型，请选择视觉模型后发送图片".into());
@@ -289,6 +289,9 @@ pub async fn provider_test(
             let v = embed(&provider, &model, &key, vec!["连接测试".into()]).await?;
             return Ok(format!("向量模型可用，维度 {}", v[0].len()));
         }
+        if text(&model, "capability") == "speech" {
+            return Err("请进入「会议」录制一小段语音验证转录；语音模型不使用文本生成测试".into());
+        }
         let (path, body) = match text(&provider, "protocol") {
             "anthropic-messages" => (
                 "messages",
@@ -340,14 +343,14 @@ fn conversation_agent(snapshot: &Value, conversation: &Value) -> Result<Value, S
         get(snapshot, "agents", text(conversation, "agentId"))
     }
 }
-fn live_chat_model(snapshot: &Value, model_id: &str) -> Result<(Value, Value), String> {
+pub(crate) fn live_chat_model(snapshot: &Value, model_id: &str) -> Result<(Value, Value), String> {
     let model = get(snapshot, "models", model_id)?;
     let provider = get(snapshot, "providers", text(&model, "providerId"))?;
     if model["enabled"] == false || provider["enabled"] == false {
         return Err("模型或供应商已停用".into());
     }
     if !matches!(text(&model, "capability"), "chat" | "vision") {
-        return Err("请选择文本或视觉聊天模型，向量模型不能用于聊天".into());
+        return Err("请选择文本或视觉聊天模型，向量和语音模型不能用于聊天".into());
     }
     Ok((model, provider))
 }
@@ -679,7 +682,7 @@ async fn chat_run(
     outcome.map(|_| ())
 }
 
-fn chat_request_payload(
+pub(crate) fn chat_request_payload(
     agent: &Value,
     model: &Value,
     protocol: &str,
@@ -845,8 +848,18 @@ mod tests {
             set_conversation_model(&store, &HashMap::new(), cid, "missing-model", Some(1)).is_err()
         );
         assert_eq!(store.snapshot().unwrap(), baseline);
-        for (capability, enabled) in [("embedding", true), ("vision", false), ("invalid", true)] {
-            let choice=store.save("model",json!({"name":"不可用模型","providerId":"fixture-provider-new","remoteModelId":"unavailable","capability":capability,"enabled":enabled})).unwrap();
+        for (capability, enabled) in [
+            ("embedding", true),
+            ("speech", true),
+            ("vision", false),
+            ("invalid", true),
+        ] {
+            let result=store.save("model",json!({"name":"不可用模型","providerId":"fixture-provider-new","remoteModelId":"unavailable","capability":capability,"enabled":enabled}));
+            if capability == "invalid" {
+                assert!(result.is_err());
+                continue;
+            }
+            let choice = result.unwrap();
             let before = store.snapshot().unwrap();
             assert!(set_conversation_model(
                 &store,
@@ -1027,6 +1040,7 @@ mod tests {
         assert!(validate_chat("vision", "", std::slice::from_ref(&png)).is_ok());
         assert!(validate_chat("chat", "describe", &[png]).is_err());
         assert!(validate_chat("embedding", "text", &[]).is_err());
+        assert!(validate_chat("speech", "text", &[]).is_err());
         assert!(validate_chat("vision", " ", &[]).is_err());
     }
 

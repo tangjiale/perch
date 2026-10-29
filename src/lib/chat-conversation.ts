@@ -13,7 +13,7 @@ export function newChatConversation(
     (item) =>
       item.id === (modelId || agent.modelId) &&
       item.enabled &&
-      item.capability !== "embedding",
+      (item.capability === "chat" || item.capability === "vision"),
   );
   if (!model)
     throw new Error(

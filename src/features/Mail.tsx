@@ -337,11 +337,6 @@ export default function Mail({
                 }}
                 aria-expanded={!collapsed.has(a.id)}
               >
-                {collapsed.has(a.id) ? (
-                  <ChevronRight size={13} />
-                ) : (
-                  <ChevronDown size={13} />
-                )}
                 <span className="mail-tree-avatar">{a.name.slice(0, 1)}</span>
                 <span
                   className="mail-tree-name"
@@ -355,6 +350,11 @@ export default function Mail({
                   <span className="mail-count">
                     {unread?.accounts.find((u) => u.accountId === a.id)?.unread}
                   </span>
+                )}
+                {collapsed.has(a.id) ? (
+                  <ChevronRight size={13} />
+                ) : (
+                  <ChevronDown size={13} />
                 )}
               </button>
               {!collapsed.has(a.id) && (

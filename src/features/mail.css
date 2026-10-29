@@ -4,29 +4,27 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: var(--surface);
 }
 main.mail-page {
-  padding: 14px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
+.workspace main.mail-page {
+  padding-left: 12px;
+}
 .mail-folders-panel {
   display: flex;
   flex-direction: column;
-  padding: 18px 12px 12px;
+  padding: 18px 12px 12px 0;
   min-height: 0;
   border-right: 1px solid var(--line);
-  background: var(--glass);
 }
 .mail-folders-panel > header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 8px 12px;
+  padding: 0 10px 12px;
 }
 .mail-folders-panel h1 {
   font-size: 21px;
@@ -39,8 +37,17 @@ main.mail-page {
   box-shadow: none;
 }
 .mail-write {
-  margin: 0 5px 22px;
+  margin: 0 0 22px;
   min-height: 40px;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 8px;
+  padding-inline: 9px;
+}
+.mail-write > svg,
+.mail-tree-folders button > svg {
+  width: 26px;
+  flex: 0 0 26px;
 }
 .mail-account-tree {
   overflow-y: auto;
@@ -53,10 +60,14 @@ main.mail-page {
   border: 0;
   box-shadow: none;
   background: transparent;
-  padding: 9px 5px;
+  padding: 9px 10px;
   width: 100%;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 8px;
+  text-align: left;
+}
+.mail-tree-account-title > svg {
+  flex-shrink: 0;
 }
 .mail-tree-account-title.selected {
   background: var(--theme-hover, #e8eef1);
@@ -73,6 +84,7 @@ main.mail-page {
   flex-shrink: 0;
 }
 .mail-tree-name {
+  flex: 1;
   white-space: nowrap;
   min-width: 0;
   text-align: left;
@@ -98,13 +110,15 @@ main.mail-page {
 .mail-tree-folders {
   display: grid;
   gap: 3px;
-  margin: 5px 0 0 18px;
+  margin: 5px 0 0;
 }
 .mail-tree-folders button {
   border: 0;
   box-shadow: none;
   background: transparent;
   justify-content: flex-start;
+  text-align: left;
+  gap: 8px;
   font-size: 12px;
   padding: 8px 10px;
 }
@@ -114,6 +128,8 @@ main.mail-page {
   font-weight: 600;
 }
 .mail-tree-folders button span {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -127,7 +143,7 @@ main.mail-page {
   gap: 5px;
   font-size: 10px;
   color: var(--muted);
-  padding-top: 15px;
+  padding: 15px 10px 0;
   align-items: center;
 }
 .mail-folders-panel footer a {
@@ -336,7 +352,6 @@ main.mail-page {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--glass-strong);
 }
 .mail-reader-toolbar {
   display: flex;

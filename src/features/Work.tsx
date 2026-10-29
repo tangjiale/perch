@@ -1,7 +1,12 @@
-import { Fragment, useId, useRef, useState } from "react";
+import { assignmentApi, assignmentKey, useAssignmentGeneration } from "../lib/assignment-notifications";
+import { native } from "../lib/api";
+import { QueryClientContext } from "@tanstack/react-query";
+import { Fragment, useContext, useEffect, useId, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import TaskRichTextEditor from "../components/TaskRichTextEditor";
 import TaskAssignmentDetails from "../components/TaskAssignmentDetails";
+import TaskCompletionReview from "./TaskCompletionReview";
+import { buildTaskCompletionReview } from "../lib/task-completion";
 import { taskNotesText } from "../lib/task-rich-text";
 import "./projects.css";
 import { buildBugProjectIndex, projectBugKey } from "../lib/bug-projects";
@@ -23,6 +28,7 @@ import {
   Trash2,
   GripVertical,
   Undo2,
+  RefreshCw,
 } from "lucide-react";
 import {
   DndContext,
@@ -44,7 +50,7 @@ import Modal from "../components/Modal";
 import GlassSelect from "../components/GlassSelect";
 import { zentaoDetailUrl } from "../lib/zentao-links";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api } from "../lib/api";
+import { api, command } from "../lib/api";
 import { createSchedule, taskScheduleDates, taskScheduleLabel } from "../lib/schedule";
 import { isTaskExpired } from "../lib/task-expiry";
 import { useExpiryRefresh } from "../lib/use-expiry-refresh";
@@ -690,7 +696,8 @@ export default function Work({
   page = "tasks",
   search = "",
   onNew,
-}: { page?: string; search?: string; onNew?: () => void } & PageProps) {
+  workspaceId = "",
+}: { workspaceId?: string; page?: string; search?: string; onNew?: () => void } & PageProps) {
   useExpiryRefresh();
   const navigate = useNavigate();
   const bugStats = buildBugStatistics(data.bugs);
@@ -708,21 +715,49 @@ export default function Work({
   const moveLock = useRef(false);
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState("");
+  const syncLock = useRef(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
+  const connection = data.connections[0];
   const [view, setView] = useState("board"),
     [project, setProject] = useState(params.get("project") || "all"),
     [status, setStatus] = useState("all"),
     [editing, setEditing] = useState<Task | null>(null);
+  const notificationClient = useContext(QueryClientContext);
+  const notificationGeneration = useAssignmentGeneration(workspaceId);
+  const readNotificationTarget = useRef("");
+  const requestedTaskId = params.get("taskId");
+  const notificationTarget = `${workspaceId}:${requestedTaskId}:${params.get("notificationId") || ""}`;
+  const openedNotificationId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requestedTaskId) { openedNotificationId.current = null; return; }
+    if (openedNotificationId.current === notificationTarget) return;
+    const task = data.tasks.find(value => value.id === requestedTaskId);
+    if (task) { openedNotificationId.current = notificationTarget; setEditing(task); }
+  }, [requestedTaskId, notificationTarget, data.tasks]);
+  useEffect(() => {
+    if (!editing?.id) { readNotificationTarget.current = ""; return; }
+    if (!native || !workspaceId || !notificationGeneration || editing.source !== "zentao") return;
+    const target = `${workspaceId}:${editing.id}`;
+    if (readNotificationTarget.current === target) return;
+    readNotificationTarget.current = target;
+    void assignmentApi.readEntity(workspaceId, "task", editing.id, notificationGeneration)
+      .then(() => notificationClient?.invalidateQueries({queryKey: assignmentKey(workspaceId)}))
+      .catch(error => notify(`无法清除任务未读提醒：${error instanceof Error ? error.message : String(error)}`));
+  }, [workspaceId, editing?.id, notificationClient, notificationGeneration]);
+
   const list = data.tasks
     .filter(
       (t) =>
         (project === "all" || t.projectId === project) &&
-        (status === "all" || t.status === status) &&
+        (view === "review" || status === "all" || t.status === status) &&
         `${t.title} ${t.notes}`.toLowerCase().includes(search.toLowerCase()),
     )
     .sort(
       (a, b) =>
         a.sortOrder - b.sortOrder || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
+  const completionReview = view === "review" ? buildTaskCompletionReview(list) : null;
   const today = DateTime.local().toISODate();
   const todayTasks = list.filter(
     (t) =>
@@ -737,12 +772,40 @@ export default function Work({
           DateTime.fromISO(t.schedule.end || t.schedule.start) >=
             DateTime.local().startOf("day")),
   );
+  async function syncZentao() {
+    if (syncLock.current || moveLock.current || moving || editing || !connection?.enabled)
+      return;
+    syncLock.current = true;
+    setSyncing(true);
+    setSyncError("");
+    try {
+      const result = await command<string>("zentao_sync", {
+        connectionId: connection.id,
+      });
+      setUndo(null);
+      try {
+        const refreshed = await refresh();
+        // React Query 的 refetch 可能返回错误结果而不是抛出异常。
+        if (refreshed && typeof refreshed === "object" && "error" in refreshed && refreshed.error)
+          throw refreshed.error;
+      } catch {
+        setSyncError("禅道同步已完成，但任务列表刷新失败，请刷新页面核对结果。");
+        return;
+      }
+      notify(result || "禅道同步完成", "statusbar");
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : String(error));
+    } finally {
+      syncLock.current = false;
+      setSyncing(false);
+    }
+  }
   async function move(event: DragEndEvent) {
     setDragging(null);
     const t = data.tasks.find((task) => task.id === event.active.id);
     const placement = event.over?.data.current?.placement as
       { status: TaskStatus; beforeId: string | null } | undefined;
-    if (moveLock.current || !t || !placement || placement.beforeId === t.id)
+    if (syncLock.current || moveLock.current || !t || !placement || placement.beforeId === t.id)
       return;
     const original = data.tasks
       .filter((task) => task.status === t.status)
@@ -869,11 +932,31 @@ export default function Work({
                 : "个人任务与禅道工作进展"}
           </p>
         </div>
-        <button className="primary" onClick={() => setEditing(blankTask())}>
-          <Plus size={16} />
-          新建任务
-        </button>
+        <div className="actions">
+          {page === "tasks" && (
+            <button
+              disabled={syncing || moving || !!editing || !connection?.enabled}
+              title={!connection?.enabled ? "请先在设置中配置并启用禅道连接" : "同步禅道项目与我负责的执行"}
+              onClick={() => void syncZentao()}
+            >
+              <RefreshCw size={16} />
+              {syncing ? "正在同步…" : "同步禅道"}
+            </button>
+          )}
+          <button className="primary" onClick={() => setEditing(blankTask())}>
+            <Plus size={16} />
+            新建任务
+          </button>
+        </div>
       </div>
+      {page === "tasks" && syncError && (
+        <div className="notice" role="alert">
+          <p className="error">{syncError}</p>
+          <button className="text-link" onClick={() => setSyncError("")}>
+            关闭提示
+          </button>
+        </div>
+      )}
       {page === "overview" ? (
         <>
           <div className="metrics overview-metrics">
@@ -987,9 +1070,10 @@ export default function Work({
       ) : (
         <>
           <div className="toolbar">
-            <div className="segmented">
+            <div className="segmented" aria-label="任务视图">
               <button
                 className={view === "board" ? "active" : ""}
+                aria-pressed={view === "board"}
                 onClick={() => setView("board")}
               >
                 <Columns3 size={15} />
@@ -997,10 +1081,19 @@ export default function Work({
               </button>
               <button
                 className={view === "list" ? "active" : ""}
+                aria-pressed={view === "list"}
                 onClick={() => setView("list")}
               >
                 <List size={15} />
                 列表
+              </button>
+              <button
+                className={view === "review" ? "active" : ""}
+                aria-pressed={view === "review"}
+                onClick={() => setView("review")}
+              >
+                <CircleCheck size={15} />
+                完成回顾
               </button>
             </div>
             <GlassSelect
@@ -1012,7 +1105,7 @@ export default function Work({
                 ...data.projects.map((p) => ({ value: p.id, label: p.name })),
               ]}
             />
-            <GlassSelect
+            {view !== "review" && <GlassSelect
               aria-label="状态筛选"
               value={status}
               onValueChange={setStatus}
@@ -1023,12 +1116,16 @@ export default function Work({
                   label,
                 })),
               ]}
-            />
-            <span className="muted">{list.length} 个任务</span>
-            <button
+            />}
+            <span className="muted" aria-live="polite">
+              {completionReview
+                ? `两周完成 ${completionReview.thisWeek.tasks.length + completionReview.lastWeek.tasks.length} 个任务`
+                : `${list.length} 个任务`}
+            </span>
+            {view !== "review" && <button
               title="撤销上次拖动"
               className="icon-button"
-              disabled={!undo || moving}
+              disabled={!undo || moving || syncing}
               onClick={async () => {
                 if (!undo) return;
                 setMoving(true);
@@ -1049,7 +1146,7 @@ export default function Work({
               }}
             >
               <Undo2 size={16} />
-            </button>
+            </button>}
           </div>
           {moveError && (
             <div className="notice" role="alert">
@@ -1064,7 +1161,14 @@ export default function Work({
               </button>
             </div>
           )}
-          {view === "list" ? (
+          {completionReview ? (
+            <TaskCompletionReview
+              review={completionReview}
+              projects={data.projects}
+              onOpen={setEditing}
+              onRemote={(task) => void openRemote(task)}
+            />
+          ) : view === "list" ? (
             taskRows(list)
           ) : (
             <DndContext
@@ -1092,11 +1196,11 @@ export default function Work({
                           <BoardSlot
                             status={s}
                             beforeId={t.id}
-                            active={!!dragging && !moving}
+                            active={!!dragging && !moving && !syncing}
                           />
                           <Card
                             task={t}
-                            disabled={moving}
+                            disabled={moving || syncing}
                             project={
                               data.projects.find((p) => p.id === t.projectId)
                                 ?.name
@@ -1113,7 +1217,7 @@ export default function Work({
                     <BoardSlot
                       status={s}
                       beforeId={null}
-                      active={!!dragging && !moving}
+                      active={!!dragging && !moving && !syncing}
                     />
                     <button
                       className="add-task"

@@ -142,7 +142,7 @@ export default function ProviderModelsDialog({
           </button>
         </div>
         <p className="model-catalog-hint">
-          模型类型：文本用于文字聊天，视觉支持图片聊天，向量用于知识库检索。目录通常不提供能力信息，默认选择文本，请按模型实际能力调整。
+          模型类型：文本用于文字聊天，视觉支持图片聊天，向量用于知识库检索，语音用于会议转录。目录通常不提供能力信息，默认选择文本；语音模型导入后可在配置中开启说话人识别。
         </p>
         {error && (
           <p className="error" role="alert">

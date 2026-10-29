@@ -1,4 +1,6 @@
 mod agent_presets;
+mod assignment_inbox;
+mod assignment_notifications;
 mod backup;
 mod backup_cron;
 mod credential_vault;
@@ -12,8 +14,11 @@ mod local_skills;
 mod mail;
 mod mail_history;
 mod mcp;
+mod meetings;
+mod meeting_realtime;
 mod natapp;
 mod parser;
+mod prompt_optimizer;
 mod provider_models;
 mod s3_backup;
 pub mod storage;
@@ -113,6 +118,7 @@ fn storage_move(
     integrations::ensure_idle()?;
     mail::ensure_idle()?;
     let mut store = state.store.lock().map_err(|e| e.to_string())?;
+    meeting_realtime::ensure_all_idle()?;
     let next = store.migrate_copy(std::path::Path::new(&target))?;
     next.activate_default_bootstrap()?;
     *store = next;
@@ -130,6 +136,7 @@ fn data_restore(
     integrations::ensure_idle()?;
     mail::ensure_idle()?;
     let mut store = state.store.lock().map_err(|e| e.to_string())?;
+    meeting_realtime::ensure_all_idle()?;
     let next = storage::Store::restore_to(
         std::path::Path::new(&archive),
         std::path::Path::new(&target),
@@ -172,11 +179,15 @@ pub fn run() {
             zentao::background::start(app.handle().clone());
             dingtalk_calendar::start(app.handle().clone());
             task_reminders::start(app.handle().clone());
+            assignment_notifications::start(app.handle().clone());
             backup::start(app.handle().clone());
             Ok(())
         })
         .on_window_event(tray::on_window_event)
         .invoke_handler(tauri::generate_handler![
+            assignment_notifications::assignment_notification_list,
+            assignment_notifications::assignment_notification_read,
+            assignment_notifications::assignment_notification_read_entity,
             exchange_rates::get_exchange_rates,
             workspace_snapshot,
             backup::backup_state,
@@ -265,11 +276,30 @@ pub fn run() {
             integrations::chat_send,
             integrations::chat_set_model,
             integrations::chat_cancel,
+            prompt_optimizer::prompt_list,
+            prompt_optimizer::prompt_save,
+            prompt_optimizer::prompt_delete,
+            prompt_optimizer::prompt_generate,
+            prompt_optimizer::prompt_cancel,
+            meeting_realtime::meeting_realtime_start,
+            meeting_realtime::meeting_realtime_push,
+            meeting_realtime::meeting_realtime_stop,
+            meetings::meeting_list,
+            meetings::meeting_save,
+            meetings::meeting_delete,
+            meetings::meeting_append_audio,
+            meetings::meeting_transcribe,
+            meetings::meeting_generate,
+            meetings::meeting_audio,
+            meetings::meeting_action_complete,
+            meetings::meeting_action_task,
+            meetings::meeting_add_marker,
             zentao::zentao_sync,
             zentao::assignment::zentao_task_assignment,
             zentao::bug_history::zentao_bug_history,
             zentao::media::zentao_task_image_read,
             zentao::media::zentao_bug_image_read,
+            zentao::media::zentao_bug_history_image_read,
             image_actions::image_clipboard_write,
             image_actions::image_download,
             zentao::media::zentao_task_image_upload,

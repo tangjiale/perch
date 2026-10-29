@@ -307,6 +307,21 @@ small {
   background: #4a9573;
   margin-right: 6px;
 }
+.statusbar-workspace,
+.statusbar-storage {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.statusbar-message {
+  flex: 1;
+  min-width: 0;
+  margin: 0 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-weight: 600;
+}
 .page-heading {
   display: flex;
   justify-content: space-between;
@@ -608,7 +623,7 @@ html .task-card.task-is-done .tag:not(.expired) {
 .app-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
 }
 .app-category-toolbar {
   display: flex;
@@ -672,21 +687,39 @@ html .task-card.task-is-done .tag:not(.expired) {
   margin: 12px 0 6px;
   font-size: 15px;
 }
+.app-grid > .app-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+.app-card-header {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 8px;
+}
 .app-card-title {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px 8px;
-  margin: 12px 0 6px;
+  min-width: 0;
 }
 .app-card-title h3 {
   margin: 0;
+  max-width: 100%;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   overflow-wrap: anywhere;
 }
 .app-category-label {
   max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   line-height: 1.5;
 }
 .app-card p,
@@ -705,6 +738,21 @@ html .task-card.task-is-done .tag:not(.expired) {
   text-overflow: ellipsis;
   white-space: nowrap;
   display: block;
+}
+.app-grid > .app-card p {
+  min-height: 0;
+  margin: 0;
+}
+.app-grid > .app-card small {
+  margin-top: auto;
+}
+.app-grid .card-actions {
+  margin-top: 0;
+  padding-top: 8px;
+}
+.app-grid .card-actions button:not(.icon-button) {
+  min-height: 30px;
+  padding: 4px 10px;
 }
 .resource-card-top {
   display: flex;

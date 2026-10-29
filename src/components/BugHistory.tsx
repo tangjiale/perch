@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import DOMPurify from "dompurify";
+import { useEffect, useState } from "react";
 import { DateTime } from "luxon";
 import { api } from "../lib/api";
 import type { ZentaoBugHistory, ZentaoBugHistoryEntry } from "../lib/types";
+import BugSteps from "./BugSteps";
 import "./bug-history.css";
 
 const actions: Record<string, string> = {
@@ -24,25 +24,6 @@ function historyDate(value: string | null) {
   // 禅道历史时间属于远端业务时间，带时区时也保留原时区展示。
   const date = DateTime.fromISO(value.replace(" ", "T"), { setZone: true });
   return date.isValid ? date.toFormat("yyyy-MM-dd HH:mm:ss") : value;
-}
-
-function HistoryComment({ value }: { value: string }) {
-  const html = useMemo(() => {
-    const fragment = DOMPurify.sanitize(value, {
-      ALLOWED_TAGS: ["p", "br", "div", "span", "b", "strong", "em", "i", "u", "s", "ul", "ol", "li", "pre", "code", "blockquote", "table", "tbody", "thead", "tr", "td", "th", "img"],
-      ALLOWED_ATTR: ["alt", "colspan", "rowspan"],
-      ALLOW_DATA_ATTR: false,
-      RETURN_DOM_FRAGMENT: true,
-    });
-    // 历史附件未经过 BUG 正文引用核验，不让备注中的图片或链接发起外部请求。
-    fragment.querySelectorAll("img").forEach(image => {
-      image.replaceWith(document.createTextNode(`[${image.getAttribute("alt") || "图片"}，请在禅道查看]`));
-    });
-    const container = document.createElement("div");
-    container.append(fragment);
-    return container.innerHTML;
-  }, [value]);
-  return html ? <div className="bug-history-comment" dangerouslySetInnerHTML={{ __html: html }} /> : null;
 }
 
 function actionLabel(entry: ZentaoBugHistoryEntry) {
@@ -86,7 +67,7 @@ export default function BugHistory({ bugId, revision }: { bugId: string; revisio
             <time dateTime={entry.date?.replace(" ", "T")}>{historyDate(entry.date)}</time>
             <span>由 <strong>{entry.actor || "未知操作人"}</strong> {actionLabel(entry)}。</span>
           </div>
-          {entry.comment && <HistoryComment value={entry.comment} />}
+          {entry.comment && <BugSteps bugId={bugId} historyActionId={entry.id} value={entry.comment} />}
           {entry.changes.length > 0 && <details className="bug-history-changes">
             <summary>查看字段变更（{entry.changes.length}）</summary>
             <dl>{entry.changes.map((change, index) => <div key={`${change.field}:${index}`}>

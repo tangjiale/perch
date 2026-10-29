@@ -10,6 +10,7 @@ mod create;
 mod description;
 mod edit;
 mod execution_context;
+mod history_media_cache;
 pub mod media;
 pub mod users;
 mod validation;
@@ -256,7 +257,7 @@ impl<'a> Adapter<'a> {
                     query.append_pair("involved", "1");
                 }
                 if self.personal && resource == "executions" {
-                    query.append_pair("fields", "PM,desc");
+                    query.append_pair("fields", "PM,desc,closedDate");
                 }
                 let (page_name, size_name) = if self.version == "v2" {
                     ("pageID", "recPerPage")
@@ -546,6 +547,7 @@ fn merge(
         if let Some(status) = execution_local_status(text(&row, "status")) {
             task["status"] = json!(status);
         }
+        sync_execution_completion(&mut task, &row);
         let (account, owner) = owner_identity(&row["PM"]);
         task["remoteExecutionOwner"] = json!(owner);
         task["remoteExecutionOwnerAccount"] = json!(account);
@@ -568,6 +570,39 @@ fn merge(
     }
     Ok(changes)
 }
+// 禅道 22.0 的 closedDate 是关闭时刻，realEnd 只是业务日期，不能用于完成周归属。
+fn execution_closed_at(remote: &Value) -> Option<i64> {
+    if remote["status"] != "closed" {
+        return None;
+    }
+    let raw = remote["closedDate"].as_str()?.trim();
+    if let Ok(date) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Some(date.timestamp_millis());
+    }
+    let date = chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S").ok()?;
+    // 与禅道全天排期相同，未带时区的服务器日期使用 Asia/Shanghai 业务时区。
+    let offset = chrono::FixedOffset::east_opt(8 * 60 * 60)?;
+    date.and_local_timezone(offset)
+        .single()
+        .map(|date| date.timestamp_millis())
+}
+
+fn sync_execution_completion(task: &mut Value, remote: &Value) {
+    if task["status"] != "done" {
+        task["completedAt"] = Value::Null;
+        task.as_object_mut().unwrap().remove("completedAtSource");
+    } else if let Some(completed) = execution_closed_at(remote) {
+        task["completedAt"] = json!(completed);
+        task["completedAtSource"] = json!("remote");
+    } else if !matches!(task["completedAtSource"].as_str(), Some("local" | "remote"))
+        || !task["completedAt"].is_i64()
+    {
+        // 旧版导入时间没有事实来源；缺远端日期时明确未知，不能归入同步所在周。
+        task["completedAt"] = Value::Null;
+        task.as_object_mut().unwrap().remove("completedAtSource");
+    }
+}
+
 fn remote_date_range(begin: &Value, end: &Value) -> Option<Value> {
     let parse = |value: &Value| {
         let value = value.as_str()?;
@@ -709,8 +744,21 @@ fn apply_execution_result(
     if text(result, "name").trim().is_empty() {
         return Err("禅道返回名称无效，请重新同步核对".into());
     }
+    // 只有已核验的主动关闭可使用本机时刻；普通编辑不能把未知历史时间补成现在。
+    if patch["status"] == "closed" && old["status"] != "done" {
+        value["completedAt"] = json!(execution_closed_at(result).unwrap_or_else(now));
+        value["completedAtSource"] = json!(if execution_closed_at(result).is_some() {
+            "remote"
+        } else {
+            "local"
+        });
+    }
     value["title"] = result["name"].clone();
     value["status"] = json!(status);
+    if status != "done" {
+        value["completedAt"] = Value::Null;
+        value.as_object_mut().unwrap().remove("completedAtSource");
+    }
     value["remoteStatus"] = result["status"].clone();
     value["remoteBegin"] = result["begin"].clone();
     value["remoteEnd"] = result["end"].clone();
@@ -1921,7 +1969,7 @@ mod tests {
         let requests = server.join().unwrap();
         assert!(requests[0].starts_with("GET /api.php/v1/user "));
         assert!(requests[1].contains("involved=1"));
-        assert!(requests[2].contains("fields=PM"));
+        assert!(requests[2].contains("fields=PM%2Cdesc%2CclosedDate"));
         assert_eq!(requests.len(), 3);
         assert!(requests.iter().all(|r| !r.contains("/tasks")));
     }
@@ -2007,6 +2055,96 @@ mod tests {
             mock.join().unwrap();
         }
     }
+    #[test]
+    fn execution_completion_sync_uses_closure_fact_and_preserves_confirmed_local_close() {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = crate::storage::Store::open_at(temporary.path().to_path_buf()).unwrap();
+        let sync = |status: &str, closed: Value| {
+            let snapshot = store.snapshot().unwrap();
+            let changes = merge(
+                &snapshot,
+                "connection",
+                RemoteSnapshot {
+                    projects: vec![json!({"id":3,"name":"项目"})],
+                    items: vec![(
+                        "3".into(),
+                        "execution".into(),
+                        json!({
+                            "id":42,"name":"任务","status":status,"closedDate":closed,
+                            "end":"2026-12-31","realEnd":"2026-12-30"
+                        }),
+                    )],
+                },
+            )
+            .unwrap();
+            store
+                .save_zentao_snapshot(changes, vec![], "connection")
+                .unwrap();
+            store.snapshot().unwrap()["tasks"][0].clone()
+        };
+        let completed = chrono::DateTime::parse_from_rfc3339("2026-10-09T23:30:00+08:00")
+            .unwrap()
+            .timestamp_millis();
+        assert_eq!(sync("closed", Value::Null)["completedAt"], Value::Null);
+        let task = sync("closed", json!("2026-10-09 23:30:00"));
+        assert_eq!(task["completedAt"], completed);
+        assert_eq!(task["completedAtSource"], "remote");
+        assert_eq!(
+            sync("closed", json!("2026-10-09T15:30:00Z"))["completedAt"],
+            completed
+        );
+        // 稀疏响应不抹去已经确认过的真实关闭时间。
+        assert_eq!(sync("closed", Value::Null)["completedAt"], completed);
+        assert_eq!(
+            sync("closed", json!("0000-00-00 00:00:00"))["completedAt"],
+            completed
+        );
+        let mut legacy = store.snapshot().unwrap()["tasks"][0].clone();
+        legacy["completedAt"] = json!(123);
+        legacy.as_object_mut().unwrap().remove("completedAtSource");
+        store.save("task", legacy).unwrap();
+        assert_eq!(sync("closed", Value::Null)["completedAt"], Value::Null);
+        assert_eq!(
+            sync("closed", json!("0000-00-00 00:00:00"))["completedAt"],
+            Value::Null
+        );
+        assert_eq!(sync("doing", Value::Null)["completedAt"], Value::Null);
+        let old = store.snapshot().unwrap()["tasks"][0].clone();
+        let mut edited = old.clone();
+        apply_execution_result(
+            "https://example.test",
+            &mut edited,
+            &old,
+            &json!({"name":"任务","status":"closed"}),
+            &json!({"status":"closed"}),
+        )
+        .unwrap();
+        let local_time = edited["completedAt"].as_i64().unwrap();
+        assert_eq!(edited["completedAtSource"], "local");
+        store.save("task", edited).unwrap();
+        assert_eq!(sync("closed", Value::Null)["completedAt"], local_time);
+        assert_eq!(sync("closed", Value::Null)["completedAt"], local_time);
+        let reopened = sync("doing", Value::Null);
+        assert!(reopened.get("completedAtSource").is_none());
+        assert_eq!(reopened["completedAt"], Value::Null);
+        let mut edited = reopened.clone();
+        apply_execution_result(
+            "https://example.test",
+            &mut edited,
+            &reopened,
+            &json!({"name":"任务","status":"closed","closedDate":"2026-10-16T12:00:00+08:00"}),
+            &json!({"status":"closed"}),
+        )
+        .unwrap();
+        assert_eq!(edited["completedAtSource"], "remote");
+        assert_eq!(
+            edited["completedAt"],
+            chrono::DateTime::parse_from_rfc3339("2026-10-16T12:00:00+08:00")
+                .unwrap()
+                .timestamp_millis()
+        );
+    }
+
     #[test]
     fn execution_sync_preserves_remote_status_and_maps_all_four_local_states() {
         for (remote, local) in [

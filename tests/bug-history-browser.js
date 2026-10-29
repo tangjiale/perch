@@ -24,7 +24,14 @@ assert.deepEqual(ev("window.__bugHistoryCalls.map(call => call.args)"), [{ bugId
 assert.equal(ev("document.querySelectorAll('.bug-history-entry').length"), 3);
 assert.deepEqual(ev("[...document.querySelectorAll('.bug-history-entry')].map(row => row.textContent.includes('创建问题') ? 'create' : row.textContent.includes('知识库接入') ? 'assign' : 'edit')"), ["create", "assign", "edit"], "历史按业务时间正序展示");
 assert.equal(ev("!!document.querySelector('.bug-history strong, .bug-history b')"), true, "安全文字格式保留");
-assert.equal(ev("!!document.querySelector('.bug-history img, .bug-history script, .bug-history svg, .bug-history a, .bug-history [onerror], .bug-history [onload]')"), false, "图片外链及危险节点不进入 DOM");
+assert.equal(ev("document.querySelectorAll('.bug-history img').length"), 1, "历史上传图片直接显示");
+assert.equal(ev("document.querySelector('.bug-history img').src.startsWith('data:image/png;base64,')"), true, "历史图片仅使用原生返回的安全预览");
+assert.equal(ev("!!document.querySelector('.bug-history script, .bug-history svg, .bug-history a, .bug-history [onerror], .bug-history [onload]')"), false, "外链及危险节点不进入 DOM");
+assert.deepEqual(ev("window.__bugCalls.filter(call => call.name === 'zentao_bug_history_image_read' && call.args.source.includes('768')).map(call => call.args)"), [{bugId:"bug-0",actionId:"3",source:"index.php?m=file&f=read&t=png&fileID=768"}], "图片请求绑定BUG和具体历史记录");
+run("click", '[aria-label="放大查看历史记录图片"]'); wait();
+assert.equal(ev("!!document.querySelector('dialog.image-viewer[open]')"), true, "历史图片支持放大预览");
+run("click", 'dialog.image-viewer [title="关闭"]'); wait();
+assert.equal(ev("document.querySelectorAll('dialog[open]').length"), 1, "关闭图片保留BUG详情");
 assert.equal(ev("!!window.__unsafeHistory"), false);
 assert.deepEqual(ev("performance.getEntriesByType('resource').filter(item => item.name.includes('history-tracking.invalid')).map(item => item.name)"), [], "历史备注不加载外部图片");
 ev("(() => { document.querySelectorAll('.bug-history details').forEach(details => { details.open = true; }); return true; })()");
@@ -38,6 +45,22 @@ for (const theme of ["light", "dark"]) {
   assert.equal(ev("(() => { const section=document.querySelector('.bug-history'); const dialog=section.closest('dialog'); return section.scrollWidth <= section.clientWidth + 1 && dialog.scrollWidth <= dialog.clientWidth + 1; })()"), true, `${theme} 窄屏历史不横向溢出`);
 }
 run("set", "viewport", "1280", "900");
+for (const mode of ["fail", "invalid"]) {
+  run("open", `${origin}/tests/bugs.html`); wait();
+  ev(`window.__historyImageMode = ${JSON.stringify(mode)}`);
+  run("click", ".bugs-title"); wait();
+  assert.equal(ev("document.querySelectorAll('.bug-history img').length"), 0);
+  assert.match(text(), mode === "fail" ? /历史图片加载失败/ : /图片返回格式无效/);
+  ev("window.__historyImageMode = ''");
+  ev("(() => {document.querySelector('.bug-history .bugs-step-image-placeholder button').click();return true;})()"); wait();
+  assert.equal(ev("document.querySelectorAll('.bug-history img').length"), 1, "历史图片加载失败可单独重试");
+}
+run("open", `${origin}/tests/bugs.html`); wait();
+ev("window.__historyImageMode = 'pending'");run("click", ".bugs-title");wait();
+assert.match(text(), /正在加载历史记录图片/);
+close();ev("window.__historyImageMode = ''");run("click", ".bugs-title");wait();
+ev("window.__resolveHistoryImage({dataUrl:'data:image/png;base64,AAAA'})");wait();
+assert.equal(ev("document.querySelector('.bug-history img').src === window.__bugImageData"), true, "关闭后旧图片响应不覆盖新详情");
 open("fail");
 assert.match(text(), /历史记录加载失败/);
 ev("window.__bugHistoryMode = ''"); clickText("重新加载历史"); wait();
@@ -55,4 +78,4 @@ ev("window.__bugHistoryPending[0]({assignedBy:'过期指派人',assignedAt:null,
 assert.equal(text().includes("过期指派人"), false, "关闭后延迟请求不能覆盖重开的详情");
 assert.match(text(), /吴敏政/);
 
-console.log(JSON.stringify({ history: true, attribution: true, order: true, changes: true, safeHtml: true, noRemoteImages: true, readOnly: true, retry: true, empty: true, pending: true, staleResponse: true, themes: true, narrowViewport: true }));
+console.log(JSON.stringify({ history: true, attribution: true, order: true, changes: true, historyImages: true, imagePreview: true, imageRetry: true, imageScope: true, safeHtml: true, noRemoteImages: true, readOnly: true, retry: true, empty: true, pending: true, staleResponse: true, themes: true, narrowViewport: true }));

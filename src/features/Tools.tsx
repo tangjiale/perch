@@ -16,8 +16,10 @@ import {
   Trash2,
   RefreshCw,
   ArrowLeftRight,
+  WandSparkles,
 } from "lucide-react";
 import ExchangeRateTool from "./ExchangeRateTool";
+import PromptOptimizer from "./PromptOptimizer";
 import Modal from "../components/Modal";
 import { api, native } from "../lib/api";
 import type {
@@ -72,6 +74,8 @@ export default function Tools({
                   ? "NATAPP 内网穿透"
                   : kind === "exchange"
                     ? "汇率转换"
+                  : kind === "prompts"
+                    ? "提示词优化"
                   : "工具"}
             </h1>
             <p>
@@ -81,6 +85,8 @@ export default function Tools({
                   ? "管理本机隧道与运行日志"
                   : kind === "exchange"
                     ? "输入一个金额，同时换算多种货币"
+                  : kind === "prompts"
+                    ? "打磨提示词，测试效果，沉淀自己的提示词库"
                   : "常用小工具，随时打开使用"}
             </p>
             {kind === "natapp" && (
@@ -110,8 +116,16 @@ export default function Tools({
         <NatappTool info={info} notify={notify} />
       ) : kind === "exchange" ? (
         <ExchangeRateTool key={`${info.workspaceId}:${info.dataRoot}`} info={info} notify={notify} />
+      ) : kind === "prompts" ? (
+        <PromptOptimizer key={`${info.workspaceId}:${info.dataRoot}`} notify={notify} />
       ) : (
         <div className="tool-grid">
+          <button className="tool-card" onClick={() => navigate("/tools/prompts")}>
+            <span className="tool-icon"><WandSparkles size={25} /></span>
+            <h2>提示词优化</h2>
+            <p>优化与迭代提示词，对比效果，管理个人提示词库。</p>
+            <span className="tool-card-link">打开工具 →</span>
+          </button>
           <button className="tool-card" onClick={() => navigate("/tools/2fa")}>
             <span className="tool-icon">
               <KeyRound size={25} />

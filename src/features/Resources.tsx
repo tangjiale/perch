@@ -140,9 +140,18 @@ export function Apps({
           )
           .map((a) => (
             <article className="app-card" key={a.id}>
-              <div className="resource-card-top">
+              <div className="app-card-header">
                 <div className="app-logo">
                   {a.logo ? <img src={a.logo} alt="" /> : a.name.slice(0, 1)}
+                </div>
+                <div className="app-card-title">
+                  <h3 title={a.name}>{a.name}</h3>
+                  <span
+                    className="tag app-category-label"
+                    title={data.categories.find((c) => c.id === a.categoryId)?.name || "未分类"}
+                  >
+                    {data.categories.find((c) => c.id === a.categoryId)?.name || "未分类"}
+                  </span>
                 </div>
                 <button
                   title={a.favorite ? "取消收藏" : "收藏"}
@@ -159,14 +168,8 @@ export function Apps({
                   <Star size={16} fill={a.favorite ? "currentColor" : "none"} />
                 </button>
               </div>
-              <div className="app-card-title">
-                <h3>{a.name}</h3>
-                <span className="tag app-category-label">
-                  {data.categories.find((c) => c.id === a.categoryId)?.name || "未分类"}
-                </span>
-              </div>
               <p title={a.description}>{a.description || "暂无描述"}</p>
-              <small>{a.url}</small>
+              <small title={a.url}>{a.url}</small>
               <div className="card-actions">
                 <button
                   onClick={() => openUrl(a.url).catch((e) => notify(String(e)))}
@@ -624,7 +627,7 @@ export function Agents({
     [error, setError] = useState("");
   const models = data.models.filter(
     (m) =>
-      m.capability !== "embedding" &&
+      (m.capability === "chat" || m.capability === "vision") &&
       m.enabled &&
       data.providers.find((p) => p.id === m.providerId)?.enabled,
   );

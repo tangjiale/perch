@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>提示词优化模拟验收</title></head><body><div id="root" style="height:100vh;margin-left:220px;padding:24px;overflow:auto"></div><output id="notice"></output>
+<script>
+// 全部 IPC 为隔离模拟，仅 fixture 自有 localStorage；不访问原生库和真实模型。
+const params=new URLSearchParams(location.search);globalThis.isTauri=!params.has('preview');
+window.__calls=[];window.__pending=[];window.__pendingLists=[];window.__mode=params.get('mode')||'success';window.__callbacks={};window.__next=1;window.__confirm=true;window.confirm=()=>window.__confirm;
+window.__entries=JSON.parse(localStorage.getItem('perch-prompt-fixture')||'[]');
+window.__persist=()=>localStorage.setItem('perch-prompt-fixture',JSON.stringify(window.__entries));
+window.__result=r=>({content:r.action==='test'?'模拟回答：'+r.prompt:(r.action==='iterate'?'迭代后的提示词：':'优化后的提示词：')+r.prompt,durationMs:900,finishedAt:Date.now(),usage:{inputTokens:10,outputTokens:20,totalTokens:30}});
+window.__TAURI_INTERNALS__={transformCallback:fn=>{const id=window.__next++;window.__callbacks[id]=fn;return id},unregisterCallback:id=>delete window.__callbacks[id],invoke:async(name,args)=>{
+window.__calls.push({name,args});
+if(name==='workspace_snapshot')return {models:params.has('no-models')?[]:[{id:'mock-model',name:'模拟聊天模型',providerId:'mock-provider',enabled:true,capability:'chat'}],providers:[{id:'mock-provider',name:'模拟供应商',enabled:true}]};
+if(name==='prompt_list'){const captured=structuredClone(window.__entries);if(window.__mode==='list-fail')throw '模拟提示词列表读取失败';if(window.__mode==='list-pending')return new Promise(resolve=>window.__pendingLists.push({resolve:()=>resolve(captured)}));return captured;}
+if(name==='prompt_save'){if(window.__mode==='save-fail')throw '模拟保存失败';const old=window.__entries.find(x=>x.id===args.value.id);const value={...args.value,revision:(old?.revision||0)+1,createdAt:old?.createdAt||Date.now(),updatedAt:Date.now()};value.versions=old?.content===value.content?old.versions:[...(old?.versions||[]),{id:crypto.randomUUID(),content:value.content,createdAt:Date.now()}].slice(-30);window.__entries=[value,...window.__entries.filter(x=>x.id!==value.id)];window.__persist();return structuredClone(value)}
+if(name==='prompt_delete'){if(window.__mode==='delete-fail')throw '模拟删除失败';window.__entries=window.__entries.filter(x=>x.id!==args.id);window.__persist();return}
+if(name==='prompt_cancel')return;
+if(name==='prompt_generate'){const r=args.request;const emit=content=>window.__callbacks[args.channel.id]?.({index:0,message:{generationId:r.generationId,content}});if(window.__mode==='fail')throw '模拟模型调用失败';if(window.__mode==='pending')return new Promise((resolve,reject)=>window.__pending.push({r,emit,resolve,reject}));emit('模拟流式内容');if(window.__mode==='test-partial'&&r.prompt.startsWith('优化'))throw '模拟单侧测试失败';return window.__result(r)}
+throw Error('非预期命令 '+name)
+}};
+</script><script type="module" src="./PromptOptimizerFixture.tsx"></script></body></html>

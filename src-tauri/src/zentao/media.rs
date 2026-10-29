@@ -172,6 +172,123 @@ pub async fn zentao_bug_image_read(
     Ok(json!({"dataUrl": data_url}))
 }
 
+/// 历史图片仅可读取指定真实动作的评论引用，不能借用步骤或其他动作的引用。
+#[tauri::command]
+pub async fn zentao_bug_history_image_read(
+    state: State<'_, AppState>,
+    bug_id: String,
+    action_id: String,
+    source: String,
+) -> Result<Value, String> {
+    let ctx = bug_context(&state, &bug_id)?;
+    file_id(text(&ctx.connection, "baseUrl"), &source)?;
+    remote_id(&json!(action_id))?;
+    let token = credential(&ctx.workspace, text(&ctx.connection, "id"))?
+        .get_password()
+        .map_err(|_| "请先保存禅道令牌")?;
+    let adapter =
+        Adapter::personal(&ctx.connection, token)?.with_auth(crate::zentao_auth::AutoAuth::new(
+            &state,
+            &ctx.workspace,
+            &ctx.generation,
+            &ctx.connection,
+        )?);
+    let scope = super::history_media_cache::scope(&ctx.workspace, &ctx.generation, &ctx.connection);
+    let history_key = super::history_media_cache::history_key(&scope, &ctx.bug);
+    let data_url = read_bug_history_image_cached(
+        (&scope, &history_key),
+        &adapter,
+        text(&ctx.connection, "baseUrl"),
+        &ctx.bug,
+        &action_id,
+        &source,
+        || bug_unchanged(&state, &ctx),
+    )
+    .await?;
+    Ok(json!({"dataUrl":data_url}))
+}
+
+#[cfg(test)]
+async fn read_bug_history_image(
+    adapter: &Adapter<'_>,
+    site_base: &str,
+    bug: &Value,
+    action_id: &str,
+    source: &str,
+    unchanged: impl Fn() -> Result<(), String>,
+) -> Result<String, String> {
+    read_bug_history_image_cached(
+        ("", ""),
+        adapter,
+        site_base,
+        bug,
+        action_id,
+        source,
+        unchanged,
+    )
+    .await
+}
+
+async fn read_bug_history_image_cached(
+    cache_keys: (&str, &str),
+    adapter: &Adapter<'_>,
+    site_base: &str,
+    bug: &Value,
+    action_id: &str,
+    source: &str,
+    unchanged: impl Fn() -> Result<(), String>,
+) -> Result<String, String> {
+    let (scope, history_key) = cache_keys;
+    let id = file_id(site_base, source)?;
+    let action_id = remote_id(&json!(action_id))?;
+    unchanged()?;
+    let history = if let Some(history) = super::history_media_cache::history(history_key) {
+        history
+    } else {
+        let account = adapter.account().await?;
+        unchanged()?;
+        let remote_id = remote_id(&bug["remoteId"])?;
+        let remote = adapter.bug_history(&remote_id).await?;
+        super::bugs::verify_baseline(bug, &remote, &account)?;
+        let history = super::bug_history::history(&remote, &remote_id)?;
+        unchanged()?;
+        if !history_key.is_empty() {
+            super::history_media_cache::put_history(history_key.to_owned(), history.clone());
+        }
+        history
+    };
+    let entry = history["entries"]
+        .as_array()
+        .and_then(|entries| entries.iter().find(|entry| text(entry, "id") == action_id))
+        .ok_or("当前 BUG 不存在指定历史动作")?;
+    if !referenced(site_base, text(entry, "comment"), &id) {
+        return Err("该图片不在指定 BUG 历史备注中，请重新加载核对".into());
+    }
+    unchanged()?;
+    let image_key = super::history_media_cache::image_key(scope, &id);
+    let lock = super::history_media_cache::lock(&image_key);
+    let _guard = lock.lock().await;
+    unchanged()?;
+    let data_url = if !scope.is_empty() {
+        super::history_media_cache::image(&image_key)
+    } else {
+        None
+    };
+    let data_url = match data_url {
+        Some(image) => image,
+        None => {
+            let image = read_image(adapter, &id).await?;
+            unchanged()?;
+            if !scope.is_empty() {
+                super::history_media_cache::put_image(image_key, image.clone());
+            }
+            image
+        }
+    };
+    unchanged()?;
+    Ok(data_url)
+}
+
 struct BugContext {
     bug: Value,
     connection: Value,
@@ -204,9 +321,7 @@ fn bug_unchanged(state: &AppState, ctx: &BugContext) -> Result<(), String> {
     let snapshot = store.snapshot()?;
     let connection = get(&snapshot, "connections", text(&ctx.connection, "id"))?;
     let bug = get(&snapshot, "bugs", text(&ctx.bug, "id"))?;
-    if connection["revision"] != ctx.connection["revision"]
-        || bug["revision"] != ctx.bug["revision"]
-    {
+    if connection != ctx.connection || bug != ctx.bug {
         return Err("连接或 BUG 已变化，请重新打开 BUG".into());
     }
     Ok(())
@@ -318,6 +433,334 @@ mod tests {
             json!({"id":"b","connectionId":"c","remoteId":"419","title":"截图 BUG","steps":steps,"status":"active","assignedTo":"me","severity":2,"priority":3,"productId":"1","remoteEditedDate":"2026-10-13 12:00:00"}),
             json!({"id":419,"title":"截图 BUG","steps":steps,"status":"active","assignedTo":{"account":"me"},"severity":2,"pri":3,"product":1,"lastEditedDate":"2026-10-13 12:00:00"}),
         )
+    }
+
+    fn history_fixture() -> (Value, Value) {
+        let (old, mut remote) = bug_fixture();
+        remote["actions"] = json!([{"id":12,"objectType":"bug","objectID":419,"action":"commented","actor":"me","date":"2026-10-28 12:00:00","comment":"<img src=\"index.php?m=file&amp;f=read&amp;t=png&amp;fileID=768\">","extra":"","history":[]}]);
+        (old, remote)
+    }
+    #[tokio::test]
+    async fn history_image_expired_authorization_must_revalidate_before_cached_pixels() {
+        let (old, mut remote) = history_fixture();
+        remote["actions"][0]["comment"] = json!("图片引用已删除");
+        let (base, handle) = crate::zentao::tests::auth_server(vec![
+            (200, json!({"profile":{"account":"me"}})),
+            (200, remote.clone()),
+        ]);
+        let scope = super::super::history_media_cache::scope(
+            &uuid::Uuid::now_v7().to_string(),
+            std::path::Path::new("generation"),
+            &json!({"baseUrl":base}),
+        );
+        let key = super::super::history_media_cache::history_key(&scope, &old);
+        let (_, initial) = history_fixture();
+        super::super::history_media_cache::put_history(
+            key.clone(),
+            super::super::bug_history::history(&initial, "419").unwrap(),
+        );
+        super::super::history_media_cache::put_image(
+            super::super::history_media_cache::image_key(&scope, "768"),
+            "data:image/png;base64,cached".into(),
+        );
+        super::super::history_media_cache::expire_history(&key);
+        assert!(read_bug_history_image_cached(
+            (&scope, &key),
+            &test_adapter(&base),
+            &base,
+            &old,
+            "12",
+            "{768.png}",
+            || Ok(())
+        )
+        .await
+        .is_err());
+        let requests = handle.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].contains("/bugs/419?fields=actions"));
+        assert!(!requests.iter().any(|r| r.contains("/files/")));
+        super::super::history_media_cache::invalidate(&key);
+        assert!(super::super::history_media_cache::history(&key).is_none());
+    }
+
+    #[tokio::test]
+    async fn history_image_cache_does_not_store_failed_downloads() {
+        let (old, remote) = history_fixture();
+        let (base, handle) = sequence_server(vec![
+            (200, "text/html".into(), b"login".to_vec()),
+            (
+                200,
+                "image/png".into(),
+                b"\x89PNG\r\n\x1a\nfixture".to_vec(),
+            ),
+        ]);
+        let scope = super::super::history_media_cache::scope(
+            &uuid::Uuid::now_v7().to_string(),
+            std::path::Path::new("generation"),
+            &json!({"baseUrl":base}),
+        );
+        let key = super::super::history_media_cache::history_key(&scope, &old);
+        super::super::history_media_cache::put_history(
+            key.clone(),
+            super::super::bug_history::history(&remote, "419").unwrap(),
+        );
+        let adapter = test_adapter(&base);
+        assert!(read_bug_history_image_cached(
+            (&scope, &key),
+            &adapter,
+            &base,
+            &old,
+            "12",
+            "{768.png}",
+            || Ok(())
+        )
+        .await
+        .is_err());
+        assert!(read_bug_history_image_cached(
+            (&scope, &key),
+            &adapter,
+            &base,
+            &old,
+            "12",
+            "{768.png}",
+            || Ok(())
+        )
+        .await
+        .is_ok());
+        assert_eq!(
+            handle
+                .join()
+                .unwrap()
+                .matches("GET /api.php/v1/files/768 ")
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn history_image_cache_downloads_once_and_checks_each_action_before_hits() {
+        let (old, remote) = history_fixture();
+        let (base, handle) = sequence_server(vec![(
+            200,
+            "image/png".into(),
+            b"\x89PNG\r\n\x1a\nfixture".to_vec(),
+        )]);
+        let scope = super::super::history_media_cache::scope(
+            &uuid::Uuid::now_v7().to_string(),
+            std::path::Path::new("generation"),
+            &json!({"baseUrl":base,"revision":1,"syncAccount":"me"}),
+        );
+        let key = super::super::history_media_cache::history_key(&scope, &old);
+        super::super::history_media_cache::put_history(
+            key.clone(),
+            super::super::bug_history::history(&remote, "419").unwrap(),
+        );
+        let adapter = test_adapter(&base);
+        let first = read_bug_history_image_cached(
+            (&scope, &key),
+            &adapter,
+            &base,
+            &old,
+            "12",
+            "{768.png}",
+            || Ok(()),
+        );
+        let second = read_bug_history_image_cached(
+            (&scope, &key),
+            &adapter,
+            &base,
+            &old,
+            "12",
+            "{768.png}",
+            || Ok(()),
+        );
+        let (a, b) = tokio::join!(first, second);
+        assert_eq!(a.unwrap(), b.unwrap());
+        let requests = handle.join().unwrap();
+        assert_eq!(requests.matches("GET ").count(), 1);
+        assert!(requests.contains("GET /api.php/v1/files/768 "));
+        assert!(read_bug_history_image_cached(
+            (&scope, &key),
+            &adapter,
+            &base,
+            &old,
+            "12",
+            "{768.png}",
+            || Ok(())
+        )
+        .await
+        .is_ok());
+        assert!(read_bug_history_image_cached(
+            (&scope, &key),
+            &adapter,
+            &base,
+            &old,
+            "99",
+            "{768.png}",
+            || Ok(())
+        )
+        .await
+        .is_err());
+        assert!(read_bug_history_image_cached(
+            (&scope, &key),
+            &adapter,
+            &base,
+            &old,
+            "12",
+            "{999.png}",
+            || Ok(())
+        )
+        .await
+        .is_err());
+        assert!(read_bug_history_image_cached(
+            (&scope, &key),
+            &adapter,
+            &base,
+            &old,
+            "12",
+            "{768.png}",
+            || Err("工作空间变化".into())
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn history_image_reads_only_verified_comment_via_fixed_file_endpoint() {
+        let (old, remote) = history_fixture();
+        let (base, handle) = sequence_server(vec![
+            (
+                200,
+                "application/json".into(),
+                json!({"profile":{"account":"me"}}).to_string().into_bytes(),
+            ),
+            (
+                200,
+                "application/json".into(),
+                remote.to_string().into_bytes(),
+            ),
+            (
+                200,
+                "image/png".into(),
+                b"\x89PNG\r\n\x1a\nfixture".to_vec(),
+            ),
+        ]);
+        let image = read_bug_history_image(
+            &test_adapter(&base),
+            &base,
+            &old,
+            "12",
+            "index.php?m=file&f=read&t=png&fileID=768",
+            || Ok(()),
+        )
+        .await
+        .unwrap();
+        assert!(image.starts_with("data:image/png;base64,"));
+        let requests = handle.join().unwrap();
+        assert!(requests.contains("GET /api.php/v1/bugs/419?fields=actions HTTP/1.1"));
+        assert!(requests.contains("GET /api.php/v1/files/768 HTTP/1.1"));
+        assert!(!requests.contains("GET /index.php"));
+    }
+    #[tokio::test]
+    async fn history_image_rejects_wrong_action_scope_reference_and_changed_baseline_before_file() {
+        for case in [
+            "action",
+            "foreign",
+            "duplicate",
+            "bug",
+            "version",
+            "owner",
+            "unreferenced",
+            "other-comment",
+        ] {
+            let (old, mut remote) = history_fixture();
+            match case {
+                "foreign" => remote["actions"][0]["objectID"] = json!(420),
+                "duplicate" => {
+                    let duplicate = remote["actions"][0].clone();
+                    remote["actions"].as_array_mut().unwrap().push(duplicate);
+                }
+                "bug" => remote["id"] = json!(420),
+                "version" => remote["lastEditedDate"] = json!("2026-10-28 12:00:00"),
+                "owner" => remote["assignedTo"] = json!("other"),
+                "other-comment" => {
+                    let mut other = remote["actions"][0].clone();
+                    other["id"] = json!(13);
+                    remote["actions"][0]["comment"] = json!("");
+                    remote["actions"].as_array_mut().unwrap().push(other);
+                }
+                _ => (),
+            }
+            let (base, handle) = crate::zentao::tests::auth_server(vec![
+                (200, json!({"profile":{"account":"me"}})),
+                (200, remote),
+            ]);
+            let action = if case == "action" { "99" } else { "12" };
+            let source = if case == "unreferenced" {
+                "{999.png}"
+            } else {
+                "{768.png}"
+            };
+            assert!(
+                read_bug_history_image(
+                    &test_adapter(&base),
+                    &base,
+                    &old,
+                    action,
+                    source,
+                    || Ok(())
+                )
+                .await
+                .is_err(),
+                "{case}"
+            );
+            let requests = handle.join().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert!(!requests.iter().any(|r| r.contains("/files/")));
+        }
+    }
+    #[tokio::test]
+    async fn history_image_checks_external_source_before_network_and_local_revision_before_file() {
+        let (old, remote) = history_fixture();
+        let adapter = test_adapter("http://127.0.0.1:1");
+        let called = std::cell::Cell::new(false);
+        assert!(read_bug_history_image(
+            &adapter,
+            "http://127.0.0.1:1",
+            &old,
+            "12",
+            "https://outside.example/index.php?m=file&f=read&fileID=768",
+            || {
+                called.set(true);
+                Ok(())
+            }
+        )
+        .await
+        .is_err());
+        assert!(!called.get());
+        let (base, handle) = crate::zentao::tests::auth_server(vec![
+            (200, json!({"profile":{"account":"me"}})),
+            (200, remote),
+        ]);
+        let checks = std::cell::Cell::new(0);
+        assert!(read_bug_history_image(
+            &test_adapter(&base),
+            &base,
+            &old,
+            "12",
+            "{768.png}",
+            || {
+                checks.set(checks.get() + 1);
+                if checks.get() == 3 {
+                    Err("工作空间或版本已变化".into())
+                } else {
+                    Ok(())
+                }
+            }
+        )
+        .await
+        .is_err());
+        assert_eq!(handle.join().unwrap().len(), 2);
     }
 
     #[tokio::test]

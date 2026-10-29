@@ -1,4 +1,6 @@
 import React, { useEffect, useState, lazy, Suspense } from "react";
+import AssignmentNotifications from "./components/AssignmentNotifications";
+import { assignmentApi, assignmentKey } from "./lib/assignment-notifications";
 import TopbarClock from "./components/TopbarClock";
 import { createRoot } from "react-dom/client";
 import {
@@ -29,6 +31,7 @@ import {
   RefreshCw,
   ChartNoAxesCombined,
   Mail as MailIcon,
+  Mic,
 } from "lucide-react";
 import { api, native, emptySnapshot, appVersion } from "./lib/api";
 import {
@@ -42,6 +45,7 @@ import { listen } from "@tauri-apps/api/event";
 import { mailApi, mailKeys } from "./lib/mail";
 import "./features/mail.css";
 const Mail = lazy(() => import("./features/Mail"));
+const Meetings = lazy(() => import("./features/Meetings"));
 const Work = lazy(() => import("./features/Work"));
 const Bugs = lazy(() => import("./features/Bugs"));
 const Projects = lazy(() =>
@@ -83,6 +87,7 @@ const navigation = [
   ["/apps", "应用", LayoutGrid],
   ["/tools", "工具", Wrench],
   ["/chat", "聊天", MessagesSquare],
+  ["/meetings", "会议", Mic],
   ["/mail", "邮件", MailIcon],
   ["/statistics", "统计", ChartNoAxesCombined],
 ] as const;
@@ -103,7 +108,26 @@ function App() {
   } = useQuery({ queryKey: ["storage"], queryFn: api.info });
   const [search, setSearch] = useState(""),
     [toast, setToast] = useState("");
+  const [statusMessage, setStatusMessage] = useState<{
+    text: string;
+    workspaceId: string;
+    dataRoot: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!statusMessage) return;
+    const timer = window.setTimeout(() => setStatusMessage(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [statusMessage]);
+  useEffect(() => {
+    setStatusMessage(null);
+  }, [info.workspaceId, info.dataRoot]);
   const location = useLocation();
+  const [meetingsVisited, setMeetingsVisited] = useState(location.pathname === "/meetings");
+  const [meetingRecording, setMeetingRecording] = useState(false);
+  useEffect(() => {
+    if (location.pathname === "/meetings") setMeetingsVisited(true);
+  }, [location.pathname]);
+  useEffect(() => { setMeetingRecording(false); }, [info.workspaceId]);
   const navigate = useNavigate();
   const { data: mailUnread } = useQuery({
     queryKey: mailKeys.unread,
@@ -148,11 +172,25 @@ function App() {
       disposers.forEach((dispose) => dispose());
     };
   }, [info.workspaceId, navigate]);
-  const notify = (text: string) => {
+  const notify = (text: string, target?: "statusbar") => {
+    if (target === "statusbar") {
+      setStatusMessage({
+        text,
+        workspaceId: info.workspaceId,
+        dataRoot: info.dataRoot,
+      });
+      return;
+    }
     setToast(text);
     setTimeout(() => setToast(""), 6000);
   };
-  const props = { data, refresh: refetch, notify };
+  const props = { data, refresh: refetch, notify, workspaceId: info.workspaceId };
+  const statusText =
+    statusMessage?.workspaceId === info.workspaceId &&
+    statusMessage.dataRoot === info.dataRoot
+      ? statusMessage.text
+      : "";
+  const { data: assignmentInbox } = useQuery({queryKey: assignmentKey(info.workspaceId), queryFn: () => assignmentApi.list(info.workspaceId), enabled: !!info.workspaceId});
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -180,6 +218,7 @@ function App() {
             >
               <Icon size={18} />
               <span>{label}</span>
+              {((path === "/tasks" && !!assignmentInbox?.taskCount) || (path === "/bugs" && !!assignmentInbox?.bugCount)) && <i className="assignment-nav-dot" aria-label="有未读指派" title="有未读指派"/>}
               {path === "/bugs" && (
                 <small title="待解决 BUG">
                   {
@@ -205,6 +244,7 @@ function App() {
                   }
                 </small>
               )}
+              {path === "/meetings" && meetingRecording && <small aria-label="会议录音中">录音中</small>}
             </NavLink>
           ))}
         </nav>
@@ -231,6 +271,7 @@ function App() {
             </b>
           </span>
           <TopbarClock />
+          <AssignmentNotifications key={`${info.workspaceId}:${info.dataRoot}`} workspaceId={info.workspaceId} notify={notify} />
           <label className="global-search">
             <Search size={16} />
             <input
@@ -266,7 +307,9 @@ function App() {
                 ? "chat-page"
                 : location.pathname === "/mail"
                   ? "mail-page"
-                  : ""
+                  : location.pathname === "/meetings"
+                    ? "meetings-route"
+                    : ""
             }
           >
             <Suspense
@@ -276,14 +319,28 @@ function App() {
                 </div>
               }
             >
+              {meetingsVisited && (
+                <div className="meeting-route-view" hidden={location.pathname !== "/meetings"}>
+                  <Meetings
+                    key={info.workspaceId}
+                    data={data}
+                    workspaceId={info.workspaceId}
+                    notify={notify}
+                    onRecordingChange={setMeetingRecording}
+                    onTasksChanged={refetch}
+                    onOpenTask={(id) => navigate(`/tasks?taskId=${encodeURIComponent(id)}`)}
+                  />
+                </div>
+              )}
               <Routes>
+                <Route path="/meetings" element={null} />
                 <Route
                   path="/"
-                  element={<Work {...props} page="overview" search={search} />}
+                  element={<Work key={`${info.workspaceId}:${info.dataRoot}`} {...props} page="overview" search={search} />}
                 />
                 <Route
                   path="/tasks"
-                  element={<Work {...props} search={search} />}
+                  element={<Work key={`${info.workspaceId}:${info.dataRoot}`} {...props} search={search} />}
                 />
                 <Route
                   path="/projects"
@@ -291,7 +348,7 @@ function App() {
                 />
                 <Route
                   path="/bugs"
-                  element={<Bugs {...props} search={search} />}
+                  element={<Bugs key={`${info.workspaceId}:${info.dataRoot}`} {...props} search={search} />}
                 />
                 <Route
                   path="/calendar"
@@ -344,11 +401,20 @@ function App() {
           </main>
         )}
         <footer className="statusbar">
-          <span>
+          <span className="statusbar-workspace">
             <i />
             {native ? "本地工作空间" : "界面预览"}
           </span>
-          <span>
+          <span
+            className="statusbar-message"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            title={statusText || undefined}
+          >
+            {statusText}
+          </span>
+          <span className="statusbar-storage">
             SQLite ·{" "}
             {data.connections.length
               ? "已配置 " + data.connections.length + " 个禅道连接"

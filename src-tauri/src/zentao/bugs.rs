@@ -232,7 +232,7 @@ pub(super) async fn sync_inner(
         })
         .collect::<Result<Vec<_>, String>>()?;
     let count = values.len();
-    store.save_bug_snapshot(values, &connection)?;
+    store.save_bug_snapshot_for_account(values, &connection, &account)?;
     Ok(format!("同步完成，共 {count} 个指派给我的 BUG"))
 }
 
@@ -1033,7 +1033,7 @@ mod tests {
         let project = store.save("project", json!({"name":"原有项目"})).unwrap();
         let db = store.generation.join("workbench.sqlite3");
         let workspace = store.workspace_id.clone();
-        store.conn.lock().unwrap().execute_batch("DROP TABLE provider_credentials; DROP TABLE bugs; DROP TABLE task_reminder_deliveries; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        store.conn.lock().unwrap().execute_batch("DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE provider_credentials; DROP TABLE bugs; DROP TABLE task_reminder_deliveries; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
         drop(store);
         let bytes = std::fs::read(db).unwrap();
         let archive = tmp.path().join("v3.zip");
