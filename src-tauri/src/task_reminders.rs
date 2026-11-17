@@ -314,7 +314,7 @@ mod tests {
         {
             // 在临时库重现 schema 6；真实工作空间不参与验证。
             let conn = store.conn.lock().unwrap();
-            conn.execute_batch("DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE task_reminder_deliveries; DELETE FROM schema_migrations WHERE version>=7; PRAGMA user_version=6;").unwrap();
+            conn.execute_batch("DROP TABLE local_bugs; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE task_reminder_deliveries; DELETE FROM schema_migrations WHERE version>=7; PRAGMA user_version=6;").unwrap();
         }
         drop(store);
         let store = Store::open_at(root).unwrap();

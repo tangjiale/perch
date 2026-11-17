@@ -61,8 +61,15 @@ const confirmationFilterBugs: ZentaoBug[] = Array.from(
   }),
 );
 function Fixture() {
+  const params = new URLSearchParams(location.search);
+  const localOnly = params.has("localOnly");
   const [fixtureBugs, setFixtureBugs] = useState<ZentaoBug[]>(
-    new URLSearchParams(location.search).has("confirmationFilter")
+    localOnly ? [] : params.has("resolvedByMe") ? [
+      ...bugs,
+      { ...bugs[2], id: "bug-resolved-by-me", remoteId: "116", title: "我解决后已转派的 BUG",
+        projectId: "11", resolvedByMe: true, readOnly: true,
+        assignedTo: "another", assignedToName: "其他同事", resolvedDate: "2026-09-11" },
+    ] : params.has("confirmationFilter")
       ? confirmationFilterBugs
       : bugs,
   );
@@ -71,9 +78,14 @@ function Fixture() {
   return (
     <MemoryRouter initialEntries={[`/bugs${window.location.search}`]}>
       <Bugs
+        workspaceId="bug-fixture"
         data={{
           ...emptySnapshot,
-          connections: [
+          projects: localOnly ? [] : [
+            { id: "mock-project", name: "测试项目", status: "doing", owner: "", description: "",
+              source: "zentao", remoteId: "11", connectionId: "test", revision: 1 },
+          ],
+          connections: localOnly ? [] : [
             {
               id: "test",
               name: "测试禅道",

@@ -4,6 +4,7 @@ use std::collections::HashSet;
 pub mod assignment;
 pub mod background;
 mod board;
+pub mod bug_create;
 pub mod bug_history;
 pub mod bugs;
 mod create;

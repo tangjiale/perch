@@ -16,6 +16,10 @@ export function projectBugKey(project: Project): string | undefined {
   return key === "unassigned" ? undefined : key;
 }
 
+export function bugGroupKey(bug: ZentaoBug): string {
+  return bug.source === "local" ? "local" : bugProjectKey(bug.connectionId, bug.projectId);
+}
+
 export function buildBugProjectIndex(
   projects: Project[],
   bugs: ZentaoBug[] = [],
@@ -40,10 +44,10 @@ export function buildBugProjectIndex(
     if (key) add(key, `${project.name} #${project.remoteId}`);
   }
   for (const bug of bugs) {
-    const key = bugProjectKey(bug.connectionId, bug.projectId);
+    const key = bugGroupKey(bug);
     const group = add(
       key,
-      key === "unassigned"
+      key === "local" ? "本地 BUG" : key === "unassigned"
         ? "未关联项目"
         : `${bug.projectName || "禅道项目"} #${bug.projectId}`,
     );
@@ -55,7 +59,7 @@ export function buildBugProjectIndex(
   for (const group of groups.values())
     labels.set(group.label, (labels.get(group.label) || 0) + 1);
   for (const [key, group] of groups) {
-    if ((labels.get(group.label) || 0) > 1 && key !== "unassigned")
+    if ((labels.get(group.label) || 0) > 1 && key.startsWith("["))
       group.label += ` · ${JSON.parse(key)[0]}`;
   }
   return groups;

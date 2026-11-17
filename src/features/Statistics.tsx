@@ -507,18 +507,17 @@ export default function Statistics({
               <Link to="/bugs">管理 BUG</Link>
             </div>
             <p className="muted">
-              统计当前本地 BUG 缓存；同步范围为指派给我的
-              BUG。趋势依据远端创建／解决日期，不代表禅道全量历史，转派后再次同步会移出统计。
+              统计本地 BUG、禅道中指派给我的 BUG 和我解决的 BUG。趋势使用创建和解决日期。
             </p>
             <div className="statistics-grid">
               <StatisticsChart
                 title="BUG 状态分布"
-                subtitle="当前同步缓存"
+                subtitle="当前 BUG 列表"
                 option={donut(bugs.status, [3, 1, 4])}
                 rows={countRows(bugs.status)}
                 columns={["状态", "BUG 数"]}
                 empty={
-                  !bugs.total ? "暂无 BUG，请先在 BUG 修复中同步" : undefined
+                  !bugs.total ? "暂无 BUG，可到 BUG 修复页新建或同步" : undefined
                 }
               />
               <StatisticsChart
@@ -531,7 +530,7 @@ export default function Statistics({
               />
               <StatisticsChart
                 title="BUG 创建与解决趋势"
-                subtitle={`近 ${days} 天 · 当前缓存样本的远端业务日期`}
+                subtitle={`近 ${days} 天 · 当前列表中的 BUG`}
                 option={lines(
                   bugs.trend.map((r) => r.date),
                   [

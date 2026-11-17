@@ -11,7 +11,7 @@ use std::{
 };
 
 const DEFAULT_DATA_DIR: &str = ".perch";
-pub(crate) const SCHEMA_VERSION: i64 = 12;
+pub(crate) const SCHEMA_VERSION: i64 = 13;
 const LEGACY_DATA_DIR: &str = ".self-workbanch";
 const ENCRYPTION_CHECK_KEY: &str = "credential-encryption-check";
 const ENCRYPTION_CHECK_PURPOSE: &str = "settings:credential-encryption-check";
@@ -1072,6 +1072,22 @@ impl Store {
                 .map_err(|e| e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;
         }
+        if version < 13 {
+            let sql = include_str!("../migrations/013_local_bugs.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(13,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=13")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
         let integrity: String = conn
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
@@ -1108,6 +1124,14 @@ impl Store {
     }
 
     pub fn snapshot(&self) -> Result<Value, String> {
+        self.snapshot_inner(false)
+    }
+
+    pub fn workspace_snapshot(&self) -> Result<Value, String> {
+        self.snapshot_inner(true)
+    }
+
+    fn snapshot_inner(&self, include_local_bugs: bool) -> Result<Value, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut output = json!({"storagePath":self.root,"workspaceId":self.workspace_id});
         for (table, key) in [
@@ -1138,6 +1162,12 @@ impl Store {
                 values.push(decode_entity(&self.workspace_id, table, &id, &raw)?);
             }
             output[key] = json!(values);
+        }
+        if include_local_bugs {
+            output["bugs"]
+                .as_array_mut()
+                .ok_or("BUG 缓存无效")?
+                .extend(crate::local_bugs::list(&conn)?);
         }
         Ok(output)
     }
@@ -2201,7 +2231,7 @@ mod tests {
         }
         {
             let conn = store.conn.lock().unwrap();
-            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE bugs; DROP TABLE provider_credentials; DROP TABLE task_reminder_deliveries; DELETE FROM schema_migrations WHERE version>=3; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); PRAGMA user_version=2;").unwrap();
+            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE local_bugs; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE bugs; DROP TABLE provider_credentials; DROP TABLE task_reminder_deliveries; DELETE FROM schema_migrations WHERE version>=3; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); PRAGMA user_version=2;").unwrap();
             for (mut value, old) in saved.into_iter().zip(values) {
                 if let Some(due) = old.get("dueDate") {
                     value["dueDate"] = due.clone();
@@ -2743,7 +2773,7 @@ mod tests {
             )
             .unwrap();
             conn.execute_batch(
-                "DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;",
+                "DROP TABLE local_bugs; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;",
             )
             .unwrap();
         }

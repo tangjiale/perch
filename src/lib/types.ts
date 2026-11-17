@@ -218,6 +218,10 @@ export interface ZentaoAssignee {
 }
 
 export interface ZentaoBug extends Base {
+  source?: "local";
+  bugType?: string;
+  resolvedByMe?: boolean;
+  readOnly?: boolean;
   connectionId: string;
   remoteId: string;
   title: string;
@@ -237,6 +241,31 @@ export interface ZentaoBug extends Base {
   openedDate?: string;
   resolvedDate?: string;
   deadline?: string;
+}
+
+export interface BugDraft {
+  id: string;
+  title: string;
+  steps: string;
+  bugType: string;
+  severity: number;
+  priority: number;
+  deadline?: string;
+}
+
+export interface ZentaoBugCreateOptions {
+  products: { id: string; name: string }[];
+  executions: { id: string; name: string; productIds?: string[] }[];
+  assignees: ZentaoAssignee[];
+}
+
+export interface ZentaoBugDraft extends BugDraft {
+  projectId: string;
+  productId: string;
+  executionId?: string;
+  assignedTo: string;
+  openedBuild: string[];
+  mailto: string[];
 }
 export interface NatappTunnel {
   forwardingUrl?: string | null;

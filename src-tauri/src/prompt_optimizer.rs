@@ -359,7 +359,7 @@ mod tests {
                 json!({"name":"保留项目","source":"local","status":"todo"}),
             )
             .unwrap();
-        store.conn.lock().unwrap().execute_batch("DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DELETE FROM schema_migrations WHERE version>=9; PRAGMA user_version=8;").unwrap();
+        store.conn.lock().unwrap().execute_batch("DROP TABLE local_bugs; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DELETE FROM schema_migrations WHERE version>=9; PRAGMA user_version=8;").unwrap();
         drop(store);
         let store = crate::storage::Store::open_at(path).unwrap();
         assert_eq!(store.snapshot().unwrap()["projects"][0]["name"], "保留项目");

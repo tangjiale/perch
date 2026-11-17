@@ -188,7 +188,7 @@ pub async fn zentao_bug_history(
     unchanged()?;
     let id = remote_id(&old["remoteId"])?;
     let remote = adapter.bug_history(&id).await?;
-    bugs::verify_baseline(&old, &remote, &account)?;
+    bugs::verify_read_baseline(&old, &remote, &account)?;
     let output = history(&remote, &id)?;
     unchanged()?;
     super::history_media_cache::put_history(cache_key, output.clone());

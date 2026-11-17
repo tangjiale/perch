@@ -343,7 +343,7 @@ mod tests {
                 [],
             )
             .unwrap();
-            conn.execute_batch("DROP TABLE assignment_notifications; DROP TABLE assignment_members; DROP TABLE assignment_scopes; DELETE FROM schema_migrations WHERE version=12; PRAGMA user_version=11;").unwrap();
+            conn.execute_batch("DROP TABLE local_bugs; DROP TABLE assignment_notifications; DROP TABLE assignment_members; DROP TABLE assignment_scopes; DELETE FROM schema_migrations WHERE version>=12; PRAGMA user_version=11;").unwrap();
         }
         drop(store);
         let store = Store::open_at(root).unwrap();
@@ -352,7 +352,7 @@ mod tests {
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            12
+            crate::storage::SCHEMA_VERSION
         );
         assert_eq!(
             conn.query_row(

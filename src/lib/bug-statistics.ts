@@ -33,14 +33,14 @@ export function buildBugStatistics(
     if (severity[bug.severity - 1]) severity[bug.severity - 1].value++;
     const key = `${bug.connectionId}:${bug.productId || "unknown"}`;
     const product = products.get(key) || {
-      name: bug.productName
+      name: bug.source === "local" ? "本地 BUG" : bug.productName
         ? `${bug.productName} #${bug.productId || "—"}`
         : `产品 #${bug.productId || "未指定"}`,
       value: 0,
     };
     product.value++;
     products.set(key, product);
-    // 只按远端业务日期统计；缓存创建时间不能冒充 BUG 新建日期。
+    // 只按 BUG 业务日期统计；缓存写入时间不能冒充新建日期。
     for (const [value, field] of [
       [bug.openedDate, "opened"],
       [bug.resolvedDate, "resolved"],

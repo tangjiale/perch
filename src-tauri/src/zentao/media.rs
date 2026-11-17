@@ -249,7 +249,7 @@ async fn read_bug_history_image_cached(
         unchanged()?;
         let remote_id = remote_id(&bug["remoteId"])?;
         let remote = adapter.bug_history(&remote_id).await?;
-        super::bugs::verify_baseline(bug, &remote, &account)?;
+        super::bugs::verify_read_baseline(bug, &remote, &account)?;
         let history = super::bug_history::history(&remote, &remote_id)?;
         unchanged()?;
         if !history_key.is_empty() {
@@ -339,7 +339,7 @@ async fn read_bug_image(
     let remote = adapter
         .bug_request(&remote_id(&bug["remoteId"])?, None)
         .await?;
-    super::bugs::verify_baseline(bug, &remote, &account)?;
+    super::bugs::verify_read_baseline(bug, &remote, &account)?;
     if !referenced(site_base, text(&remote, "steps"), &id) {
         return Err("该图片不在当前禅道 BUG 复现步骤中，请重新同步核对".into());
     }

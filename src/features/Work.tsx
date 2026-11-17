@@ -996,7 +996,7 @@ export default function Work({
               </button>
             </div>
             <p className="muted">
-              指派给我的 BUG · 缓存 {bugStats.total} 条 · 严重待解决{" "}
+              本地与禅道 BUG · 共 {bugStats.total} 条 · 严重待解决{" "}
               {bugStats.urgent} 条
             </p>
             <div className="metrics">
@@ -1022,7 +1022,7 @@ export default function Work({
             </div>
             {!bugStats.total && (
               <p className="muted">
-                进入 BUG 修复，点击同步即可读取禅道指派给你的 BUG。
+                进入 BUG 修复，新建 BUG 或同步禅道指派给你的 BUG。
               </p>
             )}
           </section>

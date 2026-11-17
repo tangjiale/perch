@@ -46,6 +46,26 @@
       window.__TAURI_INTERNALS__ = {
         invoke: async (name, args) => {
           window.__bugCalls.push({ name, args });
+          if (name === "local_bug_save") {
+            const { id, ...fields } = args.value;
+            const saved = { ...fields, id: `local-bug-${id}`, source: "local",
+              revision: (fields.revision || 0) + 1, openedDate: "2026-11-17 10:00:00",
+              connectionId: "", remoteId: "", assignedTo: "" };
+            window.__fixtureBugs = [...window.__fixtureBugs.filter(bug => bug.id !== saved.id), saved];
+            return saved;
+          }
+          if (name === "zentao_bug_create_options") {
+            if (window.__bugOptionsFail) throw "模拟：项目选项读取失败";
+            return {
+              products: [{ id: "21", name: "测试产品" }],
+              executions: [{ id: "31", name: "测试执行", productIds: ["21"] }],
+              assignees: window.__bugAssignees,
+            };
+          }
+          if (name === "zentao_bug_create") {
+            if (window.__bugCreateFail) throw "模拟：提交失败";
+            return { remoteId: "299", assignedToSelf: false };
+          }
           if (name === "zentao_bug_history") {
             window.__bugHistoryCalls.push({ name, args });
             if (window.__bugHistoryMode === "fail") throw Error("模拟：历史读取失败");

@@ -26,7 +26,7 @@ fn available(row: &Value) -> bool {
         && row["status"] != "disabled"
 }
 
-async fn read_assignees(adapter: &Adapter<'_>) -> Result<Vec<Assignee>, String> {
+pub(super) async fn read_assignees(adapter: &Adapter<'_>) -> Result<Vec<Assignee>, String> {
     adapter.account().await?;
     adapter
         .all("users", "users")

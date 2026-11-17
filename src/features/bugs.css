@@ -272,6 +272,12 @@ html[data-theme="dark"] .bugs-title:hover:not(:disabled) {
 .bugs-detail-footer {
   flex-wrap: wrap;
 }
+.bug-mailto-list {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
 @media (max-width: 760px) {
   .bugs-form {
     grid-template-columns: minmax(0, 1fr);

@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   BadgeCheck,
   ExternalLink,
+  Plus,
   RefreshCw,
   Search,
   Settings2,
@@ -23,14 +24,17 @@ import ZentaoAssigneeSelect from "../components/ZentaoAssigneeSelect";
 import Modal from "../components/Modal";
 import BugSteps from "../components/BugSteps";
 import BugHistory from "../components/BugHistory";
+import BugComposer from "./BugComposer";
 import { BugRichTextEditor } from "../components/TaskRichTextEditor";
 import { command, native } from "../lib/api";
 import type { PageProps, ZentaoBug } from "../lib/types";
-import { bugProjectKey, buildBugProjectIndex } from "../lib/bug-projects";
+import { bugGroupKey, buildBugProjectIndex } from "../lib/bug-projects";
 import { sortBugs, type BugSortField, type BugSortDirection } from "../lib/bug-sort";
 import "./bugs.css";
 
 const statusNames = { active: "待解决", resolved: "已解决", closed: "已关闭" };
+const matchesStatus = (bug: ZentaoBug, status: string) =>
+  status === "all" || bug.status === status || (status === "mine-resolved" && bug.resolvedByMe === true);
 const resolutionOptions = [
   { value: "fixed", label: "已修复" },
   { value: "duplicate", label: "重复 BUG" },
@@ -93,7 +97,7 @@ export default function Bugs({
 }: PageProps & { search?: string; workspaceId?: string }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const filter = ["all", "active", "resolved", "closed"].includes(
+  const filter = ["all", "active", "resolved", "closed", "mine-resolved"].includes(
     params.get("status") || "",
   )
     ? params.get("status")!
@@ -110,6 +114,7 @@ export default function Bugs({
   const [sortField, setSortField] = useState<BugSortField>("openedDate");
   const [sortDirection, setSortDirection] = useState<BugSortDirection>("desc");
   const [edit, setEdit] = useState<ZentaoBug | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const notificationClient = useContext(QueryClientContext);
   const notificationGeneration = useAssignmentGeneration(workspaceId);
@@ -124,7 +129,7 @@ export default function Bugs({
     if (bug) { openedNotificationId.current = notificationTarget; setEdit({...bug}); setEditing(false); setAction(null); setError(""); }
   }, [requestedBugId, notificationTarget, data.bugs]);
   useEffect(() => {
-    if (!edit?.id) { readNotificationTarget.current = ""; return; }
+    if (!edit?.id || edit.source === "local") { readNotificationTarget.current = ""; return; }
     if (!native || !workspaceId || !notificationGeneration) return;
     const target = `${workspaceId}:${edit.id}`;
     if (readNotificationTarget.current === target) return;
@@ -132,7 +137,7 @@ export default function Bugs({
     void assignmentApi.readEntity(workspaceId, "bug", edit.id, notificationGeneration)
       .then(() => notificationClient?.invalidateQueries({queryKey: assignmentKey(workspaceId)}))
       .catch(error => notify(`无法清除 BUG 未读提醒：${error instanceof Error ? error.message : String(error)}`));
-  }, [workspaceId, edit?.id, notificationClient, notificationGeneration]);
+  }, [workspaceId, edit?.id, edit?.source, notificationClient, notificationGeneration]);
 
   const [action, setAction] = useState<Action | null>(null);
   const [resolution, setResolution] = useState("fixed");
@@ -144,6 +149,10 @@ export default function Bugs({
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const connection = data.connections[0];
+  const createProjects = data.projects.filter(project =>
+    project.source === "zentao" && project.remoteId &&
+    data.connections.some(item => item.id === project.connectionId && item.enabled && item.hasCredential !== false),
+  );
   const allBugs = data.bugs ?? [];
   const projectFilter = params.get("project") || "all";
   const projectGroups = buildBugProjectIndex(data.projects, allBugs);
@@ -152,7 +161,7 @@ export default function Bugs({
       ? allBugs
       : allBugs.filter(
           (bug) =>
-            bugProjectKey(bug.connectionId, bug.projectId) === projectFilter,
+            bugGroupKey(bug) === projectFilter,
         );
   const words = `${search} ${query}`
     .trim()
@@ -161,13 +170,13 @@ export default function Bugs({
     .filter(Boolean);
   const filtered = projectBugs.filter(
     (bug) =>
-      (filter === "all" || bug.status === filter) &&
+      matchesStatus(bug, filter) &&
       (severity === "all" || bug.severity === Number(severity)) &&
       (confirmation === "all" ||
         (confirmation === "confirmed" && bug.confirmed === true) ||
         (confirmation === "unconfirmed" && bug.confirmed === false)) &&
       words.every((word) =>
-        `${bug.remoteId} ${bug.title} ${bug.productName ?? ""} ${bug.projectName ?? ""} ${bug.assignedToName ?? ""} ${bug.assignedTo}`
+        `${bug.source === "local" ? "本地 BUG" : bug.remoteId} ${bug.title} ${bug.productName ?? ""} ${bug.projectName ?? ""} ${bug.assignedToName ?? ""} ${bug.assignedTo}`
           .toLocaleLowerCase()
           .includes(word),
       ),
@@ -232,9 +241,28 @@ export default function Bugs({
     setAction(null);
     setError("");
   }
+  function onComposerSaved(message: string, status?: ZentaoBug["status"]) {
+    setCreateOpen(false);
+    setEdit(null);
+    if (status) {
+      const next = new URLSearchParams(params);
+      next.set("status", status);
+      next.delete("project");
+      next.delete("bugId");
+      next.delete("notificationId");
+      setParams(next);
+      setPage(0);
+      setQuery("");
+      setSeverity("all");
+      setConfirmation("all");
+    }
+    notify(message);
+    void refresh().catch(() => setError("BUG 已保存，但列表刷新失败，请刷新页面查看。"));
+  }
   function beginAction(next: Action, event: MouseEvent<HTMLButtonElement>) {
     // 阻止同一次点击在切换表单后触发新确认按钮的默认提交。
     event.preventDefault();
+    if (edit?.readOnly) return;
     setAction(next);
     setResolution("fixed");
     setBuild(next === "activate" ? "" : "trunk");
@@ -245,7 +273,7 @@ export default function Bugs({
   }
   async function transition(event: FormEvent) {
     event.preventDefault();
-    if (!edit || !action) return;
+    if (!edit || edit.readOnly || !action) return;
     const payload: Record<string, unknown> = { comment };
     if (action !== "confirm" && action !== "close") payload.assignedTo = assignee.trim();
     if (action === "resolve") {
@@ -299,7 +327,7 @@ export default function Bugs({
       <div className="page-heading">
         <div>
           <h1>BUG 修复</h1>
-          <p>禅道中指派给我的 BUG，查看进展并同步处理结果</p>
+          <p>记录本地 BUG，或提交并处理禅道 BUG</p>
         </div>
         <div className="bugs-actions">
           <button
@@ -310,7 +338,6 @@ export default function Bugs({
             禅道设置
           </button>
           <button
-            className="primary"
             disabled={busy || !connection?.enabled}
             onClick={() =>
               void run(
@@ -327,6 +354,9 @@ export default function Bugs({
             <RefreshCw size={16} />
             {busy ? "正在处理…" : "同步我的 BUG"}
           </button>
+          <button type="button" className="primary" disabled={busy} onClick={() => { setError(""); setCreateOpen(true); }}>
+            <Plus size={16} /> 新建 BUG
+          </button>
         </div>
       </div>
       {!edit && error && (
@@ -334,17 +364,6 @@ export default function Bugs({
           {error}
         </div>
       )}
-      {!connection ? (
-        <div className="empty">
-          <Bug size={32} />
-          <h3>先连接禅道</h3>
-          <p>配置连接后，可以同步所有当前指派给你的 BUG。</p>
-          <button onClick={() => navigate("/settings?tab=zentao")}>
-            配置禅道连接
-          </button>
-        </div>
-      ) : (
-        <>
           <div className="bugs-toolbar">
             <div
               className="bugs-status-filters"
@@ -357,6 +376,7 @@ export default function Bugs({
                   value,
                   label,
                 })),
+                ...(connection ? [{ value: "mine-resolved", label: "我解决的" }] : []),
               ].map((item) => (
                 <button
                   key={item.value}
@@ -368,10 +388,7 @@ export default function Bugs({
                 >
                   {item.label}
                   <span>
-                    {item.value === "all"
-                      ? projectBugs.length
-                      : projectBugs.filter((bug) => bug.status === item.value)
-                          .length}
+                    {projectBugs.filter(bug => matchesStatus(bug, item.value)).length}
                   </span>
                 </button>
               ))}
@@ -439,28 +456,29 @@ export default function Bugs({
               />
             </label>
           </div>
-          {!connection.enabled && (
+          {connection && !connection.enabled && (
             <p className="error" role="status">
               禅道连接已停用，请在禅道设置中启用后同步。
             </p>
           )}
           <p className="bugs-scope">
-            {connection.lastBugSync
+            {connection?.lastBugSync
               ? `最近同步：${new Date(connection.lastBugSync).toLocaleString("zh-CN")}。`
-              : "尚未同步。"}
-            显示最近同步时指派给我的全部状态
-            BUG。转派给他人后将移出此列表；修改与状态操作会更新禅道。
+              : connection ? "尚未同步禅道 BUG。" : "尚未配置禅道连接。"}
+            {connection
+              ? "列表显示本地 BUG、禅道中指派给我的 BUG，以及禅道中由我解决的记录。"
+              : "可直接创建本地 BUG。"}
           </p>
           {filtered.length === 0 ? (
             <div className="empty">
               <Bug size={32} />
               <h3>
-                {allBugs.length ? "没有符合条件的 BUG" : "暂无指派给我的 BUG"}
+                {allBugs.length ? "没有符合条件的 BUG" : "暂无 BUG"}
               </h3>
               <p>
                 {allBugs.length
                   ? "试试切换项目、状态、严重程度、是否确认或调整关键词。"
-                  : "点击“同步我的 BUG”，获取禅道中的最新指派。"}
+                  : connection?.enabled ? "可以新建 BUG，或同步禅道中的最新指派。" : "点击“新建 BUG”记录本地问题。"}
               </p>
             </div>
           ) : (
@@ -490,7 +508,7 @@ export default function Bugs({
                               disabled={busy}
                               onClick={() => openDetail(bug)}
                             >
-                              <span>#{bug.remoteId}</span>
+                              <span>{bug.source === "local" ? "本地 BUG" : `#${bug.remoteId}${bug.readOnly ? " · 我解决的" : ""}`}</span>
                               <strong>{bug.title}</strong>
                             </button>
                           </td>
@@ -512,7 +530,7 @@ export default function Bugs({
                           </td>
                           <td className="bugs-severity-cell"><SeverityBadge severity={bug.severity} /></td>
                           <td>
-                            {bug.productName ||
+                            {bug.source === "local" ? "—" : <>{bug.productName ||
                               (bug.productId
                                 ? `产品 #${bug.productId}`
                                 : "未关联产品")}
@@ -522,10 +540,11 @@ export default function Bugs({
                                   ? `项目 #${bug.projectId}`
                                   : "未关联项目")}
                             </small>
+                            </>}
                           </td>
-                          <td><ConfirmationBadge confirmed={bug.confirmed} /></td>
+                          <td>{bug.source === "local" ? "—" : <ConfirmationBadge confirmed={bug.confirmed} />}</td>
                           <td>
-                            {bug.assignedToName || bug.assignedTo || "未指派"}
+                            {bug.source === "local" ? "—" : bug.assignedToName || bug.assignedTo || "未指派"}
                             <small>
                               {bug.assignedToName ? bug.assignedTo : ""}
                             </small>
@@ -559,9 +578,14 @@ export default function Bugs({
               </div>
             </>
           )}
-        </>
+      {(createOpen || edit?.source === "local") && (
+        <BugComposer key={createOpen ? "create" : edit?.id}
+          workspaceId={workspaceId} projects={createProjects}
+          bug={createOpen ? undefined : edit ?? undefined}
+          onClose={() => { setCreateOpen(false); setEdit(null); }}
+          onSaved={onComposerSaved} />
       )}
-      {edit && (
+      {edit && edit.source !== "local" && (
         <Modal
           title={action ? actionNames[action] : `BUG #${edit.remoteId}`}
           wide
@@ -631,7 +655,7 @@ export default function Bugs({
                   {action === "assign" ? "指派给" : "处理后指派给"}
                   <ZentaoAssigneeSelect key={edit.id} bugId={edit.id} value={assignee} currentName={edit.assignedToName}
                     label={action === "assign" ? "指派给" : "处理后指派给"} disabled={busy} onChange={account => setAssignee(account)} />
-                  <small>可按姓名或账号搜索；转派给其他人后将移出“我的 BUG”。</small>
+                  <small>可按姓名或账号搜索。转派后，只有由你解决的 BUG 仍会显示。</small>
                 </label>
               )}
               <label className="bugs-full">
@@ -669,7 +693,7 @@ export default function Bugs({
               className="form-grid bugs-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (editing)
+                if (editing && !edit.readOnly)
                   void run(
                     () =>
                       command<ZentaoBug>("zentao_bug_save", { value: edit }),
@@ -684,6 +708,7 @@ export default function Bugs({
                     {statusNames[edit.status]}
                   </span>
                   <ConfirmationBadge confirmed={edit.confirmed} />
+                  {edit.readOnly && <span className="muted">我解决的 · 只读</span>}
                 </div>
                 <button
                   type="button"
@@ -811,7 +836,7 @@ export default function Bugs({
                       {busy ? "正在保存…" : "保存到禅道"}
                     </button>
                   </>
-                ) : (
+                ) : !edit.readOnly ? (
                   <>
                     <button
                       type="button"
@@ -873,7 +898,7 @@ export default function Bugs({
                       </button>
                     )}
                   </>
-                )}
+                ) : null}
               </footer>
             </form>
           )}

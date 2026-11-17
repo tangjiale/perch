@@ -10,6 +10,7 @@ mod exchange_rates;
 mod image_actions;
 mod integrations;
 mod knowledge;
+mod local_bugs;
 mod local_skills;
 mod mail;
 mod mail_history;
@@ -37,7 +38,7 @@ pub struct AppState {
 }
 #[tauri::command]
 fn workspace_snapshot(state: State<AppState>) -> Result<Value, String> {
-    state.store.lock().map_err(|e| e.to_string())?.snapshot()
+    state.store.lock().map_err(|e| e.to_string())?.workspace_snapshot()
 }
 #[tauri::command]
 fn storage_info(state: State<AppState>) -> Result<Value, String> {
@@ -303,6 +304,9 @@ pub fn run() {
             image_actions::image_clipboard_write,
             image_actions::image_download,
             zentao::media::zentao_task_image_upload,
+            local_bugs::local_bug_save,
+            zentao::bug_create::zentao_bug_create_options,
+            zentao::bug_create::zentao_bug_create,
             zentao::bugs::zentao_bugs_sync,
             zentao::bugs::zentao_bug_save,
             zentao::users::zentao_bug_assignees,

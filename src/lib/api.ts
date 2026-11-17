@@ -4,6 +4,7 @@ import type { PromptEntry, PromptProgress, PromptRequest, PromptResult } from ".
 import { version } from "../../package.json";
 import type { BackupSaveInput, BackupState } from "./backup-types";
 import type { ExchangeRateSnapshot } from "./exchange-rates";
+import type { BugDraft, ZentaoBug, ZentaoBugCreateOptions, ZentaoBugDraft } from "./types";
 import type { EntityKind, Base, Snapshot, StorageInfo, ZentaoTaskAssignment, ZentaoBugHistory, ZentaoAssignee, NatappState, NatappSaveInput, NatappLogs } from "./types";
 export const native = isTauri();
 export const appVersion = version;
@@ -81,6 +82,12 @@ export const api = {
   natappStop: (id: string) => command<NatappState>("natapp_stop", { id }),
   natappLogs: (id: string) => command<NatappLogs>("natapp_logs", { id }),
   bugAssignees: (bugId: string) => command<ZentaoAssignee[]>("zentao_bug_assignees", { bugId }),
+  localBugSave: (workspaceId: string, value: BugDraft & { revision?: number; status?: ZentaoBug["status"] }) =>
+    command<ZentaoBug>("local_bug_save", { workspaceId, value }),
+  zentaoBugCreateOptions: (workspaceId: string, projectId: string) =>
+    command<ZentaoBugCreateOptions>("zentao_bug_create_options", { workspaceId, projectId }),
+  zentaoBugCreate: (workspaceId: string, value: ZentaoBugDraft) =>
+    command<{ remoteId: string; assignedToSelf: boolean }>("zentao_bug_create", { workspaceId, value }),
   bugHistory: (bugId: string) => command<ZentaoBugHistory>("zentao_bug_history", { bugId }),
   copyImage: (dataUrl: string) => command<void>("image_clipboard_write", { dataUrl }),
   downloadImage: (dataUrl: string) => command<boolean>("image_download", { dataUrl }),
