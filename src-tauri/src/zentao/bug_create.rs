@@ -404,10 +404,12 @@ fn returned_list(value: &Value) -> Option<Vec<&str>> {
         csv.split(',').filter(|s| !s.is_empty()).collect()
     } else if let Some(values) = value.as_array() {
         values.iter().map(account).collect::<Option<Vec<_>>>()?
-    } else if let Some(values) = value.as_object() {
-        values.values().map(account).collect::<Option<Vec<_>>>()?
     } else {
-        return None;
+        value
+            .as_object()?
+            .values()
+            .map(account)
+            .collect::<Option<Vec<_>>>()?
     };
     items.sort_unstable();
     items.dedup();
