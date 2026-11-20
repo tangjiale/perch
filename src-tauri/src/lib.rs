@@ -3,6 +3,8 @@ mod assignment_inbox;
 mod assignment_notifications;
 mod backup;
 mod backup_cron;
+mod bookmark_apps;
+mod browser_bookmarks;
 mod bug_steps;
 mod credential_vault;
 mod data;
@@ -228,6 +230,8 @@ pub fn run() {
             zentao_auth::zentao_connect,
             zentao_auth::zentao_auth_preferences,
             website_icon::website_icon_fetch,
+            browser_bookmarks::read_browser_bookmarks,
+            bookmark_apps::import_browser_bookmark_apps,
             mcp::mcp_list,
             mcp::mcp_save,
             mcp::mcp_delete,

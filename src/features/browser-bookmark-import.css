@@ -1,0 +1,215 @@
+.bookmark-import-entry {
+  justify-content: flex-end;
+}
+
+.bookmark-import-dialog.modal.wide {
+  width: 800px;
+}
+
+.bookmark-import-dialog > header {
+  margin-bottom: 14px;
+}
+
+.bookmark-import-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.bookmark-import-tabs button {
+  white-space: nowrap;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  padding: 6px 12px;
+}
+
+.bookmark-import-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--theme-accent, #317285);
+  color: inherit;
+  font-weight: 600;
+}
+
+.bookmark-import-profile {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 10px 0;
+}
+
+.bookmark-import-profile .glass-select-trigger {
+  width: min(220px, 100%);
+}
+
+.bookmark-import-profile > span {
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+
+.bookmark-import-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(220px, 1fr);
+  height: clamp(278px, 47vh, 460px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.bookmark-import-tree-pane {
+  overflow: auto;
+  padding: 5px;
+}
+
+.bookmark-import-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bookmark-import-more {
+  margin: 4px 0 4px 28px;
+}
+
+.bookmark-import-node {
+  display: grid;
+  grid-template-columns: 24px 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  min-height: 33px;
+}
+
+.bookmark-import-node .bookmark-import-disclosure {
+  width: 24px;
+  min-height: 26px;
+  height: 26px;
+}
+
+.bookmark-import-disclosure[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.bookmark-import-node input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--theme-accent, #317285);
+  cursor: pointer;
+}
+
+.bookmark-import-node .bookmark-import-node-editor {
+  min-width: 0;
+  min-height: 29px;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 4px 6px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  box-shadow: none;
+  text-align: start;
+}
+
+.bookmark-import-node .bookmark-import-node-editor:hover:not(:disabled),
+.bookmark-import-node .bookmark-import-node-editor[aria-pressed="true"] {
+  background: var(--theme-hover, rgba(54, 92, 113, 0.09));
+}
+
+.bookmark-import-node-editor > span {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bookmark-import-node-editor svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.bookmark-import-editor {
+  min-width: 0;
+  overflow: auto;
+  padding: 12px;
+  border-inline-start: 1px solid var(--line);
+}
+
+.bookmark-import-editor > * + * {
+  margin-top: 8px;
+}
+
+.bookmark-import-editor h3 {
+  overflow-wrap: anywhere;
+}
+
+.bookmark-import-url {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bookmark-import-field {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bookmark-import-field .glass-select-trigger,
+.bookmark-import-field input {
+  width: 100%;
+}
+
+.bookmark-import-status {
+  min-height: 70px;
+  align-content: center;
+  padding: 12px 0;
+}
+
+.bookmark-import-status > button {
+  margin-top: 6px;
+}
+
+.bookmark-import-read-note {
+  padding-top: 8px;
+  overflow-wrap: anywhere;
+}
+
+.bookmark-import-error {
+  margin-top: 8px;
+}
+
+.bookmark-import-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px 14px;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.bookmark-import-footer > .actions {
+  margin-inline-start: auto;
+}
+
+@media (max-width: 620px) {
+  .bookmark-import-grid {
+    height: auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bookmark-import-tree-pane {
+    max-height: 40vh;
+  }
+
+  .bookmark-import-editor {
+    border-inline-start: 0;
+    border-top: 1px solid var(--line);
+  }
+}

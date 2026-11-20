@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import GlassSelect from "../components/GlassSelect";
 import SkillCatalog from "../components/SkillCatalog";
 import { canEditSkill } from "../lib/skill-sources";
@@ -20,6 +20,7 @@ import {
   Copy,
   Download,
   RefreshCw,
+  BookmarkPlus,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -27,6 +28,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { load as loadYaml, JSON_SCHEMA } from "js-yaml";
 import { api, command } from "../lib/api";
 import Modal from "../components/Modal";
+import BrowserBookmarkImport from "./BrowserBookmarkImport";
 import type {
   PageProps,
   EntityKind,
@@ -40,13 +42,18 @@ export function Apps({
   data,
   refresh,
   notify,
+  workspaceId,
   search = "",
-}: PageProps & { search?: string }) {
+}: PageProps & { search?: string; workspaceId?: string }) {
   const [edit, setEdit] = useState<Application | null>(null),
     [category, setCategory] = useState("all"),
     [manager, setManager] = useState(false),
     [categoryName, setCategoryName] = useState(""),
     [error, setError] = useState("");
+  const [importWorkspace, setImportWorkspace] = useState<string | null>(null);
+  useEffect(() => {
+    setImportWorkspace((current) => current === workspaceId ? current : null);
+  }, [workspaceId]);
   async function save(e: React.FormEvent) {
     e.preventDefault();
     try {
@@ -73,23 +80,29 @@ export function Apps({
           <h1>应用</h1>
           <p>常用系统与团队工具</p>
         </div>
-        <button
-          className="primary"
-          onClick={() => {
-            setError("");
-            setEdit({
-              id: crypto.randomUUID(),
-              name: "",
-              url: "https://",
-              description: "",
-              favorite: false,
-              sortOrder: Date.now(),
-            });
-          }}
-        >
-          <Plus size={16} />
-          添加应用
-        </button>
+        <div className="actions bookmark-import-entry">
+          <button type="button" disabled={!workspaceId} onClick={() => setImportWorkspace(workspaceId ?? null)}>
+            <BookmarkPlus size={16} aria-hidden="true" />
+            导入浏览器书签
+          </button>
+          <button
+            className="primary"
+            onClick={() => {
+              setError("");
+              setEdit({
+                id: crypto.randomUUID(),
+                name: "",
+                url: "https://",
+                description: "",
+                favorite: false,
+                sortOrder: Date.now(),
+              });
+            }}
+          >
+            <Plus size={16} />
+            添加应用
+          </button>
+        </div>
       </div>
       <div className="app-category-toolbar">
         <div
@@ -196,6 +209,16 @@ export function Apps({
           <ExternalLink />
           <p>还没有应用入口</p>
         </div>
+      )}
+      {workspaceId && importWorkspace === workspaceId && (
+        <BrowserBookmarkImport
+          key={workspaceId}
+          workspaceId={workspaceId}
+          categories={data.categories}
+          refresh={refresh}
+          notify={notify}
+          onClose={() => setImportWorkspace((current) => current === workspaceId ? null : current)}
+        />
       )}
       {edit && (
         <Modal

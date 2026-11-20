@@ -163,6 +163,12 @@ function App() {
       );
       if (stopped) offZentao();
       else disposers.push(offZentao);
+      const offApps = await listen<{ workspaceId: string }>("apps-updated", (event) => {
+        if (event.payload.workspaceId === info.workspaceId)
+          void client.invalidateQueries({ queryKey: ["workspace"] });
+      });
+      if (stopped) offApps();
+      else disposers.push(offApps);
       const offTray = await listen<string>("tray-navigate", (event) => {
         if (event.payload === "/tasks") navigate("/tasks");
       });
@@ -370,7 +376,7 @@ function App() {
                 />
                 <Route
                   path="/apps"
-                  element={<Apps {...props} search={search} />}
+                  element={<Apps key={`${info.workspaceId}:${info.dataRoot}`} {...props} search={search} />}
                 />
                 <Route
                   path="/shared-tables"

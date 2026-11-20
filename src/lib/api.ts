@@ -4,6 +4,7 @@ import type { PromptEntry, PromptProgress, PromptRequest, PromptResult } from ".
 import { version } from "../../package.json";
 import type { BackupSaveInput, BackupState } from "./backup-types";
 import type { ExchangeRateSnapshot } from "./exchange-rates";
+import type { BrowserBookmarkAppInput, BrowserBookmarkImportResult, BrowserBookmarks } from "./types";
 import type { SharedTable, SharedTableGroup, SharedTableGroupInput, SharedTableInput } from "./types";
 import type { BugDraft, ZentaoBug, ZentaoBugCreateOptions, ZentaoBugDraft } from "./types";
 import type { EntityKind, Base, Snapshot, StorageInfo, ZentaoTaskAssignment, ZentaoBugHistory, ZentaoAssignee, NatappState, NatappSaveInput, NatappLogs } from "./types";
@@ -41,6 +42,9 @@ export interface MeetingRealtimeEvent {
   type: "delta" | "error"; text?: string; message?: string;
 }
 export const api = {
+  readBrowserBookmarks: () => command<BrowserBookmarks[]>("read_browser_bookmarks"),
+  importBrowserBookmarkApps: (workspaceId: string, items: BrowserBookmarkAppInput[]) =>
+    command<BrowserBookmarkImportResult>("import_browser_bookmark_apps", { workspaceId, items }),
   listSharedTables: (workspaceId: string): Promise<SharedTable[]> =>
     native ? command<SharedTable[]>("list_shared_tables", { workspaceId }) : Promise.resolve([]),
   saveSharedTable: (workspaceId: string, input: SharedTableInput) =>

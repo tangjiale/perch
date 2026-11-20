@@ -114,6 +114,27 @@ export type SharedTableGroupInput = Pick<SharedTableGroup, "name"> & SharedTable
 export interface Category extends Base {
   name: string;
 }
+export type BookmarkNode = { id: string; name: string } & (
+  | { kind: "folder"; children: BookmarkNode[] }
+  | { kind: "bookmark"; url: string; group: string | null }
+);
+export interface BrowserBookmarks {
+  id: string;
+  name: string;
+  status: "ready" | "unavailable" | "error";
+  message?: string;
+  profiles: { id: string; name: string; nodes: BookmarkNode[] }[];
+}
+export interface BrowserBookmarkAppInput {
+  name: string;
+  url: string;
+  category: { kind: "existing"; id: string } | { kind: "name"; name: string } | null;
+}
+export interface BrowserBookmarkImportResult {
+  created: number;
+  skipped: number;
+  categoriesCreated: number;
+}
 export interface Provider extends Base {
   name: string;
   baseUrl: string;

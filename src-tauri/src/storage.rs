@@ -1260,7 +1260,7 @@ impl Store {
         Self::save_in_transaction(tx, workspace, "tasks", value, false)
     }
 
-    fn save_in_transaction(
+    pub(crate) fn save_in_transaction(
         tx: &rusqlite::Transaction<'_>,
         workspace: &str,
         table: &str,
