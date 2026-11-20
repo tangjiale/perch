@@ -1,6 +1,9 @@
-//! 新建禅道 BUG：先核验远端选项，再持久登记草稿，最多主动发送一次 POST。
+//! 新建禅道 BUG：核验远端选项，持久登记附件上传及创建意图。
 use super::*;
-use crate::storage::Store;
+use crate::{
+    bug_steps::{HtmlSteps, StepsFormat},
+    storage::Store,
+};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -11,6 +14,7 @@ struct Draft {
     id: uuid::Uuid,
     title: String,
     steps: String,
+    steps_format: Option<StepsFormat>,
     bug_type: String,
     severity: u8,
     priority: u8,
@@ -56,7 +60,9 @@ impl Draft {
         {
             return Err("请填写有效的 BUG 标题并选择禅道项目".into());
         }
-        if draft.steps.len() > 64 * 1024 || draft.steps.contains('\0') {
+        if draft.steps_format.is_none()
+            && (draft.steps.len() > 64 * 1024 || draft.steps.contains('\0'))
+        {
             return Err("重现步骤过长或包含无效字符".into());
         }
         if !(1..=4).contains(&draft.severity) || !(1..=4).contains(&draft.priority) {
@@ -109,17 +115,22 @@ impl Draft {
     }
 
     fn payload(&self, project: &str, version: &str) -> Result<Value, String> {
-        // 禅道把 steps 当富文本保存；先转义用户的纯文本，再保留换行。
-        let steps = self
-            .steps
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&#39;")
-            .replace("\r\n", "\n")
-            .replace('\r', "\n")
-            .replace('\n', "<br />");
+        let steps = if self.steps_format.is_some() {
+            // 富文本请求的摘要覆盖原内容，实际提交时换成清理后的 HTML。
+            json!({"htmlSha256": format!("{:x}", Sha256::digest(self.steps.as_bytes()))})
+        } else {
+            // 旧草稿的回执依赖原纯文本 payload 摘要。
+            json!(self
+                .steps
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;")
+                .replace('\'', "&#39;")
+                .replace("\r\n", "\n")
+                .replace('\r', "\n")
+                .replace('\n', "<br />"))
+        };
         let mut payload = json!({
             "title": self.title, "steps": steps, "type": self.bug_type,
             "severity": self.severity, "pri": self.priority, "project": id_number(project)?,
@@ -473,12 +484,31 @@ fn verify_created(
     Ok(())
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum IntentStage {
+    Uploading,
+    #[default]
+    Creating,
+}
+
+impl IntentStage {
+    fn is_creating(&self) -> bool {
+        matches!(self, Self::Creating)
+    }
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Intent {
     request_hash: String,
     remote_id: Option<String>,
     assigned_to_self: Option<bool>,
+    // 省略默认字段使旧版 JSON 的意图仍能通过原值比较并推进回执。
+    #[serde(default, skip_serializing_if = "IntentStage::is_creating")]
+    stage: IntentStage,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    image_ids: Vec<String>,
 }
 
 fn read_intent(store: &Store, key: &str) -> Result<Option<Intent>, String> {
@@ -520,6 +550,62 @@ fn write_intent(
     .map_err(|_| "无法保存禅道 BUG 提交意图，请核对原草稿")?;
     if rows != 1 {
         return Err("该草稿已在其他操作中处理，请核对原草稿，勿重复提交".into());
+    }
+    Ok(())
+}
+
+fn record_result(
+    state: &AppState,
+    ctx: &Context,
+    key: &str,
+    previous: &Intent,
+    next: &Intent,
+) -> Result<(), String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    // 项目配置可能在请求期间变化，同代工作空间仍应保留已取得的编号。
+    if store.workspace_id != ctx.workspace || store.generation != ctx.generation {
+        return Err("工作空间已切换，请回原工作空间和禅道核对，勿重复提交".into());
+    }
+    write_intent(&store, key, Some(previous), next)
+}
+
+fn upload_error(intent: &Intent, reason: &str) -> String {
+    format!(
+        "图片处理未完成，BUG 尚未提交。已确认上传 {} 张，已阻止同一草稿重复上传。{reason}",
+        intent.image_ids.len()
+    )
+}
+
+async fn upload_steps_images(
+    state: &AppState,
+    ctx: &Context,
+    adapter: &Adapter<'_>,
+    key: &str,
+    uid: uuid::Uuid,
+    steps: &mut HtmlSteps,
+    intent: &mut Intent,
+) -> Result<(), String> {
+    for image in &mut steps.images {
+        {
+            let store = state.store.lock().map_err(|e| e.to_string())?;
+            ctx.check(&store)?;
+        }
+        let id = media::upload_image(
+            adapter,
+            text(&ctx.connection, "baseUrl"),
+            "bug-step",
+            std::mem::take(&mut image.bytes),
+            image.mime,
+            image.extension,
+            Some(uid),
+        )
+        .await?;
+        let mut next = intent.clone();
+        next.image_ids.push(id.clone());
+        record_result(state, ctx, key, intent, &next).map_err(|error| {
+            format!("禅道返回了附件 #{id}，回执保存失败，请按编号核对。{error}")
+        })?;
+        *intent = next;
     }
     Ok(())
 }
@@ -602,8 +688,32 @@ async fn create_with_adapter(
     draft: &Draft,
 ) -> Result<Value, String> {
     let connection_id = text(&ctx.connection, "id");
-    let version = text(&ctx.connection, "apiVersion");
-    let request = draft.payload(&ctx.remote_project, version)?;
+    let mut rich_steps = draft
+        .steps_format
+        .map(|_| HtmlSteps::parse(&draft.steps))
+        .transpose()?;
+    let cleaned_html = rich_steps
+        .as_ref()
+        .map(|steps| steps.render(|_, _| String::new()));
+    if cleaned_html
+        .as_ref()
+        .is_some_and(|html| html.to_ascii_lowercase().contains("data:image/"))
+    {
+        return Err("图片数据请作为图片粘贴到复现步骤中".into());
+    }
+    let has_images = rich_steps
+        .as_ref()
+        .is_some_and(|steps| !steps.images.is_empty());
+    // 22.0 的 v1 BUG 创建与文件上传明确共享 uid 的附件关联契约。
+    let version = if has_images {
+        "v1"
+    } else {
+        text(&ctx.connection, "apiVersion")
+    };
+    let mut request = draft.payload(&ctx.remote_project, version)?;
+    if has_images {
+        request["uid"] = json!(draft.id);
+    }
     let v2 = endpoint(text(&ctx.connection, "baseUrl"), "api.php/v2")?.to_string();
     let url = create_url(&adapter.base, &v2, version, &draft.product_id)?;
     let creator = adapter.account().await?;
@@ -628,6 +738,9 @@ async fn create_with_adapter(
         read_intent(&store, &key)?
     };
     let (intent, initial) = if let Some(intent) = existing {
+        if !intent.stage.is_creating() {
+            return Err(upload_error(&intent, "请在禅道核对原草稿的附件。"));
+        }
         if intent.request_hash != request_hash {
             return Err("该草稿已提交过，请核对原内容，不能修改后重复创建".into());
         }
@@ -641,28 +754,52 @@ async fn create_with_adapter(
         (intent, None)
     } else {
         verify_choices(adapter, &ctx.remote_project, draft).await?;
-        let pending = Intent {
+        if has_images && adapter.account().await? != creator {
+            return Err("禅道令牌所属账号已变化，BUG 尚未提交，请重新打开原草稿".into());
+        }
+        let mut pending = Intent {
             request_hash,
             remote_id: None,
             assigned_to_self: None,
+            stage: if has_images {
+                IntentStage::Uploading
+            } else {
+                IntentStage::Creating
+            },
+            image_ids: Vec::new(),
         };
         {
             let store = state.store.lock().map_err(|e| e.to_string())?;
             ctx.check(&store)?;
             write_intent(&store, &key, None, &pending)?;
         }
+        if let Some(steps) = rich_steps.as_mut().filter(|_| has_images) {
+            upload_steps_images(state, ctx, adapter, &key, draft.id, steps, &mut pending)
+                .await
+                .map_err(|error| upload_error(&pending, &error))?;
+            request["steps"] = json!(steps.render(|index, image| {
+                format!("{{{}.{}}}", pending.image_ids[index], image.extension)
+            }));
+            let mut creating = pending.clone();
+            creating.stage = IntentStage::Creating;
+            {
+                let store = state.store.lock().map_err(|e| e.to_string())?;
+                ctx.check(&store)
+                    .and_then(|_| write_intent(&store, &key, Some(&pending), &creating))
+                    .map_err(|error| upload_error(&pending, &error))?;
+            }
+            pending = creating;
+        } else if let Some(html) = cleaned_html {
+            request["steps"] = json!(html);
+        }
         let (id, initial) = post(adapter, url, &request, version).await?;
         let received = Intent {
-            request_hash: pending.request_hash.clone(),
-            remote_id: Some(id),
-            assigned_to_self: None,
+            remote_id: Some(id.clone()),
+            ..pending.clone()
         };
-        let store = state.store.lock().map_err(|e| e.to_string())?;
-        // 配置可能在 POST 期间变化，但同代工作空间仍应保存已取得的编号。
-        if store.workspace_id != ctx.workspace || store.generation != ctx.generation {
-            return Err("工作空间已切换，禅道可能已创建 BUG，请切回原工作空间核对".into());
-        }
-        write_intent(&store, &key, Some(&pending), &received)?;
+        record_result(state, ctx, &key, &pending, &received).map_err(|error| {
+            format!("禅道返回了 BUG #{id}，回执保存失败，请按编号核对。{error}")
+        })?;
         (received, initial)
     };
     let id = intent.remote_id.as_deref().ok_or("禅道 BUG 编号缺失")?;
@@ -685,6 +822,17 @@ async fn create_with_adapter(
             .ok_or("禅道 v2 响应缺少 BUG 详情，请在禅道核对")?
     };
     verify_created(&remote, id, &ctx.remote_project, draft, &creator)?;
+    if intent.image_ids.iter().any(|file| {
+        !media::referenced(
+            text(&ctx.connection, "baseUrl"),
+            text(&remote, "steps"),
+            file,
+        )
+    }) {
+        return Err(format!(
+            "禅道 BUG #{id} 的复现步骤缺少本次上传的图片引用，请核对附件或用原草稿重试"
+        ));
+    }
     let assigned_to_self = draft.assigned_to == creator;
     let store = state.store.lock().map_err(|e| e.to_string())?;
     let snapshot = ctx.check(&store)?;
@@ -692,9 +840,8 @@ async fn create_with_adapter(
         cache_self(&store, &snapshot, ctx, &remote, id)?;
     }
     let completed = Intent {
-        request_hash: intent.request_hash.clone(),
-        remote_id: Some(id.into()),
         assigned_to_self: Some(assigned_to_self),
+        ..intent.clone()
     };
     write_intent(&store, &key, Some(&intent), &completed)?;
     Ok(json!({"remoteId": id, "assignedToSelf": assigned_to_self}))
@@ -704,6 +851,7 @@ async fn create_with_adapter(
 mod tests {
     use super::*;
     use crate::zentao::tests::auth_server;
+    use base64::{engine::general_purpose::STANDARD, Engine};
 
     fn fixture(
         base: &str,
@@ -784,6 +932,151 @@ mod tests {
 
     fn request_body(request: &str) -> Value {
         serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+
+    fn multipart_server(
+        responses: Vec<(u16, Value)>,
+    ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        media::tests::request_server(
+            responses
+                .into_iter()
+                .map(|(status, body)| {
+                    (
+                        status,
+                        "application/json".into(),
+                        body.to_string().into_bytes(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    fn rich_draft(images: usize) -> Draft {
+        let mut value = draft("me");
+        let data = STANDARD.encode(crate::bug_steps::fixture_png());
+        let images =
+            format!(r#"<img alt="复现截图" src="data:image/png;base64,{data}" onerror="bad()">"#)
+                .repeat(images);
+        value["stepsFormat"] = json!("html");
+        value["steps"] = json!(format!(
+            r#"<p onclick="bad()"><strong>复现</strong>{images}<img src="https://external.invalid/image.png"></p>"#
+        ));
+        Draft::parse(value).unwrap()
+    }
+
+    fn uploaded(id: u32) -> (u16, Value) {
+        (
+            200,
+            json!({"id":id,"url":format!("index.php?m=file&f=read&fileID={id}&t=png")}),
+        )
+    }
+
+    #[tokio::test]
+    async fn rich_create_binds_uid_and_recovers_unverified_attachment_by_get() {
+        let mut responses = presubmit();
+        let mut missing = remote("me");
+        missing["steps"] = json!(
+            r#"<p><strong>复现</strong><img src="https://external.invalid/file-read-708.png"></p>"#
+        );
+        let mut confirmed = remote("me");
+        confirmed["steps"] = json!(
+            r#"<p><strong>复现</strong><img src="/index.php?m=file&amp;f=read&amp;fileID=708&amp;t=png"></p>"#
+        );
+        responses.extend([
+            creator(),
+            uploaded(708),
+            (201, missing),
+            creator(),
+            (200, confirmed.clone()),
+        ]);
+        let (base, server) = multipart_server(responses);
+        let (_root, state, ctx, adapter) = fixture(&base, "v1");
+        let draft = rich_draft(1);
+        let error = create_with_adapter(&state, &ctx, &adapter, &draft)
+            .await
+            .unwrap_err();
+        assert!(error.contains("缺少本次上传的图片引用"));
+        assert!(state.store.lock().unwrap().snapshot().unwrap()["bugs"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            create_with_adapter(&state, &ctx, &adapter, &draft)
+                .await
+                .unwrap(),
+            json!({"remoteId":"53","assignedToSelf":true})
+        );
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests.iter().filter(|r| r.starts_with("POST ")).count(),
+            2
+        );
+        assert!(requests[6].starts_with(&format!("POST /api.php/v1/files?uid={} ", draft.id)));
+        assert!(requests[6].contains("name=\"imgFile\"; filename=\"bug-step.png\""));
+        assert!(requests[6]
+            .to_ascii_lowercase()
+            .contains("content-type: image/png"));
+        assert!(requests[7].starts_with("POST /api.php/v1/products/11/bugs "));
+        assert!(requests[6..=7]
+            .iter()
+            .all(|r| r.to_ascii_lowercase().contains("token: mock-token")));
+        let posted = request_body(&requests[7]);
+        assert_eq!(posted["uid"], json!(draft.id));
+        assert_eq!(
+            posted["steps"],
+            r#"<p><strong>复现</strong><img src="{708.png}" alt="复现截图"></p>"#
+        );
+        assert!(!requests[7].contains("data:image/"));
+        assert!(requests[9].starts_with("GET /api.php/v1/bugs/53 "));
+        let store = state.store.lock().unwrap();
+        assert_eq!(
+            store.snapshot().unwrap()["bugs"][0]["steps"],
+            confirmed["steps"]
+        );
+        let intent = read_intent(&store, &format!("zentao-bug-create:{}", draft.id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(intent.image_ids, ["708"]);
+        assert_eq!(intent.assigned_to_self, Some(true));
+    }
+
+    #[tokio::test]
+    async fn lost_second_upload_response_keeps_confirmed_id_and_blocks_all_posts_on_retry() {
+        let mut responses = presubmit();
+        responses.extend([creator(), uploaded(708), (0, Value::Null), creator()]);
+        let (base, server) = multipart_server(responses);
+        let (root, state, ctx, adapter) = fixture(&base, "v1");
+        let draft = rich_draft(2);
+        let failed = create_with_adapter(&state, &ctx, &adapter, &draft)
+            .await
+            .unwrap_err();
+        assert!(failed.contains("BUG 尚未提交"));
+        assert!(failed.contains("已确认上传 1 张"));
+        assert!(failed.contains("上传结果未知"));
+        drop(state);
+
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let intent = read_intent(&store, &format!("zentao-bug-create:{}", draft.id))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(intent.stage, IntentStage::Uploading));
+        assert_eq!(intent.image_ids, ["708"]);
+        assert!(intent.remote_id.is_none());
+        let raw = serde_json::to_string(&intent).unwrap();
+        assert!(!raw.contains("data:image/") && !raw.contains("<strong>"));
+        let state = AppState {
+            store: Mutex::new(store),
+        };
+        let retry = create_with_adapter(&state, &ctx, &adapter, &draft)
+            .await
+            .unwrap_err();
+        assert!(retry.contains("BUG 尚未提交") && retry.contains("已阻止同一草稿重复上传"));
+        let requests = server.join().unwrap();
+        let posts: Vec<_> = requests.iter().filter(|r| r.starts_with("POST ")).collect();
+        assert_eq!(posts.len(), 2);
+        assert!(posts
+            .iter()
+            .all(|r| r.starts_with(&format!("POST /api.php/v1/files?uid={} ", draft.id))));
     }
 
     #[tokio::test]

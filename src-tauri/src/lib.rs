@@ -3,6 +3,7 @@ mod assignment_inbox;
 mod assignment_notifications;
 mod backup;
 mod backup_cron;
+mod bug_steps;
 mod credential_vault;
 mod data;
 mod dingtalk_calendar;
@@ -22,6 +23,7 @@ mod parser;
 mod prompt_optimizer;
 mod provider_models;
 mod s3_backup;
+mod shared_tables;
 pub mod storage;
 mod streaming;
 mod task_reminders;
@@ -305,6 +307,12 @@ pub fn run() {
             image_actions::image_download,
             zentao::media::zentao_task_image_upload,
             local_bugs::local_bug_save,
+            shared_tables::list_shared_tables,
+            shared_tables::save_shared_table,
+            shared_tables::delete_shared_table,
+            shared_tables::list_shared_table_groups,
+            shared_tables::save_shared_table_group,
+            shared_tables::delete_shared_table_group,
             zentao::bug_create::zentao_bug_create_options,
             zentao::bug_create::zentao_bug_create,
             zentao::bugs::zentao_bugs_sync,

@@ -343,7 +343,7 @@ mod tests {
                 [],
             )
             .unwrap();
-            conn.execute_batch("DROP TABLE local_bugs; DROP TABLE assignment_notifications; DROP TABLE assignment_members; DROP TABLE assignment_scopes; DELETE FROM schema_migrations WHERE version>=12; PRAGMA user_version=11;").unwrap();
+            conn.execute_batch("DROP TABLE shared_tables; DROP TABLE shared_table_groups; DROP TABLE local_bugs; DROP TABLE assignment_notifications; DROP TABLE assignment_members; DROP TABLE assignment_scopes; DELETE FROM schema_migrations WHERE version>=12; PRAGMA user_version=11;").unwrap();
         }
         drop(store);
         let store = Store::open_at(root).unwrap();

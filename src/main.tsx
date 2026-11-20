@@ -24,6 +24,7 @@ import {
   Bug,
   CalendarDays,
   LayoutGrid,
+  Link2,
   Wrench,
   MessagesSquare,
   Settings2,
@@ -54,6 +55,7 @@ const Projects = lazy(() =>
 const Apps = lazy(() =>
   import("./features/Resources").then((m) => ({ default: m.Apps })),
 );
+const SharedTables = lazy(() => import("./features/SharedTables"));
 const Settings = lazy(() => import("./features/Settings"));
 const Chat = lazy(() => import("./features/Chat"));
 const Statistics = lazy(() => import("./features/Statistics"));
@@ -85,6 +87,7 @@ const navigation = [
   ["/bugs", "BUG 修复", Bug],
   ["/calendar", "日历", CalendarDays],
   ["/apps", "应用", LayoutGrid],
+  ["/shared-tables", "共享链接", Link2],
   ["/tools", "工具", Wrench],
   ["/chat", "聊天", MessagesSquare],
   ["/meetings", "会议", Mic],
@@ -214,6 +217,7 @@ function App() {
               end={path === "/"}
               to={path}
               key={path}
+              aria-label={label}
               onClick={() => setSearch("")}
             >
               <Icon size={18} />
@@ -284,7 +288,17 @@ function App() {
           <button
             className="icon-button"
             title="刷新数据"
-            onClick={() => void refetch()}
+            onClick={() => {
+              void refetch();
+              if (location.pathname === "/shared-tables") {
+                void client.invalidateQueries({
+                  queryKey: ["shared-tables", info.workspaceId, info.dataRoot],
+                });
+                void client.invalidateQueries({
+                  queryKey: ["shared-table-groups", info.workspaceId, info.dataRoot],
+                });
+              }
+            }}
           >
             <RefreshCw size={16} />
           </button>
@@ -357,6 +371,17 @@ function App() {
                 <Route
                   path="/apps"
                   element={<Apps {...props} search={search} />}
+                />
+                <Route
+                  path="/shared-tables"
+                  element={
+                    <SharedTables
+                      key={`${info.workspaceId}:${info.dataRoot}`}
+                      workspaceId={info.workspaceId}
+                      dataRoot={info.dataRoot}
+                      notify={notify}
+                    />
+                  }
                 />
                 <Route
                   path="/tools/*"

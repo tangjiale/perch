@@ -1349,7 +1349,7 @@ mod tests {
         let project = store.save("project", json!({"name":"原有项目"})).unwrap();
         let db = store.generation.join("workbench.sqlite3");
         let workspace = store.workspace_id.clone();
-        store.conn.lock().unwrap().execute_batch("DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE provider_credentials; DROP TABLE bugs; DROP TABLE local_bugs; DROP TABLE task_reminder_deliveries; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        store.conn.lock().unwrap().execute_batch("DROP TABLE shared_tables; DROP TABLE shared_table_groups; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE provider_credentials; DROP TABLE bugs; DROP TABLE local_bugs; DROP TABLE task_reminder_deliveries; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); DELETE FROM schema_migrations WHERE version>=4; PRAGMA user_version=3; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
         drop(store);
         let bytes = std::fs::read(db).unwrap();
         let archive = tmp.path().join("v3.zip");

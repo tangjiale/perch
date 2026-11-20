@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
+import PopupCloseButton from "./PopupCloseButton";
 export default function Modal({
   title,
   children,
@@ -15,14 +15,24 @@ export default function Modal({
   busy?: boolean;
   className?: string;
 }) {
-  const ref = useRef<HTMLDialogElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
   useEffect(() => {
-    ref.current?.showModal();
-    return () => ref.current?.close();
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    dialog.showModal();
+    // 浏览器默认选中关闭按钮时，先把焦点放在标题上，Tab 仍可到达关闭按钮。
+    if (document.activeElement === closeRef.current) {
+      titleRef.current?.focus({ preventScroll: true });
+    }
+    return () => dialog.close();
   }, []);
   return (
     <dialog
-      ref={ref}
+      ref={dialogRef}
+      aria-labelledby={titleId}
       className={`${wide ? "modal wide" : "modal"} ${className}`.trim()}
       onKeyDown={(event) => {
         // 原生 cancel 事件可能不可取消，先阻止 Esc 的默认关闭行为。
@@ -38,16 +48,8 @@ export default function Modal({
       }}
     >
       <header>
-        <h2>{title}</h2>
-        <button
-          type="button"
-          className="icon-button"
-          title="关闭"
-          disabled={busy}
-          onClick={onClose}
-        >
-          <X size={18} />
-        </button>
+        <h2 id={titleId} ref={titleRef} tabIndex={-1}>{title}</h2>
+        <PopupCloseButton ref={closeRef} disabled={busy} onClick={onClose} />
       </header>
       {children}
     </dialog>

@@ -4,6 +4,7 @@ import type { PromptEntry, PromptProgress, PromptRequest, PromptResult } from ".
 import { version } from "../../package.json";
 import type { BackupSaveInput, BackupState } from "./backup-types";
 import type { ExchangeRateSnapshot } from "./exchange-rates";
+import type { SharedTable, SharedTableGroup, SharedTableGroupInput, SharedTableInput } from "./types";
 import type { BugDraft, ZentaoBug, ZentaoBugCreateOptions, ZentaoBugDraft } from "./types";
 import type { EntityKind, Base, Snapshot, StorageInfo, ZentaoTaskAssignment, ZentaoBugHistory, ZentaoAssignee, NatappState, NatappSaveInput, NatappLogs } from "./types";
 export const native = isTauri();
@@ -40,6 +41,18 @@ export interface MeetingRealtimeEvent {
   type: "delta" | "error"; text?: string; message?: string;
 }
 export const api = {
+  listSharedTables: (workspaceId: string): Promise<SharedTable[]> =>
+    native ? command<SharedTable[]>("list_shared_tables", { workspaceId }) : Promise.resolve([]),
+  saveSharedTable: (workspaceId: string, input: SharedTableInput) =>
+    command<SharedTable>("save_shared_table", { workspaceId, input }),
+  deleteSharedTable: (workspaceId: string, id: string, revision: number) =>
+    command<void>("delete_shared_table", { workspaceId, id, revision }),
+  listSharedTableGroups: (workspaceId: string): Promise<SharedTableGroup[]> =>
+    native ? command<SharedTableGroup[]>("list_shared_table_groups", { workspaceId }) : Promise.resolve([]),
+  saveSharedTableGroup: (workspaceId: string, input: SharedTableGroupInput) =>
+    command<SharedTableGroup>("save_shared_table_group", { workspaceId, input }),
+  deleteSharedTableGroup: (workspaceId: string, id: string, revision: number) =>
+    command<void>("delete_shared_table_group", { workspaceId, id, revision }),
   meetingRealtimeStart: (workspaceId: string, id: string, modelId: string, sessionId: string, onEvent: Channel<MeetingRealtimeEvent>) => command<void>("meeting_realtime_start", {workspaceId, id, modelId, sessionId, onEvent}),
   meetingRealtimePush: (workspaceId: string, id: string, sessionId: string, chunkId: string) => command<void>("meeting_realtime_push", {workspaceId, id, sessionId, chunkId}),
   meetingRealtimeStop: (workspaceId: string, id: string, sessionId: string) => command<Meeting>("meeting_realtime_stop", {workspaceId, id, sessionId}),

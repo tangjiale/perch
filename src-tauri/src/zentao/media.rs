@@ -60,7 +60,7 @@ fn file_id(base: &str, source: &str) -> Result<String, String> {
     Err("不支持的禅道图片地址，请在禅道核对原始附件".into())
 }
 
-fn referenced(base: &str, html: &str, id: &str) -> bool {
+pub(super) fn referenced(base: &str, html: &str, id: &str) -> bool {
     let doc = scraper::Html::parse_fragment(html);
     let selector = scraper::Selector::parse("img[src]").expect("静态选择器");
     doc.select(&selector).any(|img| {
@@ -107,13 +107,14 @@ async fn read_image(adapter: &Adapter<'_>, id: &str) -> Result<String, String> {
     Ok(format!("data:{detected};base64,{}", STANDARD.encode(bytes)))
 }
 
-async fn upload_image(
+pub(super) async fn upload_image(
     adapter: &Adapter<'_>,
     base: &str,
     name: &str,
     bytes: Vec<u8>,
     mime: &str,
     ext: &str,
+    uid: Option<uuid::Uuid>,
 ) -> Result<String, String> {
     // filesEntry::post -> file::ajaxUpload 的固定字段为 imgFile。POST 不续登、不重放。
     let part = reqwest::multipart::Part::bytes(bytes)
@@ -124,9 +125,18 @@ async fn upload_image(
         ))
         .mime_str(mime)
         .map_err(|_| "图片类型无效")?;
-    let response = adapter
-        .client
-        .post(endpoint(&adapter.base, "files")?)
+    let mut url = endpoint(&adapter.base, "files")?;
+    if let Some(uid) = uid {
+        url.query_pairs_mut().append_pair("uid", &uid.to_string());
+    }
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|_| "无法建立禅道图片上传请求")?;
+    let response = client
+        .post(url)
         .header("Token", adapter.token()?)
         .multipart(reqwest::multipart::Form::new().part("imgFile", part))
         .send()
@@ -418,6 +428,7 @@ pub async fn zentao_task_image_upload(
         bytes,
         mime,
         ext,
+        None,
     )
     .await?;
     unchanged(&state, &ctx)?;
@@ -425,7 +436,7 @@ pub async fn zentao_task_image_upload(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     fn bug_fixture() -> (Value, Value) {
         let steps = r#"<p><img src="/index.php?m=file&amp;f=read&amp;fileID=708&amp;t=png"></p>"#;
@@ -870,13 +881,35 @@ mod tests {
     fn sequence_server(
         responses: Vec<(u16, String, Vec<u8>)>,
     ) -> (String, std::thread::JoinHandle<String>) {
+        let (base, requests) = request_server(responses);
+        (
+            base,
+            std::thread::spawn(move || requests.join().unwrap().concat()),
+        )
+    }
+
+    pub(in crate::zentao) fn request_server(
+        responses: Vec<(u16, String, Vec<u8>)>,
+    ) -> (String, std::thread::JoinHandle<Vec<String>>) {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let handle = std::thread::spawn(move || {
-            let mut requests = String::new();
+            let mut requests = Vec::new();
             for (status, mime, body) in responses {
-                let (mut socket, _) = listener.accept().unwrap();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let mut socket = loop {
+                    match listener.accept() {
+                        Ok((socket, _)) => break socket,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < deadline, "模拟请求未到达");
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("模拟接口失败：{error}"),
+                    }
+                };
+                socket.set_nonblocking(false).unwrap();
                 socket
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                     .unwrap();
@@ -902,9 +935,11 @@ mod tests {
                         }
                     }
                 }
-                write!(socket, "HTTP/1.1 {status} Response\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
-                socket.write_all(&body).unwrap();
-                requests.push_str(&String::from_utf8_lossy(&request));
+                requests.push(String::from_utf8_lossy(&request).into_owned());
+                if status != 0 {
+                    write!(socket, "HTTP/1.1 {status} Response\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                    socket.write_all(&body).unwrap();
+                }
             }
             requests
         });
@@ -1011,7 +1046,8 @@ mod tests {
                 "example.png",
                 b"\x89PNG\r\n\x1a\nfixture".to_vec(),
                 "image/png",
-                "png"
+                "png",
+                None,
             )
             .await
             .unwrap(),
@@ -1032,7 +1068,8 @@ mod tests {
             "example.png",
             vec![1],
             "image/png",
-            "png"
+            "png",
+            None,
         )
         .await
         .is_err());

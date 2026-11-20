@@ -1,0 +1,166 @@
+.shared-tables,
+.shared-tables-scroll {
+  min-width: 0;
+}
+
+.shared-tables .page-heading {
+  flex-wrap: wrap;
+}
+
+.shared-tables-notice {
+  margin-bottom: 14px;
+}
+
+.shared-tables-filters {
+  align-items: flex-end;
+  gap: 10px 12px;
+}
+
+.shared-tables-filter-field {
+  display: grid;
+  flex: 1 1 132px;
+  gap: 5px;
+  min-width: 0;
+  max-width: 208px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.shared-tables-filter-field input,
+.shared-tables-filter-field .glass-select-trigger {
+  width: 100%;
+  min-height: 36px;
+  color: var(--text, inherit);
+}
+
+.shared-tables-filter-field.shared-tables-date-filter {
+  flex-basis: 244px;
+  min-width: min(100%, 244px);
+  max-width: 260px;
+}
+
+.shared-tables-filters .shared-tables-date-filter .date-range-trigger {
+  max-width: 100%;
+}
+
+.shared-tables-group-error {
+  margin-bottom: 14px;
+}
+
+.shared-tables-list {
+  min-width: 620px;
+  table-layout: fixed;
+}
+
+.shared-tables-list th:nth-child(1) {
+  width: 17%;
+}
+
+.shared-tables-list th:nth-child(2) {
+  width: 12%;
+}
+
+.shared-tables-list th:nth-child(4) {
+  width: 11%;
+}
+
+.shared-tables-list th:nth-child(5),
+.shared-tables-list th:nth-child(6) {
+  width: 15%;
+}
+
+.shared-tables-list th:last-child {
+  width: 82px;
+}
+
+.shared-tables-list tr > :last-child {
+  padding-inline: 8px;
+}
+
+.shared-tables-list th[scope="row"] {
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  padding: 15px 12px;
+}
+
+.shared-tables-list :is(th, td) {
+  overflow-wrap: anywhere;
+}
+
+.shared-tables-list time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: normal;
+}
+
+.shared-tables-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--theme-blue, #345f9e);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.shared-tables-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-tables-link svg {
+  flex-shrink: 0;
+}
+
+.shared-tables-row-actions {
+  display: flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.shared-tables-confirm {
+  overflow-wrap: anywhere;
+}
+
+.shared-tables-group-field,
+.shared-table-groups {
+  display: grid;
+  gap: 6px;
+}
+
+.shared-tables-group-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.shared-table-groups {
+  gap: 14px;
+}
+
+.shared-table-groups > button {
+  justify-self: start;
+}
+
+.shared-table-group-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shared-table-group-list > li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.shared-table-group-list > li > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

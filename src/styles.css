@@ -224,6 +224,12 @@ small {
 .sidebar-bottom {
   margin-top: auto;
 }
+@media (max-height: 760px) {
+  .sidebar nav {
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
 .identity {
   display: flex;
   gap: 10px;
@@ -1008,7 +1014,13 @@ html .task-card.task-is-done .tag:not(.expired) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 22px;
+}
+.modal > header > h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  outline: none;
 }
 .modal h2 {
   font-size: 19px;

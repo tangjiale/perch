@@ -1,0 +1,88 @@
+.date-range-trigger {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+.date-range-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 5px;
+  min-width: 0;
+}
+
+.date-range-value time {
+  white-space: nowrap;
+}
+
+.glass-select-content.date-range-popover {
+  width: min(290px, calc(100vw - 24px));
+  max-height: var(--radix-popover-content-available-height);
+  overflow: auto;
+  padding: 10px;
+}
+
+.date-range-month,
+.date-range-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.date-range-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  row-gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.date-range-weekday {
+  padding: 5px 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.date-range-days .date-range-day {
+  height: 32px;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+
+.date-range-days .date-range-day[aria-current="date"] {
+  border-color: var(--command);
+  font-weight: 700;
+}
+
+.date-range-days .date-range-day:hover,
+.date-range-days .date-range-day[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--command) 17%, transparent);
+}
+
+.date-range-days .date-range-day[data-endpoint] {
+  background: var(--command);
+  color: #fff;
+}
+
+html[data-theme="dark"] .date-range-days .date-range-day[data-endpoint] {
+  color: #142f37;
+}
+
+.date-range-days .date-range-day:focus-visible {
+  outline: 2px solid var(--command);
+  outline-offset: -1px;
+  z-index: 1;
+}
+
+.date-range-footer {
+  min-height: 32px;
+  margin-top: 6px;
+  padding: 4px 4px 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}

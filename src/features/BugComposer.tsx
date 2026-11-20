@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import GlassSelect from "../components/GlassSelect";
 import Modal from "../components/Modal";
+import TaskRichTextEditor from "../components/TaskRichTextEditor";
 import { api } from "../lib/api";
 import type { BugDraft, Project, ZentaoBug, ZentaoBugCreateOptions } from "../lib/types";
 
@@ -17,6 +18,7 @@ const categories = [
 ].map(([value, label]) => ({ value, label }));
 const levels = [1, 2, 3, 4].map(n => ({ value: String(n), label: String(n) }));
 const noProject = { value: "", label: "不选禅道项目（本地 BUG）" };
+const requiredMark = <span className="required-mark" aria-hidden="true">*</span>;
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 interface Props {
@@ -50,8 +52,12 @@ export default function BugComposer({ workspaceId, projects, bug, onClose, onSav
   const [optionError, setOptionError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [mediaBusy, setMediaBusy] = useState(false);
   const [error, setError] = useState("");
   const submitting = useRef(false);
+  const readingImage = useRef(false);
+  const stepsTitleId = useId();
+  const locked = busy || mediaBusy;
   const selectedProject = projects.find(item => item.id === project);
 
   useEffect(() => {
@@ -68,7 +74,7 @@ export default function BugComposer({ workspaceId, projects, bug, onClose, onSav
   }, [workspaceId, project, selectedProject?.id, attempt]);
 
   function selectProject(value: string) {
-    if (value === project) return;
+    if (value === project || submitting.current || readingImage.current) return;
     setProject(value);
     setOptions(null);
     setOptionError("");
@@ -78,6 +84,10 @@ export default function BugComposer({ workspaceId, projects, bug, onClose, onSav
     setAssignee("");
     setMailto([]);
     setBuild("trunk");
+  }
+
+  function close() {
+    if (!submitting.current && !readingImage.current) onClose();
   }
 
   const executions = options?.executions.filter(item => !item.productIds || item.productIds.includes(product)) ?? [];
@@ -91,7 +101,7 @@ export default function BugComposer({ workspaceId, projects, bug, onClose, onSav
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (submitting.current || !canSave) return;
+    if (submitting.current || readingImage.current || !canSave) return;
     submitting.current = true;
     setBusy(true);
     setError("");
@@ -125,19 +135,19 @@ export default function BugComposer({ workspaceId, projects, bug, onClose, onSav
   }
 
   return (
-    <Modal title={bug ? "本地 BUG" : "新建 BUG"} wide busy={busy} onClose={onClose}>
+    <Modal title={bug ? "本地 BUG" : "新建 BUG"} wide busy={locked} onClose={close}>
       <form className="form-grid bugs-form" onSubmit={submit}>
         {error && <div className="bugs-full error-panel" role="alert">{error}</div>}
         <label className="bugs-full">
-          BUG 标题
-          <input autoFocus required maxLength={255} value={draft.title} disabled={busy}
+          <span>BUG 标题{requiredMark}</span>
+          <input autoFocus required maxLength={255} value={draft.title} disabled={locked}
             placeholder="一句话说明遇到的问题" onChange={event => update("title", event.target.value)} />
         </label>
         {!bug && (
           <label className="bugs-full">
             禅道项目
             <GlassSelect aria-label="禅道项目" searchable value={project} onValueChange={selectProject}
-              disabled={busy} options={[
+              disabled={locked} options={[
                 noProject,
                 ...(project && !selectedProject ? [{ value: project, label: "项目已不可用", disabled: true }] : []),
                 ...projects.map(item => ({ value: item.id, label: `${item.name} #${item.remoteId}` })),
@@ -152,7 +162,7 @@ export default function BugComposer({ workspaceId, projects, bug, onClose, onSav
           <div className="bugs-full" role={optionError ? "alert" : "status"}>
             {optionError ? <>
               <p className="error">{optionError}</p>
-              <button type="button" onClick={() => { setOptionError(""); setAttempt(n => n + 1); }}>
+              <button type="button" disabled={locked} onClick={() => { setOptionError(""); setAttempt(n => n + 1); }}>
                 重新加载项目选项
               </button>
             </> : <p className="muted">正在读取产品、执行和指派人…</p>}
@@ -161,38 +171,38 @@ export default function BugComposer({ workspaceId, projects, bug, onClose, onSav
         {project && options && (
           <>
             <label>
-              所属产品（必选）
-              <GlassSelect aria-label="所属产品" value={product} searchable disabled={busy}
+              <span>所属产品{requiredMark}</span>
+              <GlassSelect aria-label="所属产品" value={product} searchable required disabled={locked}
                 placeholder="请选择产品" onValueChange={value => { setProduct(value); setExecution(""); }}
                 options={options.products.map(item => ({ value: item.id, label: item.name }))} />
               {!options.products.length && <small>此项目没有可用的关联产品。</small>}
             </label>
             <label>
               所属执行
-              <GlassSelect aria-label="所属执行" value={execution} searchable disabled={busy || !product}
+              <GlassSelect aria-label="所属执行" value={execution} searchable disabled={locked || !product}
                 onValueChange={setExecution}
                 options={[{ value: "", label: "不关联执行" }, ...executions.map(item => ({ value: item.id, label: item.name }))]} />
             </label>
             <label>
-              指派给（必选）
-              <GlassSelect aria-label="指派给" value={assignee} searchable disabled={busy}
+              <span>指派给{requiredMark}</span>
+              <GlassSelect aria-label="指派给" value={assignee} searchable required disabled={locked}
                 placeholder="按姓名或账号选择" options={users} onValueChange={setAssignee} />
             </label>
             <label>
-              影响版本
-              <input required value={build} disabled={busy} onChange={event => setBuild(event.target.value)} />
+              <span>影响版本{requiredMark}</span>
+              <input required value={build} disabled={locked} onChange={event => setBuild(event.target.value)} />
               <small>主干用 trunk；指定版本时填写禅道版本编号，用逗号分隔。</small>
             </label>
             <div className="bugs-full bug-mailto">
               <label>
                 抄送给（可选）
-                <GlassSelect aria-label="添加抄送人" value="" searchable disabled={busy}
+                <GlassSelect aria-label="添加抄送人" value="" searchable disabled={locked}
                   placeholder="按姓名或账号添加"
                   options={users.filter(user => !mailto.includes(user.value))}
                   onValueChange={value => { if (value) setMailto(previous => [...previous, value]); }} />
               </label>
               {mailto.length > 0 && <div className="bug-mailto-list">
-                {mailto.map(account => <button type="button" key={account} disabled={busy}
+                {mailto.map(account => <button type="button" key={account} disabled={locked}
                   aria-label={`移除抄送 ${account}`} onClick={() => setMailto(previous => previous.filter(item => item !== account))}>
                   {users.find(item => item.value === account)?.label ?? account} ×
                 </button>)}
@@ -201,40 +211,48 @@ export default function BugComposer({ workspaceId, projects, bug, onClose, onSav
           </>
         )}
         <label>
-          BUG 类型
-          <GlassSelect aria-label="BUG 类型" value={draft.bugType} disabled={busy}
+          <span>BUG 类型{requiredMark}</span>
+          <GlassSelect aria-label="BUG 类型" value={draft.bugType} required disabled={locked}
             options={categories} onValueChange={value => update("bugType", value)} />
         </label>
         <label>
-          严重程度
-          <GlassSelect aria-label="严重程度" value={String(draft.severity)} disabled={busy}
+          <span>严重程度{requiredMark}</span>
+          <GlassSelect aria-label="严重程度" value={String(draft.severity)} required disabled={locked}
             options={levels} onValueChange={value => update("severity", Number(value))} />
         </label>
         <label>
-          优先级
-          <GlassSelect aria-label="优先级" value={String(draft.priority)} disabled={busy}
+          <span>优先级{requiredMark}</span>
+          <GlassSelect aria-label="优先级" value={String(draft.priority)} required disabled={locked}
             options={levels.map(item => ({ ...item, label: `P${item.value}` }))}
             onValueChange={value => update("priority", Number(value))} />
         </label>
         <label>
           截止日期（可选）
-          <input type="date" value={draft.deadline} disabled={busy} onChange={event => update("deadline", event.target.value)} />
+          <input type="date" value={draft.deadline} disabled={locked} onChange={event => update("deadline", event.target.value)} />
         </label>
         {bug && <label>
           状态
-          <GlassSelect aria-label="本地 BUG 状态" value={status} disabled={busy}
+          <GlassSelect aria-label="本地 BUG 状态" value={status} disabled={locked}
             options={[{ value: "active", label: "待解决" }, { value: "resolved", label: "已解决" }, { value: "closed", label: "已关闭" }]}
             onValueChange={value => setStatus(value as ZentaoBug["status"])} />
         </label>}
-        <label className="bugs-full">
-          复现步骤
-          <textarea rows={6} maxLength={30000} value={draft.steps} disabled={busy}
-            placeholder={"[步骤]\n\n[实际结果]\n\n[预期结果]"}
-            onChange={event => update("steps", event.target.value)} />
-        </label>
+        <section className="bugs-full bugs-step-editor" aria-labelledby={stepsTitleId}>
+          <h3 id={stepsTitleId}>复现步骤</h3>
+          <TaskRichTextEditor
+            bugDraft
+            initialStepsFormat={bug?.stepsFormat}
+            value={draft.steps}
+            disabled={busy}
+            onChange={(steps) => setDraft(previous => ({ ...previous, steps, stepsFormat: "html" }))}
+            onBusyChange={(reading) => {
+              readingImage.current = reading;
+              setMediaBusy(reading);
+            }}
+          />
+        </section>
         <footer className="bugs-detail-footer">
-          <button type="button" onClick={onClose} disabled={busy}>取消</button>
-          <button type="submit" className="primary" disabled={busy || !canSave}>
+          <button type="button" onClick={close} disabled={locked}>取消</button>
+          <button type="submit" className="primary" disabled={locked || !canSave}>
             {busy ? "正在保存…" : project ? "提交到禅道" : "保存本地 BUG"}
           </button>
         </footer>

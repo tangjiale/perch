@@ -90,6 +90,27 @@ export interface Application extends Base {
   favorite: boolean;
   sortOrder: number;
 }
+export interface SharedTable {
+  id: string;
+  name: string;
+  creator: string;
+  groupId: string | null;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+}
+type SharedTableWriteVersion =
+  | { id?: never; revision?: never }
+  | { id: string; revision: number };
+export type SharedTableInput = Pick<SharedTable, "name" | "creator" | "groupId" | "url"> &
+  SharedTableWriteVersion;
+export interface SharedTableGroup {
+  id: string;
+  name: string;
+  revision: number;
+}
+export type SharedTableGroupInput = Pick<SharedTableGroup, "name"> & SharedTableWriteVersion;
 export interface Category extends Base {
   name: string;
 }
@@ -226,6 +247,7 @@ export interface ZentaoBug extends Base {
   remoteId: string;
   title: string;
   steps: string;
+  stepsFormat?: "html";
   status: "active" | "resolved" | "closed";
   confirmed?: boolean | null;
   assignedTo: string;
@@ -247,6 +269,7 @@ export interface BugDraft {
   id: string;
   title: string;
   steps: string;
+  stepsFormat?: "html";
   bugType: string;
   severity: number;
   priority: number;

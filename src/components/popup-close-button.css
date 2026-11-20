@@ -1,0 +1,35 @@
+:root button.popup-close {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  box-shadow: none;
+  color: var(--muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+:root button.popup-close:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  box-shadow: none;
+  color: var(--text, #29333c);
+}
+
+:root button.popup-close:active:not(:disabled) {
+  background: color-mix(in srgb, currentColor 19%, transparent);
+  transform: none;
+}
+
+:root button.popup-close:focus-visible {
+  outline: 2px solid var(--theme-accent, #397e96);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root button.popup-close {
+    transition: none;
+  }
+}

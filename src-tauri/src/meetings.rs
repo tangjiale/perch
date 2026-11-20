@@ -1025,7 +1025,7 @@ mod tests {
                 .unwrap();
         }
         conn.execute_batch(
-            "DROP TABLE local_bugs; DELETE FROM schema_migrations WHERE version>=11; PRAGMA user_version=10;",
+            "DROP TABLE shared_tables; DROP TABLE shared_table_groups; DROP TABLE local_bugs; DELETE FROM schema_migrations WHERE version>=11; PRAGMA user_version=10;",
         )
         .unwrap();
     }

@@ -43,12 +43,25 @@
       context.strokeRect(60, 170, 1280, 620);
       context.fillText("截图通过附件读取显示，原始 HTML 引用保持不变", 100, 250);
       window.__bugImageData = canvas.toDataURL("image/png");
+      const readAsDataURL = FileReader.prototype.readAsDataURL;
+      FileReader.prototype.readAsDataURL = function (file) {
+        if (window.__bugHoldImageRead) {
+          const onload = this.onload;
+          this.onload = event => {
+            window.__bugReleaseImageRead = () => onload.call(this, event);
+          };
+        }
+        return readAsDataURL.call(this, file);
+      };
       window.__TAURI_INTERNALS__ = {
         invoke: async (name, args) => {
           window.__bugCalls.push({ name, args });
           if (name === "local_bug_save") {
-            const { id, ...fields } = args.value;
+            const { id, stepsFormat, ...fields } = args.value;
+            const old = window.__fixtureBugs.find(bug => bug.id === `local-bug-${id}`);
+            const format = stepsFormat ?? (old?.steps === fields.steps ? old?.stepsFormat : undefined);
             const saved = { ...fields, id: `local-bug-${id}`, source: "local",
+              ...(format && { stepsFormat: format }),
               revision: (fields.revision || 0) + 1, openedDate: "2026-11-17 10:00:00",
               connectionId: "", remoteId: "", assignedTo: "" };
             window.__fixtureBugs = [...window.__fixtureBugs.filter(bug => bug.id !== saved.id), saved];

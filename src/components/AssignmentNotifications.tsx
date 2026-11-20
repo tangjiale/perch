@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { Bell, Bug, SquareCheckBig, X } from "lucide-react";
+import { Bell, Bug, SquareCheckBig } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { native } from "../lib/api";
 import { assignmentApi, assignmentKey, assignmentPath, type AssignmentNotification } from "../lib/assignment-notifications";
+import PopupCloseButton from "./PopupCloseButton";
 import "./assignment-notifications.css";
 
 export default function AssignmentNotifications({workspaceId, notify}: {workspaceId: string; notify: (message: string) => void}) {
@@ -81,11 +82,29 @@ export default function AssignmentNotifications({workspaceId, notify}: {workspac
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild><button className="icon-button assignment-bell" aria-label={`指派提醒${data?.unreadCount ? `，${data.unreadCount} 条未读` : ""}`} title="指派提醒"><Bell size={18}/>{!!data?.unreadCount && <span className="assignment-count">{data.unreadCount > 99 ? "99+" : data.unreadCount}</span>}</button></Popover.Trigger>
       <Popover.Portal><Popover.Content className="assignment-popover" sideOffset={10} align="end" aria-label="未读指派提醒">
-        <div className="assignment-heading"><strong>指派提醒</strong><span>{data?.unreadCount || 0} 条未读</span><Popover.Close className="icon-button" aria-label="关闭提醒列表"><X size={16}/></Popover.Close></div>
+        <div className="assignment-heading">
+          <strong>指派提醒</strong>
+          <span>{data?.unreadCount || 0} 条未读</span>
+          <Popover.Close asChild>
+            <PopupCloseButton label="关闭提醒列表" />
+          </Popover.Close>
+        </div>
         {error ? <div className="assignment-empty" role="alert">提醒读取失败<button onClick={() => void refetch()}>重新读取</button></div> : isPending ? <p className="assignment-empty">正在读取提醒…</p> : !data?.items.length ? <p className="assignment-empty">暂无未读指派提醒</p> : <div className="assignment-list">{data.items.map(item => <button disabled={!!busy} className="assignment-item" key={item.id} onClick={() => void showItem(item)}>{itemContent(item)}<i aria-label="未读"/></button>)}</div>}
         <p className="assignment-hint">点击查看后清除该条未读提醒</p>
       </Popover.Content></Popover.Portal>
     </Popover.Root>
-    <div className="assignment-bubbles" hidden={open} aria-live="polite">{bubbles.map(item => <div className="assignment-bubble" key={item.id}><button className="assignment-item" disabled={!!busy} onClick={() => void showItem(item)}>{itemContent(item)}</button><button className="icon-button" aria-label="关闭气泡，保留未读" onClick={() => setBubbles(previous => previous.filter(value => value.id !== item.id))}><X size={16}/></button></div>)}</div>
+    <div className="assignment-bubbles" hidden={open} aria-live="polite">
+      {bubbles.map(item => (
+        <div className="assignment-bubble" key={item.id}>
+          <button className="assignment-item" disabled={!!busy} onClick={() => void showItem(item)}>
+            {itemContent(item)}
+          </button>
+          <PopupCloseButton
+            label="关闭气泡，保留未读"
+            onClick={() => setBubbles(previous => previous.filter(value => value.id !== item.id))}
+          />
+        </div>
+      ))}
+    </div>
   </>;
 }

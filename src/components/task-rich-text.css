@@ -1,8 +1,25 @@
 .task-rich-text { border:1px solid var(--line); border-radius:10px; background:var(--surface); overflow:hidden; }
 .task-rich-toolbar { display:flex; gap:4px; padding:6px 8px; border-bottom:1px solid var(--line); align-items:center; flex-wrap:wrap; }
 .task-rich-toolbar button { min-height:28px; width:30px; padding:5px; border:0; background:transparent; }
-.task-rich-text .tiptap { min-height:180px; max-height:440px; overflow:auto; padding:12px 14px; outline:none; color:inherit; overflow-wrap:anywhere; }
-.task-rich-text:focus-within { outline:2px solid var(--theme-accent,#5597ac); outline-offset:2px; }
+.task-rich-body { position:relative; --rich-text-pad-block:12px; --rich-text-pad-inline:14px; --rich-text-caret:var(--theme-accent,var(--command)); }
+.task-rich-text .tiptap { min-height:180px; max-height:440px; overflow:auto; padding:var(--rich-text-pad-block) var(--rich-text-pad-inline); outline:none; color:inherit; caret-color:var(--rich-text-caret); overflow-wrap:anywhere; }
+
+/* 以编辑器内容为准，空段落获焦时绘制可见的首行光标。 */
+.task-rich-body[data-empty]:has(> .tiptap[contenteditable="true"]:focus)::after {
+  content: "";
+  position: absolute;
+  inset-block-start: calc(var(--rich-text-pad-block) + 0.25em);
+  inset-inline-start: var(--rich-text-pad-inline);
+  inline-size: 2px;
+  block-size: 1.1em;
+  border-radius: 1px;
+  background: var(--rich-text-caret);
+  pointer-events: none;
+}
+.task-rich-body[data-empty] > .tiptap[contenteditable="true"]:focus {
+  caret-color: transparent;
+}
+
 .task-rich-text .tiptap p { margin:0 0 8px; }
 .task-rich-text .tiptap table { border-collapse:collapse; width:100%; }
 .task-rich-text .tiptap td, .task-rich-text .tiptap th { border:1px solid var(--line); padding:6px; }

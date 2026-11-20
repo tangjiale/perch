@@ -11,7 +11,7 @@ use std::{
 };
 
 const DEFAULT_DATA_DIR: &str = ".perch";
-pub(crate) const SCHEMA_VERSION: i64 = 13;
+pub(crate) const SCHEMA_VERSION: i64 = 15;
 const LEGACY_DATA_DIR: &str = ".self-workbanch";
 const ENCRYPTION_CHECK_KEY: &str = "credential-encryption-check";
 const ENCRYPTION_CHECK_PURPOSE: &str = "settings:credential-encryption-check";
@@ -1085,6 +1085,38 @@ impl Store {
             )
             .map_err(|e| e.to_string())?;
             tx.execute_batch("PRAGMA user_version=13")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
+        if version < 14 {
+            let sql = include_str!("../migrations/014_shared_tables.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(14,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=14")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
+        if version < 15 {
+            let sql = include_str!("../migrations/015_shared_table_groups.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(15,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=15")
                 .map_err(|e| e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;
         }
@@ -2231,7 +2263,7 @@ mod tests {
         }
         {
             let conn = store.conn.lock().unwrap();
-            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE local_bugs; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE bugs; DROP TABLE provider_credentials; DROP TABLE task_reminder_deliveries; DELETE FROM schema_migrations WHERE version>=3; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); PRAGMA user_version=2;").unwrap();
+            conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT; DROP TABLE shared_tables; DROP TABLE shared_table_groups; DROP TABLE local_bugs; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DROP TABLE bugs; DROP TABLE provider_credentials; DROP TABLE task_reminder_deliveries; DELETE FROM schema_migrations WHERE version>=3; DELETE FROM settings WHERE key IN ('credential-encryption-check','credential-encryption-cleanup-pending'); PRAGMA user_version=2;").unwrap();
             for (mut value, old) in saved.into_iter().zip(values) {
                 if let Some(due) = old.get("dueDate") {
                     value["dueDate"] = due.clone();
@@ -2773,7 +2805,7 @@ mod tests {
             )
             .unwrap();
             conn.execute_batch(
-                "DROP TABLE local_bugs; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;",
+                "DROP TABLE shared_tables; DROP TABLE shared_table_groups; DROP TABLE local_bugs; DROP TABLE meeting_segments; DROP TABLE meeting_audio_chunks; DROP TABLE meetings; DROP TABLE prompts; DELETE FROM schema_migrations WHERE version>=8; PRAGMA user_version=7;",
             )
             .unwrap();
         }

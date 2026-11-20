@@ -107,6 +107,10 @@ POST 提交意图写入现有 settings 表，不存凭据。未知结果不重�
 
 原生读取先核对当前账号与执行的项目／负责人及远端描述引用，再通过固定文件 API 下载。上传先核验远端版本、执行负责人和项目关联，不自动重试 POST。上传返回的编号与 URL 必须一致；前端存储原始引用而不是预览 data URL，描述更新继续走原 `save_task` 冲突与回写逻辑。
 
+### 新建 BUG 的富文本图片
+
+含图 BUG 使用同站点 v1 接口，以同一个草稿 `uid` 发出图片上传和 BUG 创建。22.0 的 v1 文件入口从 `POST /api.php/v1/files?uid=...` 的查询参数读取 `uid`，正文上传字段为 `imgFile`。v1 创建 BUG 从 JSON 正文读取 `steps` 与 `uid`，编辑器用 `{ID.ext}` 引用该草稿已上传的图片。创建动作按 `uid` 更新文件所属对象。相关源码见 [文件上传](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/api/v1/entries/files.php)、[BUG 创建](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/api/v1/entries/bugs.php) 和 [动作记录](https://github.com/easysoft/zentaopms/blob/zentaopms_22.0_20260318/module/action/model.php)。
+
 ## BUG 指派人员下拉
 
 通过 BUG 本地关联连接读取 `GET /api.php/v1/users?browse=all&type=bydept&page=N&limit=100&order=id_asc`，复用 Token 身份校验及只读自动续登。官方 `users.php` 默认返回 `account/realname`，没有对象 ID，因此分页去重键必须是账号；分页采用 `page/total/limit`，重复页或异常元数据报错，不能返回部分名单。`full=1` 额外需要 `company-browse` 权限，本功能不请求完整人员资料。
