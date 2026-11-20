@@ -24,6 +24,8 @@ mod meetings;
 mod meeting_realtime;
 mod natapp;
 mod parser;
+mod password_vault;
+mod password_vault_excel;
 mod prompt_optimizer;
 mod provider_models;
 mod s3_backup;
@@ -325,6 +327,14 @@ pub fn run() {
             shared_tables::list_shared_table_groups,
             shared_tables::save_shared_table_group,
             shared_tables::delete_shared_table_group,
+            password_vault::list_password_vault,
+            password_vault::save_password_vault,
+            password_vault::delete_password_vault,
+            password_vault::reveal_password_vault,
+            password_vault::copy_password_vault,
+            password_vault::import_password_vault_excel,
+            password_vault_excel::preview_password_vault_excel,
+            password_vault_excel::save_password_vault_template,
             zentao::bug_create::zentao_bug_create_options,
             zentao::bug_create::zentao_bug_create,
             zentao::bugs::zentao_bugs_sync,

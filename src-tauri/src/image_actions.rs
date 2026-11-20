@@ -6,7 +6,7 @@ use tauri_plugin_dialog::DialogExt;
 const MAX_BYTES: usize = 12 * 1024 * 1024;
 const MAX_DIMENSION: u32 = 16_384;
 const MAX_PIXELS: u64 = 40_000_000;
-// 保持原生剪贴板对象存活，避免 Linux 下应用退出对象后丢失图片所有权。
+// 保持原生剪贴板对象存活，避免 Linux 下剪贴板内容随对象销毁而丢失。
 static CLIPBOARD: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
 
 struct ValidatedImage {
@@ -71,24 +71,37 @@ fn save_image(path: &Path, image: &ValidatedImage) -> Result<(), String> {
     std::fs::write(path, &image.bytes).map_err(|e| format!("保存图片失败：{e}"))
 }
 
+fn with_clipboard(
+    operation: impl FnOnce(&mut arboard::Clipboard) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut clipboard = CLIPBOARD.lock().map_err(|_| "剪贴板暂时不可用")?;
+    if clipboard.is_none() {
+        *clipboard = Some(arboard::Clipboard::new().map_err(|e| format!("无法打开剪贴板：{e}"))?);
+    }
+    operation(clipboard.as_mut().ok_or("剪贴板暂时不可用")?)
+}
+
+pub(crate) fn write_clipboard_text(value: String) -> Result<(), String> {
+    with_clipboard(|clipboard| {
+        clipboard
+            .set_text(value)
+            .map_err(|_| "无法写入剪贴板。".into())
+    })
+}
+
 #[tauri::command]
 pub async fn image_clipboard_write(data_url: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let image = parse_image(&data_url)?;
-        let mut clipboard = CLIPBOARD.lock().map_err(|_| "剪贴板暂时不可用")?;
-        if clipboard.is_none() {
-            *clipboard =
-                Some(arboard::Clipboard::new().map_err(|e| format!("无法打开剪贴板：{e}"))?);
-        }
-        clipboard
-            .as_mut()
-            .ok_or("剪贴板暂时不可用")?
-            .set_image(arboard::ImageData {
-                width: image.pixels.width() as usize,
-                height: image.pixels.height() as usize,
-                bytes: Cow::Owned(image.pixels.into_raw()),
-            })
-            .map_err(|e| format!("复制图片失败：{e}"))
+        with_clipboard(|clipboard| {
+            clipboard
+                .set_image(arboard::ImageData {
+                    width: image.pixels.width() as usize,
+                    height: image.pixels.height() as usize,
+                    bytes: Cow::Owned(image.pixels.into_raw()),
+                })
+                .map_err(|e| format!("复制图片失败：{e}"))
+        })
     })
     .await
     .map_err(|_| "复制图片任务失败".to_string())?

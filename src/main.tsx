@@ -25,6 +25,7 @@ import {
   CalendarDays,
   LayoutGrid,
   Link2,
+  KeyRound,
   Wrench,
   MessagesSquare,
   Settings2,
@@ -56,6 +57,7 @@ const Apps = lazy(() =>
   import("./features/Resources").then((m) => ({ default: m.Apps })),
 );
 const SharedTables = lazy(() => import("./features/SharedTables"));
+const PasswordVault = lazy(() => import("./features/PasswordVault"));
 const Settings = lazy(() => import("./features/Settings"));
 const Chat = lazy(() => import("./features/Chat"));
 const Statistics = lazy(() => import("./features/Statistics"));
@@ -91,6 +93,7 @@ const navigation = [
   ["/calendar", "日历", CalendarDays],
   ["/apps", "应用", LayoutGrid],
   ["/shared-tables", "共享链接", Link2],
+  ["/password-vault", "密码库", KeyRound],
   ["/tools", "工具", Wrench],
   ["/chat", "聊天", MessagesSquare],
   ["/meetings", "会议", Mic],
@@ -307,6 +310,11 @@ function App() {
                   queryKey: ["shared-table-groups", info.workspaceId, info.dataRoot],
                 });
               }
+              if (location.pathname === "/password-vault") {
+                void client.invalidateQueries({
+                  queryKey: ["password-vault", info.workspaceId, info.dataRoot],
+                });
+              }
             }}
           >
             <RefreshCw size={16} />
@@ -385,6 +393,17 @@ function App() {
                   path="/shared-tables"
                   element={
                     <SharedTables
+                      key={`${info.workspaceId}:${info.dataRoot}`}
+                      workspaceId={info.workspaceId}
+                      dataRoot={info.dataRoot}
+                      notify={notify}
+                    />
+                  }
+                />
+                <Route
+                  path="/password-vault"
+                  element={
+                    <PasswordVault
                       key={`${info.workspaceId}:${info.dataRoot}`}
                       workspaceId={info.workspaceId}
                       dataRoot={info.dataRoot}

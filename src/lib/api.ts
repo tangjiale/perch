@@ -6,6 +6,7 @@ import type { BackupSaveInput, BackupState } from "./backup-types";
 import type { ExchangeRateSnapshot } from "./exchange-rates";
 import type { AppCredentials, AppExcelPreview, AppExcelSource, Application, BrowserBookmarkAppInput, BrowserBookmarkImportResult, BrowserBookmarks } from "./types";
 import type { SharedTable, SharedTableGroup, SharedTableGroupInput, SharedTableInput } from "./types";
+import type { PasswordVaultCopyField, PasswordVaultDraft, PasswordVaultEntry, PasswordVaultImportResult, PasswordVaultKind, PasswordVaultPreview, PasswordVaultVersion } from "./types";
 import type { BugDraft, ZentaoBug, ZentaoBugCreateOptions, ZentaoBugDraft } from "./types";
 import type { EntityKind, Base, Snapshot, StorageInfo, ZentaoTaskAssignment, ZentaoBugHistory, ZentaoAssignee, NatappState, NatappSaveInput, NatappLogs } from "./types";
 export const native = isTauri();
@@ -42,6 +43,22 @@ export interface MeetingRealtimeEvent {
   type: "delta" | "error"; text?: string; message?: string;
 }
 export const api = {
+  listPasswordVault: (workspaceId: string, kind: PasswordVaultKind) =>
+    command<PasswordVaultEntry[]>("list_password_vault", { workspaceId, kind }),
+  savePasswordVault: (workspaceId: string, input: PasswordVaultDraft) =>
+    command<PasswordVaultEntry>("save_password_vault", { workspaceId, input }),
+  deletePasswordVault: (workspaceId: string, kind: PasswordVaultKind, id: string, revision: number) =>
+    command<void>("delete_password_vault", { workspaceId, kind, id, revision }),
+  revealPasswordVault: (workspaceId: string, kind: PasswordVaultKind, records: PasswordVaultVersion[]) =>
+    command<{ id: string; password: string }[]>("reveal_password_vault", { workspaceId, kind, records }),
+  copyPasswordVault: (workspaceId: string, kind: PasswordVaultKind, record: PasswordVaultVersion, field: PasswordVaultCopyField) =>
+    command<void>("copy_password_vault", { workspaceId, kind, record, field }),
+  previewPasswordVaultExcel: (kind: PasswordVaultKind, source: AppExcelSource) =>
+    command<PasswordVaultPreview>("preview_password_vault_excel", { kind, ...source }),
+  importPasswordVaultExcel: (workspaceId: string, kind: PasswordVaultKind, source: AppExcelSource) =>
+    command<PasswordVaultImportResult>("import_password_vault_excel", { workspaceId, kind, ...source }),
+  savePasswordVaultTemplate: (kind: PasswordVaultKind, path: string) =>
+    command<void>("save_password_vault_template", { kind, path }),
   getAppCredentials: (workspaceId: string, appId: string) =>
     command<AppCredentials>("get_app_credentials", { workspaceId, appId }),
   saveAppDetails: (workspaceId: string, value: Application, credentials: AppCredentials) =>

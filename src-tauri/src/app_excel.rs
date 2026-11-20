@@ -16,13 +16,13 @@ const MAX_XLSX_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_XLSX_MEMBERS: usize = 2_048;
 const MAX_XLS_CELLS: usize = 500_000;
 const MAX_FIELD_BYTES: usize = 128 * 1024;
-const MAX_PREVIEW_BYTES: usize = 5 * 1024 * 1024;
+pub(crate) const MAX_PREVIEW_BYTES: usize = 5 * 1024 * 1024;
 const COLUMN_NAMES: [&str; 6] = ["名称", "链接地址", "分类", "描述信息", "账号", "密码"];
 const REQUIRED_COLUMNS: usize = 4;
 const PASSWORD_COLUMN: usize = 5;
 const INVALID_FILE: &str = "文件格式与扩展名不符，或 Excel 文件已损坏。";
-const INVALID_SHEET: &str = "无法读取首张工作表，请检查文件是否完整。";
-const LARGE_SHEET: &str = "Excel 工作表数据范围过大，请精简工作簿后重试。";
+pub(crate) const INVALID_SHEET: &str = "无法读取首张工作表，请检查文件是否完整。";
+pub(crate) const LARGE_SHEET: &str = "Excel 工作表数据范围过大，请精简工作簿后重试。";
 const LARGE_FILE: &str = "Excel 文件大小不能超过 5 MiB。";
 const TEMPLATE: &[u8] = include_bytes!("../../public/templates/applications.xlsx");
 
@@ -79,6 +79,14 @@ pub(crate) async fn read_app_excel_file(
     file_name: String,
     contents: String,
 ) -> Result<AppExcelPreview, String> {
+    read_excel_file(file_name, contents, parse_excel).await
+}
+
+pub(crate) async fn read_excel_file<T: Send + 'static>(
+    file_name: String,
+    contents: String,
+    parse: impl FnOnce(&Path, &[u8]) -> Result<T, &'static str> + Send + 'static,
+) -> Result<T, String> {
     if contents.len() > MAX_ENCODED_BYTES {
         return Err(LARGE_FILE.into());
     }
@@ -89,7 +97,7 @@ pub(crate) async fn read_app_excel_file(
         if bytes.len() > MAX_FILE_BYTES {
             return Err(LARGE_FILE);
         }
-        parse_excel(Path::new(&file_name), &bytes)
+        parse(Path::new(&file_name), &bytes)
     })
     .await
     .map_err(|_| "无法解析 Excel 文件。".to_owned())?
@@ -98,22 +106,29 @@ pub(crate) async fn read_app_excel_file(
 
 #[tauri::command]
 pub async fn save_app_excel_template(path: PathBuf) -> Result<(), String> {
+    save_excel_template(path, TEMPLATE).await
+}
+
+pub(crate) async fn save_excel_template(
+    path: PathBuf,
+    template: &'static [u8],
+) -> Result<(), String> {
     if !has_extension(&path, "xlsx") {
         return Err("请选择扩展名为 .xlsx 的模板保存路径。".into());
     }
-    tauri::async_runtime::spawn_blocking(move || save_template(&path))
+    tauri::async_runtime::spawn_blocking(move || save_template(&path, template))
         .await
         .map_err(|_| "无法保存 Excel 模板。".to_owned())?
         .map_err(|_| "无法保存 Excel 模板，请检查目标目录的写入权限。".to_owned())
 }
 
-fn save_template(path: &Path) -> io::Result<()> {
+fn save_template(path: &Path, template: &[u8]) -> io::Result<()> {
     let dir = path
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     let mut file = tempfile::NamedTempFile::new_in(dir)?;
-    file.write_all(TEMPLATE)?;
+    file.write_all(template)?;
     file.as_file().sync_all()?;
     file.persist(path).map_err(|error| error.error)?;
     Ok(())
@@ -127,6 +142,17 @@ fn has_extension(path: &Path, expected: &str) -> bool {
 
 fn parse_excel(path: &Path, bytes: &[u8]) -> Result<AppExcelPreview, &'static str> {
     let mut preview = PreviewBuilder::default();
+    visit_excel_cells(path, bytes, |row, column, value| {
+        preview.push_cell(row, column, value)
+    })?;
+    preview.finish()
+}
+
+pub(crate) fn visit_excel_cells(
+    path: &Path,
+    bytes: &[u8],
+    mut visit_cell: impl FnMut(u32, u32, &dyn DataType) -> Result<(), &'static str>,
+) -> Result<(), &'static str> {
     if has_extension(path, "xlsx") {
         check_xlsx(bytes)?;
         let mut workbook = Xlsx::new(Cursor::new(bytes)).map_err(|_| INVALID_FILE)?;
@@ -139,7 +165,7 @@ fn parse_excel(path: &Path, bytes: &[u8]) -> Result<AppExcelPreview, &'static st
             if row >= 1_048_576 || column >= 16_384 {
                 return Err(INVALID_SHEET);
             }
-            preview.push_cell(row, column, cell.get_value())?;
+            visit_cell(row, column, cell.get_value())?;
         }
     } else if has_extension(path, "xls") {
         let checked = check_xls(bytes)?;
@@ -150,13 +176,13 @@ fn parse_excel(path: &Path, bytes: &[u8]) -> Result<AppExcelPreview, &'static st
             .map_err(|_| INVALID_SHEET)?;
         if let Some((first_row, first_col)) = range.start() {
             for (row, column, value) in range.used_cells() {
-                preview.push_cell(first_row + row as u32, first_col + column as u32, value)?;
+                visit_cell(first_row + row as u32, first_col + column as u32, value)?;
             }
         }
     } else {
         return Err("请选择 .xls 或 .xlsx 文件。");
     }
-    preview.finish()
+    Ok(())
 }
 
 fn first_worksheet<R: Read + io::Seek>(workbook: &impl Reader<R>) -> Result<String, &'static str> {
@@ -433,7 +459,7 @@ fn biff_dimensions(data: &[u8]) -> Result<usize, &'static str> {
     Ok(rows as usize * usize::from(cols))
 }
 
-fn cell_text(value: &impl DataType) -> Cow<'_, str> {
+pub(crate) fn cell_text(value: &dyn DataType) -> Cow<'_, str> {
     if let Some(text) = value
         .get_string()
         .or_else(|| value.get_datetime_iso())
@@ -449,6 +475,16 @@ fn cell_text(value: &impl DataType) -> Cow<'_, str> {
             .or_else(|| value.get_error().map(|error| error.to_string()))
             .unwrap_or_default(),
     )
+}
+
+pub(crate) fn validate_cell_text(value: &dyn DataType, text: &str) -> Result<(), &'static str> {
+    if value.is_error() {
+        Err("包含 Excel 错误单元格，请修正后重试。")
+    } else if text.len() > MAX_FIELD_BYTES {
+        Err("单元格内容过长，请缩短后重试。")
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -467,7 +503,7 @@ impl PreviewBuilder {
         &mut self,
         row: u32,
         column: u32,
-        value: &impl DataType,
+        value: &dyn DataType,
     ) -> Result<(), &'static str> {
         if value.is_empty() {
             return Ok(());
@@ -495,10 +531,8 @@ impl PreviewBuilder {
                 } else {
                     trimmed
                 };
-                if value.is_error() {
-                    self.field_error = Some("包含 Excel 错误单元格，请修正后重试。");
-                } else if text.len() > MAX_FIELD_BYTES {
-                    self.field_error = Some("单元格内容过长，请缩短后重试。");
+                if let Err(message) = validate_cell_text(value, text) {
+                    self.field_error = Some(message);
                 } else {
                     self.fields[index] = text.to_owned();
                 }

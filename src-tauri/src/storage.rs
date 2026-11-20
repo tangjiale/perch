@@ -11,7 +11,7 @@ use std::{
 };
 
 const DEFAULT_DATA_DIR: &str = ".perch";
-pub(crate) const SCHEMA_VERSION: i64 = 16;
+pub(crate) const SCHEMA_VERSION: i64 = 17;
 const LEGACY_DATA_DIR: &str = ".self-workbanch";
 const ENCRYPTION_CHECK_KEY: &str = "credential-encryption-check";
 const ENCRYPTION_CHECK_PURPOSE: &str = "settings:credential-encryption-check";
@@ -1133,6 +1133,22 @@ impl Store {
             )
             .map_err(|e| e.to_string())?;
             tx.execute_batch("PRAGMA user_version=16")
+                .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
+        if version < 17 {
+            let sql = include_str!("../migrations/017_password_vault.sql");
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute_batch(sql).map_err(|e| e.to_string())?;
+            tx.execute(
+                "INSERT INTO schema_migrations VALUES(17,?1,?2)",
+                params![
+                    format!("{:x}", Sha256::digest(sql.as_bytes())),
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.execute_batch("PRAGMA user_version=17")
                 .map_err(|e| e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;
         }

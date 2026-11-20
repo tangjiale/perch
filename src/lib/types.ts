@@ -154,6 +154,25 @@ export interface AppCredentials {
   account: string;
   password: string;
 }
+export type PasswordVaultFields =
+  | { kind: "application"; appName: string; appCode: string; address: string; account1: string; account2: string; notes: string }
+  | { kind: "server"; ip: string; account: string; environment: "dev" | "test" | "prod"; notes: string };
+export type PasswordVaultKind = PasswordVaultFields["kind"];
+export type PasswordVaultCopyField = "account" | "account1" | "account2" | "password";
+export type PasswordVaultDraft = PasswordVaultFields & { password: string; id?: string; revision?: number };
+export interface PasswordVaultVersion {
+  id: string;
+  revision: number;
+}
+export type PasswordVaultEntry = PasswordVaultFields & PasswordVaultVersion & { hasPassword: boolean };
+export interface PasswordVaultPreview {
+  rows: (PasswordVaultFields & { row: number; hasPassword: boolean })[];
+  errors: AppExcelPreview["errors"];
+}
+export interface PasswordVaultImportResult {
+  created: number;
+  skipped: number;
+}
 export interface Provider extends Base {
   name: string;
   baseUrl: string;
