@@ -21,6 +21,13 @@ pub fn validate(value: &Value, kind: &str) -> Result<(), String> {
             return Err("凭据必须通过专用接口加密保存".into());
         }
     }
+    if kind == "apps"
+        && ["account", "credentials"]
+            .iter()
+            .any(|key| value.get(*key).is_some())
+    {
+        return Err("应用账号和密码必须通过专用接口加密保存".into());
+    }
     let name_key = if ["tasks", "bugs", "prompts"].contains(&kind) {
         "title"
     } else {

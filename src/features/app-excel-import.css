@@ -1,0 +1,83 @@
+.app-excel-import > header {
+  margin-bottom: 14px;
+}
+
+.app-excel-template {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.app-excel-template-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-excel-template-download:hover {
+  border-color: var(--theme-accent, var(--command));
+}
+
+.app-excel-drop {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.app-excel-drop[data-dragging] {
+  border-color: var(--theme-accent, var(--command));
+}
+
+.app-excel-status,
+.app-excel-errors {
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+
+.app-excel-errors ul {
+  max-height: 9rem;
+  margin: 4px 0 0;
+  padding-inline-start: 22px;
+  overflow: auto;
+}
+
+.app-excel-preview {
+  max-height: min(36vh, 22rem);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.app-excel-preview table {
+  min-width: 450px;
+  table-layout: fixed;
+}
+
+.app-excel-preview :is(th, td) {
+  padding: 6px 8px;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.app-excel-preview :is(th, td):first-child {
+  width: 60px;
+  min-width: 0;
+}
+
+.app-excel-preview th:nth-child(3) {
+  width: 30%;
+}

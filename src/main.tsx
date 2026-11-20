@@ -80,6 +80,9 @@ if (import.meta.hot) import.meta.hot.dispose(disposeAppearance);
 const client = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: true } },
 });
+function preventFileNavigation(event: React.DragEvent) {
+  if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+}
 const navigation = [
   ["/", "总览", House],
   ["/projects", "项目", FolderKanban],
@@ -201,7 +204,7 @@ function App() {
       : "";
   const { data: assignmentInbox } = useQuery({queryKey: assignmentKey(info.workspaceId), queryFn: () => assignmentApi.list(info.workspaceId), enabled: !!info.workspaceId});
   return (
-    <div className="app-shell">
+    <div className="app-shell" onDragOver={preventFileNavigation} onDrop={preventFileNavigation}>
       <aside className="sidebar">
         <div className="brand">
           <NavLink to="/" aria-label="栖点首页">

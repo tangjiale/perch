@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useId, useLayoutEffect, useState, useRef } from "react";
 import GlassSelect from "../components/GlassSelect";
 import SkillCatalog from "../components/SkillCatalog";
 import { canEditSkill } from "../lib/skill-sources";
@@ -9,6 +9,8 @@ import {
   Trash2,
   Star,
   ExternalLink,
+  Eye,
+  EyeOff,
   Puzzle,
   Bot,
   Library,
@@ -26,17 +28,71 @@ import { useNavigate } from "react-router-dom";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { load as loadYaml, JSON_SCHEMA } from "js-yaml";
-import { api, command } from "../lib/api";
+import { api, command, native } from "../lib/api";
 import Modal from "../components/Modal";
+import AppExcelImport from "./AppExcelImport";
 import BrowserBookmarkImport from "./BrowserBookmarkImport";
+import "./app-credentials.css";
 import type {
   PageProps,
   EntityKind,
+  AppCredentials,
   Application,
   Skill,
   Knowledge,
   Agent,
 } from "../lib/types";
+
+type AppEditorSession = { workspaceId: string; appId: string };
+type AppCredentialState =
+  | { status: "loading" | "error" }
+  | { status: "ready"; value: AppCredentials };
+type AppEditor = {
+  session: AppEditorSession;
+  value: Application;
+  existing: boolean;
+  credentials: AppCredentialState;
+  saving: boolean;
+  error: string;
+};
+
+function AppPasswordInput({ value, disabled, onChange }: {
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const id = useId();
+  const [visible, setVisible] = useState(false);
+  const toggleLabel = visible ? "隐藏密码" : "显示密码";
+
+  return (
+    <div className="app-password-field">
+      <label htmlFor={id}>密码（选填）</label>
+      <div className="inline-field">
+        <input
+          id={id}
+          type={visible ? "text" : "password"}
+          autoComplete="new-password"
+          autoCapitalize="none"
+          spellCheck={false}
+          disabled={disabled}
+          value={value}
+          onChange={(event) => onChange(event.currentTarget.value)}
+        />
+        <button
+          type="button"
+          aria-controls={id}
+          aria-label={toggleLabel}
+          title={toggleLabel}
+          disabled={disabled}
+          onClick={() => setVisible((current) => !current)}
+        >
+          {visible ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function Apps({
   data,
@@ -45,23 +101,107 @@ export function Apps({
   workspaceId,
   search = "",
 }: PageProps & { search?: string; workspaceId?: string }) {
-  const [edit, setEdit] = useState<Application | null>(null),
+  const [editor, setEditor] = useState<AppEditor | null>(null),
     [category, setCategory] = useState("all"),
     [manager, setManager] = useState(false),
-    [categoryName, setCategoryName] = useState(""),
-    [error, setError] = useState("");
+    [categoryName, setCategoryName] = useState("");
+  const activeEditor = useRef<AppEditorSession | null>(null);
   const [importWorkspace, setImportWorkspace] = useState<string | null>(null);
+  const [excelImportWorkspace, setExcelImportWorkspace] = useState<string | null>(null);
+  const currentEditor = editor?.session.workspaceId === workspaceId ? editor : null;
+  useLayoutEffect(() => () => {
+    activeEditor.current = null;
+  }, [workspaceId]);
   useEffect(() => {
     setImportWorkspace((current) => current === workspaceId ? current : null);
+    setExcelImportWorkspace((current) => current === workspaceId ? current : null);
+    setEditor((current) => current?.session.workspaceId === workspaceId ? current : null);
   }, [workspaceId]);
+
+  function updateEditor(session: AppEditorSession, patch: Partial<Omit<AppEditor, "session">>) {
+    setEditor((current) => current?.session === session ? { ...current, ...patch } : current);
+  }
+
+  async function loadCredentials(session: AppEditorSession) {
+    updateEditor(session, { credentials: { status: "loading" } });
+    try {
+      const { account, password } = await api.getAppCredentials(session.workspaceId, session.appId);
+      if (activeEditor.current === session) {
+        updateEditor(session, {
+          credentials: { status: "ready", value: { account, password } },
+        });
+      }
+    } catch {
+      if (activeEditor.current === session) {
+        updateEditor(session, { credentials: { status: "error" } });
+      }
+    }
+  }
+
+  function openEditor(application?: Application) {
+    if (!workspaceId) return;
+    const value = application ?? {
+      id: crypto.randomUUID(),
+      name: "",
+      url: "https://",
+      description: "",
+      favorite: false,
+      sortOrder: Date.now(),
+    };
+    const session = { workspaceId, appId: value.id };
+    const readCredentials = !!application && native;
+    activeEditor.current = session;
+    setEditor({
+      session,
+      value,
+      existing: !!application,
+      credentials: readCredentials
+        ? { status: "loading" }
+        : { status: "ready", value: { account: "", password: "" } },
+      saving: false,
+      error: "",
+    });
+    if (readCredentials) void loadCredentials(session);
+  }
+
+  function closeEditor(session: AppEditorSession) {
+    if (activeEditor.current !== session) return;
+    activeEditor.current = null;
+    setEditor(null);
+  }
+
+  function updateApplication(session: AppEditorSession, patch: Partial<Application>) {
+    setEditor((current) => current?.session === session
+      ? { ...current, value: { ...current.value, ...patch } }
+      : current);
+  }
+
+  function updateCredentials(session: AppEditorSession, patch: Partial<AppCredentials>) {
+    setEditor((current) => current?.session === session && current.credentials.status === "ready"
+      ? { ...current, credentials: { status: "ready", value: { ...current.credentials.value, ...patch } } }
+      : current);
+  }
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
+    if (!native || !currentEditor || currentEditor.saving || currentEditor.credentials.status !== "ready") return;
+    const { session, value, credentials } = currentEditor;
+    updateEditor(session, { saving: true, error: "" });
     try {
-      await api.save("app", edit!);
-      await refresh();
-      setEdit(null);
+      await api.saveAppDetails(session.workspaceId, value, credentials.value);
     } catch (e) {
-      setError((e as Error).message);
+      updateEditor(session, { saving: false, error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+    if (activeEditor.current !== session) return;
+    closeEditor(session);
+    try {
+      const result = await refresh();
+      if (result && typeof result === "object" && "isError" in result && result.isError === true) {
+        notify("应用已保存，列表刷新失败。");
+      }
+    } catch {
+      notify("应用已保存，列表刷新失败。");
     }
   }
   async function remove(kind: EntityKind, id: string, revision?: number) {
@@ -73,6 +213,7 @@ export function Apps({
       notify((e as Error).message);
     }
   }
+  const edit = currentEditor?.value;
   return (
     <>
       <div className="page-heading">
@@ -85,19 +226,14 @@ export function Apps({
             <BookmarkPlus size={16} aria-hidden="true" />
             导入浏览器书签
           </button>
+          <button type="button" disabled={!workspaceId} onClick={() => setExcelImportWorkspace(workspaceId ?? null)}>
+            <Upload size={16} aria-hidden="true" />
+            导入 Excel
+          </button>
           <button
             className="primary"
-            onClick={() => {
-              setError("");
-              setEdit({
-                id: crypto.randomUUID(),
-                name: "",
-                url: "https://",
-                description: "",
-                favorite: false,
-                sortOrder: Date.now(),
-              });
-            }}
+            disabled={!workspaceId}
+            onClick={() => openEditor()}
           >
             <Plus size={16} />
             添加应用
@@ -193,10 +329,8 @@ export function Apps({
                 <button
                   className="icon-button"
                   title="编辑应用"
-                  onClick={() => {
-                    setError("");
-                    setEdit(a);
-                  }}
+                  disabled={!workspaceId}
+                  onClick={() => openEditor(a)}
                 >
                   <Pencil size={15} />
                 </button>
@@ -220,10 +354,21 @@ export function Apps({
           onClose={() => setImportWorkspace((current) => current === workspaceId ? null : current)}
         />
       )}
-      {edit && (
+      {workspaceId && excelImportWorkspace === workspaceId && (
+        <AppExcelImport
+          key={workspaceId}
+          workspaceId={workspaceId}
+          refresh={refresh}
+          notify={notify}
+          onClose={() => setExcelImportWorkspace((current) => current === workspaceId ? null : current)}
+        />
+      )}
+      {currentEditor && edit && (
         <Modal
-          title={edit.revision ? "编辑应用" : "添加应用"}
-          onClose={() => setEdit(null)}
+          key={edit.id}
+          title={currentEditor.existing ? "编辑应用" : "添加应用"}
+          busy={currentEditor.saving}
+          onClose={() => closeEditor(currentEditor.session)}
         >
           <form className="form-grid" onSubmit={save}>
             <label>
@@ -232,7 +377,7 @@ export function Apps({
                 required
                 maxLength={60}
                 value={edit.name}
-                onChange={(e) => setEdit({ ...edit, name: e.target.value })}
+                onChange={(e) => updateApplication(currentEditor.session, { name: e.target.value })}
               />
             </label>
             <label>
@@ -241,7 +386,7 @@ export function Apps({
                 required
                 type="url"
                 value={edit.url}
-                onChange={(e) => setEdit({ ...edit, url: e.target.value })}
+                onChange={(e) => updateApplication(currentEditor.session, { url: e.target.value })}
               />
             </label>
             <label>
@@ -250,9 +395,7 @@ export function Apps({
                 rows={3}
                 maxLength={240}
                 value={edit.description}
-                onChange={(e) =>
-                  setEdit({ ...edit, description: e.target.value })
-                }
+                onChange={(e) => updateApplication(currentEditor.session, { description: e.target.value })}
               />
             </label>
             <label>
@@ -262,8 +405,7 @@ export function Apps({
                   aria-label="应用所属分类"
                   value={edit.categoryId || ""}
                   onValueChange={(categoryId) =>
-                    setEdit({
-                      ...edit,
+                    updateApplication(currentEditor.session, {
                       categoryId: categoryId || undefined,
                     })
                   }
@@ -284,30 +426,57 @@ export function Apps({
                 </button>
               </div>
             </label>
+            {native && currentEditor.credentials.status === "loading" && (
+              <p className="muted" role="status">正在读取账号和密码…</p>
+            )}
+            {native && currentEditor.credentials.status === "error" && (
+              <div className="inline-field">
+                <p className="error" role="alert">读取账号和密码失败。</p>
+                <button type="button" onClick={() => void loadCredentials(currentEditor.session)}>重试</button>
+              </div>
+            )}
+            {native && currentEditor.credentials.status === "ready" && (
+              <div className="two-fields">
+                <label>
+                  账号（选填）
+                  <input
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    disabled={currentEditor.saving}
+                    value={currentEditor.credentials.value.account}
+                    onChange={(e) => updateCredentials(currentEditor.session, { account: e.currentTarget.value })}
+                  />
+                </label>
+                <AppPasswordInput
+                  value={currentEditor.credentials.value.password}
+                  disabled={currentEditor.saving}
+                  onChange={(password) => updateCredentials(currentEditor.session, { password })}
+                />
+              </div>
+            )}
+            {!native && <p className="notice">请在栖点桌面应用中保存应用信息和凭据。</p>}
             <AppLogoPicker
               key={edit.id}
               url={edit.url}
               value={edit.logo}
-              onChange={(logo) =>
-                setEdit((current) =>
-                  current?.id === edit.id ? { ...current, logo } : current,
-                )
-              }
+              onChange={(logo) => updateApplication(currentEditor.session, { logo })}
             />
-            {error && (
+            {currentEditor.error && (
               <p role="alert" className="error">
-                {error}
+                {currentEditor.error}
               </p>
             )}
             <footer>
-              {edit.revision && (
+              {edit.revision != null && (
                 <button
                   type="button"
                   className="danger"
+                  disabled={!native || currentEditor.saving}
                   onClick={async () => {
                     if (confirm("移除这个应用入口？")) {
                       await remove("app", edit.id, edit.revision);
-                      setEdit(null);
+                      closeEditor(currentEditor.session);
                     }
                   }}
                 >
@@ -315,7 +484,13 @@ export function Apps({
                   移除
                 </button>
               )}
-              <button className="primary">保存</button>
+              <button
+                type="submit"
+                className="primary"
+                disabled={!native || currentEditor.saving || currentEditor.credentials.status !== "ready"}
+              >
+                {currentEditor.saving ? "保存中…" : "保存"}
+              </button>
             </footer>
           </form>
         </Modal>

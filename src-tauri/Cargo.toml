@@ -39,6 +39,8 @@ tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 url = "2"
 base64 = "0.22"
+calamine = "0.38"
+cfb = "0.7"
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 serde_yaml = "0.9"

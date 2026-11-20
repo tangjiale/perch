@@ -4,7 +4,7 @@ import type { PromptEntry, PromptProgress, PromptRequest, PromptResult } from ".
 import { version } from "../../package.json";
 import type { BackupSaveInput, BackupState } from "./backup-types";
 import type { ExchangeRateSnapshot } from "./exchange-rates";
-import type { BrowserBookmarkAppInput, BrowserBookmarkImportResult, BrowserBookmarks } from "./types";
+import type { AppCredentials, AppExcelPreview, AppExcelSource, Application, BrowserBookmarkAppInput, BrowserBookmarkImportResult, BrowserBookmarks } from "./types";
 import type { SharedTable, SharedTableGroup, SharedTableGroupInput, SharedTableInput } from "./types";
 import type { BugDraft, ZentaoBug, ZentaoBugCreateOptions, ZentaoBugDraft } from "./types";
 import type { EntityKind, Base, Snapshot, StorageInfo, ZentaoTaskAssignment, ZentaoBugHistory, ZentaoAssignee, NatappState, NatappSaveInput, NatappLogs } from "./types";
@@ -42,6 +42,34 @@ export interface MeetingRealtimeEvent {
   type: "delta" | "error"; text?: string; message?: string;
 }
 export const api = {
+  getAppCredentials: (workspaceId: string, appId: string) =>
+    command<AppCredentials>("get_app_credentials", { workspaceId, appId }),
+  saveAppDetails: (workspaceId: string, value: Application, credentials: AppCredentials) =>
+    command<Application>("save_app_details", { workspaceId, value, credentials }),
+  saveAppExcelTemplate: (path: string) => command<void>("save_app_excel_template", { path }),
+  pickAppExcel: () => command<AppExcelSource | null>("pick_app_excel"),
+  readAppExcelFile: async (file: File): Promise<AppExcelSource> => {
+    if (!native) throw new Error("此功能需要在桌面应用中使用");
+    if (file.size > 5 * 1024 * 1024) throw new Error("Excel 文件不能超过 5 MB。");
+    const contents = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("无法读取选择的文件。"));
+      reader.onload = () => {
+        const data = reader.result;
+        if (typeof data === "string" && data.includes(",")) {
+          resolve(data.slice(data.indexOf(",") + 1));
+        } else {
+          reject(new Error("无法读取选择的文件。"));
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+    return { fileName: file.name, contents };
+  },
+  previewAppExcel: (source: AppExcelSource) =>
+    command<AppExcelPreview>("preview_app_excel", { ...source }),
+  importAppExcel: (workspaceId: string, source: AppExcelSource) =>
+    command<BrowserBookmarkImportResult>("import_app_excel", { workspaceId, ...source }),
   readBrowserBookmarks: () => command<BrowserBookmarks[]>("read_browser_bookmarks"),
   importBrowserBookmarkApps: (workspaceId: string, items: BrowserBookmarkAppInput[]) =>
     command<BrowserBookmarkImportResult>("import_browser_bookmark_apps", { workspaceId, items }),

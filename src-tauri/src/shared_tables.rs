@@ -523,7 +523,7 @@ mod tests {
             .lock()
             .unwrap()
             .execute_batch(
-                "DROP TABLE shared_tables; DROP TABLE shared_table_groups; PRAGMA user_version=13;",
+                "DROP TABLE app_credentials; DROP TABLE shared_tables; DROP TABLE shared_table_groups; PRAGMA user_version=13;",
             )
             .unwrap();
         drop(store);
@@ -553,7 +553,7 @@ mod tests {
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            15
+            crate::storage::SCHEMA_VERSION
         );
         assert!(conn
             .query_row(
@@ -575,7 +575,7 @@ mod tests {
         let updated_at = "2026-02-01T05:06:07.890Z";
         {
             let conn = store.conn.lock().unwrap();
-            conn.execute_batch("DROP TABLE shared_tables; DROP TABLE shared_table_groups;")
+            conn.execute_batch("DROP TABLE app_credentials; DROP TABLE shared_tables; DROP TABLE shared_table_groups;")
                 .unwrap();
             conn.execute_batch(include_str!("../migrations/014_shared_tables.sql"))
                 .unwrap();
@@ -614,7 +614,7 @@ mod tests {
                 |r| r.get::<_, bool>(0),
             )
             .unwrap());
-        conn.execute("DELETE FROM schema_migrations WHERE version=15", [])
+        conn.execute("DELETE FROM schema_migrations WHERE version>=15", [])
             .unwrap();
         drop(conn);
 

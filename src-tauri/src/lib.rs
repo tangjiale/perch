@@ -1,4 +1,6 @@
 mod agent_presets;
+mod app_credentials;
+mod app_excel;
 mod assignment_inbox;
 mod assignment_notifications;
 mod backup;
@@ -232,6 +234,12 @@ pub fn run() {
             website_icon::website_icon_fetch,
             browser_bookmarks::read_browser_bookmarks,
             bookmark_apps::import_browser_bookmark_apps,
+            app_excel::preview_app_excel,
+            app_excel::save_app_excel_template,
+            bookmark_apps::pick_app_excel,
+            bookmark_apps::import_app_excel,
+            app_credentials::get_app_credentials,
+            app_credentials::save_app_details,
             mcp::mcp_list,
             mcp::mcp_save,
             mcp::mcp_delete,

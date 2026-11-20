@@ -135,6 +135,25 @@ export interface BrowserBookmarkImportResult {
   skipped: number;
   categoriesCreated: number;
 }
+export interface AppExcelRow {
+  row: number;
+  name: string;
+  url: string;
+  category: string;
+  description: string;
+}
+export interface AppExcelPreview {
+  rows: AppExcelRow[];
+  errors: { row: number; message: string }[];
+}
+export interface AppExcelSource {
+  fileName: string;
+  contents: string;
+}
+export interface AppCredentials {
+  account: string;
+  password: string;
+}
 export interface Provider extends Base {
   name: string;
   baseUrl: string;
