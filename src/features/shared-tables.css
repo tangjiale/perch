@@ -3,17 +3,17 @@
   min-width: 0;
 }
 
-.shared-tables .page-heading {
-  flex-wrap: wrap;
-}
-
 .shared-tables-notice {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .shared-tables-filters {
   align-items: flex-end;
-  gap: 10px 12px;
+  gap: 8px 10px;
+}
+.shared-tables-add {
+  margin-left: auto;
+  align-self: flex-end;
 }
 
 .shared-tables-filter-field {

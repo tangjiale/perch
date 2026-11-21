@@ -324,75 +324,12 @@ export default function Bugs({
 
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <h1>BUG 修复</h1>
-          <p>记录本地 BUG，或提交并处理禅道 BUG</p>
-        </div>
-        <div className="bugs-actions">
-          <button
-            onClick={() => navigate("/settings?tab=zentao")}
-            disabled={busy}
-          >
-            <Settings2 size={16} />
-            禅道设置
-          </button>
-          <button
-            disabled={busy || !connection?.enabled}
-            onClick={() =>
-              void run(
-                () =>
-                  command<string>("zentao_bugs_sync", {
-                    connectionId: connection!.id,
-                  }),
-                "BUG 同步完成",
-                false,
-                "statusbar",
-              )
-            }
-          >
-            <RefreshCw size={16} />
-            {busy ? "正在处理…" : "同步我的 BUG"}
-          </button>
-          <button type="button" className="primary" disabled={busy} onClick={() => { setError(""); setCreateOpen(true); }}>
-            <Plus size={16} /> 新建 BUG
-          </button>
-        </div>
-      </div>
       {!edit && error && (
         <div className="error-panel" role="alert">
           {error}
         </div>
       )}
           <div className="bugs-toolbar">
-            <div
-              className="bugs-status-filters"
-              role="group"
-              aria-label="BUG 状态筛选"
-            >
-              {[
-                { value: "all", label: "全部" },
-                ...Object.entries(statusNames).map(([value, label]) => ({
-                  value,
-                  label,
-                })),
-                ...(connection ? [{ value: "mine-resolved", label: "我解决的" }] : []),
-              ].map((item) => (
-                <button
-                  key={item.value}
-                  aria-pressed={filter === item.value}
-                  onClick={() => {
-                    setFilter(item.value);
-                    setPage(0);
-                  }}
-                >
-                  {item.label}
-                  <span>
-                    {projectBugs.filter(bug => matchesStatus(bug, item.value)).length}
-                  </span>
-                </button>
-              ))}
-            </div>
             <label className="bugs-search">
               <GlassSelect
                 aria-label="筛选 BUG 项目"
@@ -455,6 +392,63 @@ export default function Bugs({
                 }}
               />
             </label>
+            <div className="bugs-actions">
+              <button
+                onClick={() => navigate("/settings?tab=zentao")}
+                disabled={busy}
+              >
+                <Settings2 size={16} /> 禅道设置
+              </button>
+              <button
+                disabled={busy || !connection?.enabled}
+                onClick={() =>
+                  void run(
+                    () => command<string>("zentao_bugs_sync", {
+                      connectionId: connection!.id,
+                    }),
+                    "BUG 同步完成",
+                    false,
+                    "statusbar",
+                  )
+                }
+              >
+                <RefreshCw size={16} />
+                {busy ? "正在处理…" : "同步我的 BUG"}
+              </button>
+              <button type="button" className="primary" disabled={busy} onClick={() => { setError(""); setCreateOpen(true); }}>
+                <Plus size={16} /> 新建 BUG
+              </button>
+            </div>
+          </div>
+          <div className="bugs-status-row">
+            <div
+              className="bugs-status-filters"
+              role="group"
+              aria-label="BUG 状态统计与筛选"
+            >
+              {[
+                { value: "all", label: "全部" },
+                ...Object.entries(statusNames).map(([value, label]) => ({
+                  value,
+                  label,
+                })),
+                ...(connection ? [{ value: "mine-resolved", label: "我解决的" }] : []),
+              ].map((item) => (
+                <button
+                  key={item.value}
+                  aria-pressed={filter === item.value}
+                  onClick={() => {
+                    setFilter(item.value);
+                    setPage(0);
+                  }}
+                >
+                  {item.label}
+                  <span>
+                    {projectBugs.filter(bug => matchesStatus(bug, item.value)).length}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
           {connection && !connection.enabled && (
             <p className="error" role="status">

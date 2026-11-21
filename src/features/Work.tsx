@@ -29,6 +29,7 @@ import {
   GripVertical,
   Undo2,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import {
   DndContext,
@@ -123,6 +124,8 @@ const statusIcons = {
   done: CircleCheck,
   suspended: CirclePause,
 };
+type TaskView = "board" | "calendar" | "list" | "review";
+const taskViews = new Set<TaskView>(["board", "calendar", "list", "review"]);
 
 // 空列可能和最长任务列一样高；按四角距离会误选相邻卡片。
 // 鼠标拖动优先使用实际落点，键盘拖动保留几何导航。
@@ -701,7 +704,7 @@ export default function Work({
   useExpiryRefresh();
   const navigate = useNavigate();
   const bugStats = buildBugStatistics(data.bugs);
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor),
@@ -719,10 +722,45 @@ export default function Work({
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState("");
   const connection = data.connections[0];
-  const [view, setView] = useState("board"),
+  const taskViewKey = `perch:task-view:${workspaceId}`;
+  const [view, setView] = useState<TaskView>(() => {
+    const requested = params.get("view");
+    if (page === "tasks" && taskViews.has(requested as TaskView))
+      return requested as TaskView;
+    if (page === "tasks" && workspaceId) {
+      try {
+        const saved = localStorage.getItem(taskViewKey);
+        if (saved && taskViews.has(saved as TaskView)) return saved as TaskView;
+      } catch {
+        // 存储不可用时仍可正常使用当前页面。
+      }
+    }
+    return "board";
+  }),
     [project, setProject] = useState(params.get("project") || "all"),
     [status, setStatus] = useState("all"),
     [editing, setEditing] = useState<Task | null>(null);
+  function selectTaskView(next: TaskView) {
+    setView(next);
+    try {
+      if (workspaceId) localStorage.setItem(taskViewKey, next);
+    } catch {
+      // 存储不可用时，当前会话仍可切换视图。
+    }
+    if (params.has("view")) {
+      const nextParams = new URLSearchParams(params);
+      nextParams.delete("view");
+      setParams(nextParams, { replace: true });
+    }
+  }
+  useEffect(() => {
+    if (page !== "tasks" || !workspaceId) return;
+    try {
+      localStorage.setItem(taskViewKey, view);
+    } catch {
+      // 存储不可用时不影响任务页面。
+    }
+  }, [page, taskViewKey, view, workspaceId]);
   const notificationClient = useContext(QueryClientContext);
   const notificationGeneration = useAssignmentGeneration(workspaceId);
   const readNotificationTarget = useRef("");
@@ -750,13 +788,16 @@ export default function Work({
     .filter(
       (t) =>
         (project === "all" || t.projectId === project) &&
-        (view === "review" || status === "all" || t.status === status) &&
+        (view === "review" || view === "calendar" || status === "all" || t.status === status) &&
         `${t.title} ${t.notes}`.toLowerCase().includes(search.toLowerCase()),
     )
     .sort(
       (a, b) =>
         a.sortOrder - b.sortOrder || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
+  const calendarTasks = data.tasks.filter((t) =>
+    `${t.title} ${t.notes}`.toLowerCase().includes(search.toLowerCase()),
+  );
   const completionReview = view === "review" ? buildTaskCompletionReview(list) : null;
   const today = DateTime.local().toISODate();
   const todayTasks = list.filter(
@@ -913,42 +954,6 @@ export default function Work({
   );
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <h1>
-            {page === "overview"
-              ? "总览"
-              : page === "calendar"
-                ? "日历"
-                : "我的任务"}
-          </h1>
-          <p>
-            {page === "overview"
-              ? DateTime.local()
-                  .setLocale("zh-CN")
-                  .toFormat("yyyy年M月d日 · cccc")
-              : page === "calendar"
-                ? "安排工作，留出时间"
-                : "个人任务与禅道工作进展"}
-          </p>
-        </div>
-        <div className="actions">
-          {page === "tasks" && (
-            <button
-              disabled={syncing || moving || !!editing || !connection?.enabled}
-              title={!connection?.enabled ? "请先在设置中配置并启用禅道连接" : "同步禅道项目与我负责的执行"}
-              onClick={() => void syncZentao()}
-            >
-              <RefreshCw size={16} />
-              {syncing ? "正在同步…" : "同步禅道"}
-            </button>
-          )}
-          <button className="primary" onClick={() => setEditing(blankTask())}>
-            <Plus size={16} />
-            新建任务
-          </button>
-        </div>
-      </div>
       {page === "tasks" && syncError && (
         <div className="notice" role="alert">
           <p className="error">{syncError}</p>
@@ -979,7 +984,7 @@ export default function Work({
             <section className="overview-today">
               <div className="section-heading">
                 <h2>今日安排</h2>
-                <button onClick={() => navigate("/calendar")}>
+                <button onClick={() => navigate("/tasks?view=calendar")}>
                   <CalendarDays size={15} />
                   日历
                 </button>
@@ -1057,16 +1062,6 @@ export default function Work({
           </div>
           </div>
         </>
-      ) : page === "calendar" ? (
-        <CalendarView
-          tasks={list}
-          onEdit={setEditing}
-          onCreate={(schedule) => setEditing({ ...blankTask(), schedule })}
-          onChange={async (task, schedule) => {
-            await api.save("task", { ...task, schedule });
-            await refresh();
-          }}
-        />
       ) : (
         <>
           <div className="toolbar">
@@ -1074,15 +1069,23 @@ export default function Work({
               <button
                 className={view === "board" ? "active" : ""}
                 aria-pressed={view === "board"}
-                onClick={() => setView("board")}
+                onClick={() => selectTaskView("board")}
               >
                 <Columns3 size={15} />
                 看板
               </button>
               <button
+                className={view === "calendar" ? "active" : ""}
+                aria-pressed={view === "calendar"}
+                onClick={() => selectTaskView("calendar")}
+              >
+                <CalendarDays size={15} />
+                日历
+              </button>
+              <button
                 className={view === "list" ? "active" : ""}
                 aria-pressed={view === "list"}
-                onClick={() => setView("list")}
+                onClick={() => selectTaskView("list")}
               >
                 <List size={15} />
                 列表
@@ -1090,13 +1093,13 @@ export default function Work({
               <button
                 className={view === "review" ? "active" : ""}
                 aria-pressed={view === "review"}
-                onClick={() => setView("review")}
+                onClick={() => selectTaskView("review")}
               >
                 <CircleCheck size={15} />
                 完成回顾
               </button>
             </div>
-            <GlassSelect
+            {view !== "calendar" && <GlassSelect
               aria-label="项目筛选"
               value={project}
               onValueChange={setProject}
@@ -1104,8 +1107,8 @@ export default function Work({
                 { value: "all", label: "全部项目" },
                 ...data.projects.map((p) => ({ value: p.id, label: p.name })),
               ]}
-            />
-            {view !== "review" && <GlassSelect
+            />}
+            {view !== "review" && view !== "calendar" && <GlassSelect
               aria-label="状态筛选"
               value={status}
               onValueChange={setStatus}
@@ -1120,9 +1123,9 @@ export default function Work({
             <span className="muted" aria-live="polite">
               {completionReview
                 ? `两周完成 ${completionReview.thisWeek.tasks.length + completionReview.lastWeek.tasks.length} 个任务`
-                : `${list.length} 个任务`}
+                : `${view === "calendar" ? calendarTasks.length : list.length} 个任务`}
             </span>
-            {view !== "review" && <button
+            {view !== "review" && view !== "calendar" && <button
               title="撤销上次拖动"
               className="icon-button"
               disabled={!undo || moving || syncing}
@@ -1147,6 +1150,20 @@ export default function Work({
             >
               <Undo2 size={16} />
             </button>}
+            <div className="task-toolbar-actions">
+              <button
+                disabled={syncing || moving || !!editing || !connection?.enabled}
+                title={!connection?.enabled ? "请先在设置中配置并启用禅道连接" : "同步禅道项目与我负责的执行"}
+                onClick={() => void syncZentao()}
+              >
+                <RefreshCw size={16} />
+                {syncing ? "正在同步…" : "同步禅道"}
+              </button>
+              <button className="primary" onClick={() => setEditing(blankTask())}>
+                <Plus size={16} />
+                新建任务
+              </button>
+            </div>
           </div>
           {moveError && (
             <div className="notice" role="alert">
@@ -1161,7 +1178,17 @@ export default function Work({
               </button>
             </div>
           )}
-          {completionReview ? (
+          {view === "calendar" ? (
+            <CalendarView
+              tasks={calendarTasks}
+              onEdit={setEditing}
+              onCreate={(schedule) => setEditing({ ...blankTask(), schedule })}
+              onChange={async (task, schedule) => {
+                await api.save("task", { ...task, schedule });
+                await refresh();
+              }}
+            />
+          ) : completionReview ? (
             <TaskCompletionReview
               review={completionReview}
               projects={data.projects}
@@ -1262,6 +1289,7 @@ export function Projects({
   const navigate = useNavigate();
   const [edit, setEdit] = useState<Project | null>(null),
     [error, setError] = useState(""),
+    [projectFilter, setProjectFilter] = useState(""),
     [task, setTask] = useState<Task | null>(null);
   const taskCounts = new Map<string, Record<TaskStatus, number>>();
   const bugGroups = buildBugProjectIndex(data.projects, data.bugs);
@@ -1301,11 +1329,13 @@ export function Projects({
         },
       };
     })
-    .filter(({ project, description }) =>
-      (project.name + description + (project.owner || ""))
-        .toLocaleLowerCase()
-        .includes(search.trim().toLocaleLowerCase()),
-    );
+    .filter(({ project, description }) => {
+      const searchable = (project.name + description + (project.owner || ""))
+        .toLocaleLowerCase();
+      return [search, projectFilter].every((term) =>
+        searchable.includes(term.trim().toLocaleLowerCase()),
+      );
+    });
   async function save(e: React.FormEvent) {
     e.preventDefault();
     try {
@@ -1318,11 +1348,20 @@ export function Projects({
   }
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <h1>项目</h1>
-          <p>本地项目与禅道项目</p>
-        </div>
+      <div className="toolbar projects-toolbar" role="group" aria-label="筛选项目">
+        <label className="projects-filter-field">
+          <span>项目</span>
+          <span className="projects-filter-input">
+            <Search size={15} aria-hidden="true" />
+            <input
+              type="search"
+              aria-label="搜索项目名称、描述或负责人"
+              placeholder="搜索项目名称、描述或负责人"
+              value={projectFilter}
+              onChange={(event) => setProjectFilter(event.target.value)}
+            />
+          </span>
+        </label>
         <button
           className="primary"
           onClick={() => {
@@ -1338,7 +1377,7 @@ export function Projects({
           }}
         >
           <Plus size={16} />
-          新建项目
+          新增项目
         </button>
       </div>
       <div className="projects-table-wrap">

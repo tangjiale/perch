@@ -19,7 +19,6 @@ import {
   ReplyAll,
   Search,
   Send,
-  Settings2,
   ShieldCheck,
   Star,
   Trash2,
@@ -294,16 +293,6 @@ export default function Mail({
   return (
     <div className="mail-page-layout">
       <aside className="mail-folders-panel">
-        <header>
-          <h1>邮件</h1>
-          <Link
-            to="/settings?tab=mail"
-            className="icon-button"
-            title="邮箱设置"
-          >
-            <Settings2 size={17} />
-          </Link>
-        </header>
         <button
           className="primary mail-write"
           disabled={!accounts.some((a) => a.enabled)}

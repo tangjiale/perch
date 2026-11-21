@@ -357,7 +357,7 @@ function VaultEntries({ workspaceId, dataRoot, kind, notify, actionsTarget }: Pr
             clearRevealed();
             openDialog({ type: "edit", draft: newDraft(kind), passwordStatus: "draft" });
           }}>
-            <Plus size={16} aria-hidden="true" /> 新增
+            <Plus size={16} aria-hidden="true" /> 新增密码
           </button>
         </>,
         actionsTarget,

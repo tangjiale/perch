@@ -1,7 +1,3 @@
-.bookmark-import-entry {
-  justify-content: flex-end;
-}
-
 .bookmark-import-dialog.modal.wide {
   width: 800px;
 }

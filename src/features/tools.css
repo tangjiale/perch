@@ -4,7 +4,10 @@
   width: 100%;
 }
 .tools-heading {
-  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 .tools-heading > div,
 .tool-actions,

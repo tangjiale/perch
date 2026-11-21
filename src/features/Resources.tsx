@@ -216,30 +216,6 @@ export function Apps({
   const edit = currentEditor?.value;
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <h1>应用</h1>
-          <p>常用系统与团队工具</p>
-        </div>
-        <div className="actions bookmark-import-entry">
-          <button type="button" disabled={!workspaceId} onClick={() => setImportWorkspace(workspaceId ?? null)}>
-            <BookmarkPlus size={16} aria-hidden="true" />
-            导入浏览器书签
-          </button>
-          <button type="button" disabled={!workspaceId} onClick={() => setExcelImportWorkspace(workspaceId ?? null)}>
-            <Upload size={16} aria-hidden="true" />
-            导入 Excel
-          </button>
-          <button
-            className="primary"
-            disabled={!workspaceId}
-            onClick={() => openEditor()}
-          >
-            <Plus size={16} />
-            添加应用
-          </button>
-        </div>
-      </div>
       <div className="app-category-toolbar">
         <div
           className="app-category-filters"
@@ -269,12 +245,21 @@ export function Apps({
             <Star size={14} aria-hidden="true" />
             我的收藏
           </button>
+          <button type="button" disabled={!workspaceId} onClick={() => setImportWorkspace(workspaceId ?? null)}>
+            <BookmarkPlus size={16} aria-hidden="true" />
+            导入浏览器书签
+          </button>
+          <button type="button" disabled={!workspaceId} onClick={() => setExcelImportWorkspace(workspaceId ?? null)}>
+            <Upload size={16} aria-hidden="true" />
+            导入 Excel
+          </button>
           <button
-            className="app-category-manage"
-            onClick={() => setManager(true)}
+            className="primary"
+            disabled={!workspaceId}
+            onClick={() => openEditor()}
           >
-            <Settings2 size={15} aria-hidden="true" />
-            管理分类
+            <Plus size={16} />
+            新增应用
           </button>
         </div>
       </div>

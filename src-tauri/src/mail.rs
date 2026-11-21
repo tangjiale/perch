@@ -71,6 +71,8 @@ pub struct Draft {
     pub bcc: Vec<String>,
     pub subject: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
     pub attachments: Vec<String>,
     #[serde(default)]
     pub reply_to_message_id: Option<String>,
@@ -1171,7 +1173,7 @@ fn validate_draft(d: &Draft) -> Result<()> {
     uuid::Uuid::parse_str(&d.id).map_err(|_| "草稿 ID 无效")?;
     if d.to.len() + d.cc.len() + d.bcc.len() > 100
         || d.subject.len() > 2000
-        || d.text.len() > 2 * 1024 * 1024
+        || d.text.len() + d.html.as_ref().map_or(0, String::len) > 2 * 1024 * 1024
         || d.attachments.len() > 20
     {
         return Err("草稿超出收件人、正文或附件数量限制".into());
@@ -1256,7 +1258,15 @@ fn build_message(ctx: &Context, d: &Draft) -> Result<Message> {
     for a in &d.bcc {
         b = b.bcc(a.parse().map_err(|_| "密送地址无效")?);
     }
-    let mut mixed = MultiPart::mixed().singlepart(SinglePart::plain(d.text.clone()));
+    let mut mixed =
+        if let Some(html) = d.html.as_ref().filter(|html| !html.trim().is_empty()) {
+            MultiPart::mixed().multipart(MultiPart::alternative_plain_html(
+                d.text.clone(),
+                html.clone(),
+            ))
+        } else {
+            MultiPart::mixed().singlepart(SinglePart::plain(d.text.clone()))
+        };
     let mut attachment_bytes = 0usize;
     for path in &d.attachments {
         let mut f = std::fs::File::open(path).map_err(|_| "无法打开附件")?;
@@ -1488,6 +1498,7 @@ mod tests {
             bcc: vec!["private@example.invalid".into()],
             subject: "测试主题".into(),
             text: "仅本地生成，不发送".into(),
+            html: None,
             attachments: vec![],
             reply_to_message_id: None,
             updated_at: Some(now()),

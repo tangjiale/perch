@@ -169,12 +169,6 @@ export default function Settings({
   }
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <h1>设置</h1>
-          <p>连接、模型与本地工作空间</p>
-        </div>
-      </div>
       <div className="tabs settings-tabs" role="tablist" aria-label="设置分类">
         {tabs.map(([key, name]) => (
           <button

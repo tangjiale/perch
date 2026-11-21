@@ -12,25 +12,15 @@ main.mail-page {
 }
 .workspace main.mail-page {
   padding-left: 12px;
+  padding-top: 12px;
 }
 .mail-folders-panel {
   display: flex;
   flex-direction: column;
-  padding: 18px 12px 12px 0;
+  padding: 8px 12px 12px 0;
   min-height: 0;
   border-right: 1px solid var(--line);
 }
-.mail-folders-panel > header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 10px 12px;
-}
-.mail-folders-panel h1 {
-  font-size: 21px;
-  margin: 0;
-}
-.mail-folders-panel .icon-button,
 .mail-reader-toolbar .icon-button {
   background: transparent;
   border-color: transparent;
@@ -626,10 +616,64 @@ main.mail-page {
   margin: 0;
   min-width: 0;
 }
-.mail-compose-body textarea {
-  resize: vertical;
+.mail-compose-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.mail-compose-body > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.mail-rich-editor {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.mail-rich-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 7px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.mail-rich-toolbar button {
+  width: 30px;
+  min-height: 28px;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.mail-rich-toolbar button[aria-pressed="true"] {
+  color: var(--theme-accent, var(--command));
+  background: var(--theme-hover, rgba(100, 120, 130, 0.08));
+}
+.mail-rich-content .tiptap {
   min-height: 190px;
   max-height: 35vh;
+  overflow-y: auto;
+  padding: 10px 12px;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+.mail-rich-content .tiptap:focus {
+  caret-color: var(--theme-accent, var(--command));
+}
+.mail-rich-content .tiptap p {
+  margin: 0 0 8px;
+}
+.mail-rich-content .tiptap ul,
+.mail-rich-content .tiptap ol {
+  padding-left: 24px;
+}
+.mail-rich-content .tiptap blockquote {
+  margin: 8px 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--line);
 }
 .mail-compose-attachments {
   display: flex;

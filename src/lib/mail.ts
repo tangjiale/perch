@@ -62,6 +62,7 @@ export interface MailDraft {
   bcc: string;
   subject: string;
   text: string;
+  html?: string;
   attachmentPaths: string[];
   replyToMessageId?: string;
   updatedAt?: number;
@@ -74,6 +75,7 @@ export interface StoredMailDraft {
   bcc: string[];
   subject: string;
   text: string;
+  html?: string;
   attachments: string[];
   updatedAt?: number;
 }
@@ -100,6 +102,7 @@ export function toStoredDraft(draft: MailDraft): StoredMailDraft {
     bcc: split(draft.bcc),
     subject: draft.subject,
     text: draft.text,
+    html: draft.html,
     attachments: draft.attachmentPaths,
     updatedAt: draft.updatedAt,
   };

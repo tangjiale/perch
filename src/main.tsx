@@ -22,7 +22,6 @@ import {
   FolderKanban,
   SquareCheckBig,
   Bug,
-  CalendarDays,
   LayoutGrid,
   Link2,
   KeyRound,
@@ -90,13 +89,12 @@ const navigation = [
   ["/projects", "项目", FolderKanban],
   ["/tasks", "我的任务", SquareCheckBig],
   ["/bugs", "BUG 修复", Bug],
-  ["/calendar", "日历", CalendarDays],
-  ["/apps", "应用", LayoutGrid],
+  ["/apps", "应用中心", LayoutGrid],
   ["/shared-tables", "共享链接", Link2],
   ["/password-vault", "密码库", KeyRound],
-  ["/tools", "工具", Wrench],
+  ["/tools", "工具箱", Wrench],
   ["/chat", "聊天", MessagesSquare],
-  ["/meetings", "会议", Mic],
+  ["/meetings", "会议助手", Mic],
   ["/mail", "邮件", MailIcon],
   ["/statistics", "统计", ChartNoAxesCombined],
 ] as const;
@@ -383,7 +381,7 @@ function App() {
                 />
                 <Route
                   path="/calendar"
-                  element={<Work key={`${info.workspaceId}:${info.dataRoot}`} {...props} page="calendar" search={search} />}
+                  element={<Navigate to="/tasks?view=calendar" replace />}
                 />
                 <Route
                   path="/apps"

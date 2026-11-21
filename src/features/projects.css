@@ -2,6 +2,49 @@
   width: 100%;
   overflow-x: auto;
 }
+.projects-toolbar {
+  align-items: flex-end;
+}
+.projects-toolbar > button {
+  margin-left: auto;
+}
+.projects-filter-field {
+  display: grid;
+  flex: 1 1 280px;
+  gap: 4px;
+  max-width: 360px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.projects-filter-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.projects-filter-input:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--theme-accent, #25677e) 48%, transparent);
+  outline-offset: 1px;
+}
+.projects-filter-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+}
+.projects-filter-input input:focus {
+  outline: 0;
+  box-shadow: none;
+}
 .task-detail-bar {
   display: flex;
   align-items: center;

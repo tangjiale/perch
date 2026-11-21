@@ -10,7 +10,11 @@
 }
 .bugs-toolbar {
   justify-content: space-between;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.bugs-status-row {
+  margin-bottom: 8px;
 }
 .bugs-status-filters button {
   background: transparent;

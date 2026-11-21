@@ -170,20 +170,6 @@ export default function SharedTables({ workspaceId, dataRoot, notify }: SharedTa
 
   return (
     <section className="shared-tables">
-      <header className="page-heading">
-        <h1>共享链接</h1>
-        <button
-          type="button"
-          className="primary"
-          disabled={writesDisabled}
-          onClick={() => openDialog({
-            kind: "edit",
-            draft: { name: "", creator: "", groupId: null, url: "" },
-          })}
-        >
-          <Plus size={16} /> 新增共享链接
-        </button>
-      </header>
       {!native && (
         <p className="notice shared-tables-notice" role="status">
           浏览器预览不保存数据。请在栖点桌面应用中管理共享链接。
@@ -215,6 +201,17 @@ export default function SharedTables({ workspaceId, dataRoot, notify }: SharedTa
           <label htmlFor={dateRangeId}>创建日期</label>
           <DateRangePicker id={dateRangeId} value={createdDateRange} onChange={setCreatedDateRange} />
         </div>
+        <button
+          type="button"
+          className="primary shared-tables-add"
+          disabled={writesDisabled}
+          onClick={() => openDialog({
+            kind: "edit",
+            draft: { name: "", creator: "", groupId: null, url: "" },
+          })}
+        >
+          <Plus size={16} /> 新增连接
+        </button>
       </div>
       {groupQuery.error && (
         <div className="actions shared-tables-group-error">

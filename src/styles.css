@@ -332,8 +332,17 @@ small {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
-  margin-bottom: 27px;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.page-heading > div:first-child,
+.page-heading > h1 {
+  display: none;
+}
+.page-heading > .actions,
+.page-heading > .bugs-actions,
+.page-heading .statistics-controls {
+  margin-left: auto;
 }
 .page-heading p {
   color: var(--muted);
@@ -342,8 +351,8 @@ small {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 22px;
+  gap: 8px;
+  margin-bottom: 12px;
   flex-wrap: wrap;
 }
 .toolbar .glass-select-trigger {
@@ -366,6 +375,12 @@ small {
   background: #fff;
   box-shadow: 0 1px 2px #0001;
   color: #25252d;
+}
+.task-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 .metrics {
   display: grid;
@@ -635,8 +650,8 @@ html .task-card.task-is-done .tag:not(.expired) {
   display: flex;
   align-items: flex-start;
   flex-wrap: wrap;
-  gap: 12px 24px;
-  margin-bottom: 20px;
+  gap: 8px 16px;
+  margin-bottom: 12px;
 }
 .app-category-filters {
   display: flex;
@@ -670,6 +685,7 @@ html .task-card.task-is-done .tag:not(.expired) {
   gap: 10px;
   flex-shrink: 0;
   margin-left: auto;
+  flex-wrap: wrap;
 }
 .app-category-toolbar .app-category-manage {
   flex-shrink: 0;

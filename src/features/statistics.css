@@ -3,10 +3,7 @@
 }
 .statistics-page .page-heading {
   align-items: center;
-  margin-bottom: 24px;
-}
-.statistics-page .page-heading p {
-  margin-bottom: 0;
+  margin-bottom: 12px;
 }
 .statistics-controls {
   display: flex;

@@ -11,6 +11,7 @@ import {
 } from "../lib/mail";
 import Modal from "./Modal";
 import GlassSelect from "./GlassSelect";
+import MailRichTextEditor from "./MailRichTextEditor";
 
 export default function MailComposer({
   accounts,
@@ -137,15 +138,15 @@ export default function MailComposer({
               onChange={(e) => update({ subject: e.target.value })}
             />
           </label>
-          <label className="mail-compose-body">
-            正文
-            <textarea
-              value={draft.text}
-              rows={10}
-              placeholder="写下你想说的…"
-              onChange={(e) => update({ text: e.target.value })}
+          <div className="mail-compose-body">
+            <span>正文</span>
+            <MailRichTextEditor
+              text={draft.text}
+              html={draft.html}
+              disabled={busy || sent}
+              onChange={(value) => update(value)}
             />
-          </label>
+          </div>
           <div className="mail-compose-attachments">
             {draft.attachmentPaths.map((path) => (
               <span key={path}>

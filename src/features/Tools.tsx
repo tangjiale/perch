@@ -55,41 +55,16 @@ export default function Tools({
   const kind = pathname.split("/")[2];
   return (
     <section className="tools-page">
-      <header className="tools-heading">
-        <div>
-          {kind && (
-            <button
-              className="icon-button"
-              title="返回工具列表"
-              onClick={() => navigate("/tools")}
-            >
-              <ArrowLeft size={18} />
-            </button>
-          )}
-          <div>
-            <h1>
-              {kind === "2fa"
-                ? "2FA 验证码"
-                : kind === "natapp"
-                  ? "NATAPP 内网穿透"
-                  : kind === "exchange"
-                    ? "汇率转换"
-                  : kind === "prompts"
-                    ? "提示词优化"
-                  : "工具"}
-            </h1>
-            <p>
-              {kind === "2fa"
-                ? "在本机生成动态验证码"
-                : kind === "natapp"
-                  ? "管理本机隧道与运行日志"
-                  : kind === "exchange"
-                    ? "输入一个金额，同时换算多种货币"
-                  : kind === "prompts"
-                    ? "打磨提示词，测试效果，沉淀自己的提示词库"
-                  : "常用小工具，随时打开使用"}
-            </p>
-            {kind === "natapp" && (
+      {kind && (
+        <header className="tools-heading">
+          <button
+            className="icon-button"
+            title="返回工具列表"
+            onClick={() => navigate("/tools")}
+          >
+            <ArrowLeft size={18} />
+          </button>
+          {kind === "natapp" && (
               <a
                 className="tool-website"
                 href="https://natapp.cn/"
@@ -106,10 +81,9 @@ export default function Tools({
                 官网：https://natapp.cn/
                 <ExternalLink size={13} aria-hidden="true" />
               </a>
-            )}
-          </div>
-        </div>
-      </header>
+          )}
+        </header>
+      )}
       {kind === "2fa" ? (
         <TotpTool notify={notify} />
       ) : kind === "natapp" ? (
