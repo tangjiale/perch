@@ -9,19 +9,92 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{Read, Write},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
-use tauri::{Manager, State};
+use tauri::{
+    webview::{Cookie, NewWindowResponse},
+    AppHandle, Manager, State, Url, WebviewUrl, WebviewWindowBuilder,
+};
+#[path = "natapp_portal.rs"]
+pub mod portal;
+
 const KEY: &str = "tools:natapp";
+const CONSOLE_LABEL: &str = "natapp-console";
 const LOG_LIMIT: usize = 256 * 1024;
 const PACKAGE_LIMIT: u64 = 64 * 1024 * 1024;
+
+fn is_console_url(url: &tauri::Url) -> bool {
+    url.scheme() == "https"
+        && matches!(url.host_str(), Some("natapp.cn" | "www.natapp.cn"))
+        && url.port_or_known_default() == Some(443)
+        && url.username().is_empty()
+        && url.password().is_none()
+}
+
+pub(crate) fn close_console(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(CONSOLE_LABEL) {
+        window.destroy().map_err(|_| "无法关闭原 NATAPP 控制台会话")?;
+    }
+    Ok(())
+}
+
+fn open_console(app: &AppHandle, url: Url, cookies: Vec<Cookie<'static>>) -> Result<(), String> {
+    // 官网窗口没有远程 IPC 权限，只允许在 NATAPP 官网内导航。
+    let window = if let Some(window) = app.get_webview_window(CONSOLE_LABEL) {
+        window
+    } else {
+        let blank = Url::parse("about:blank").expect("有效空白页地址");
+        let console_app = app.clone();
+        WebviewWindowBuilder::new(app, CONSOLE_LABEL, WebviewUrl::External(blank))
+            .title("NATAPP 控制台 · 栖点")
+            .inner_size(1080.0, 760.0)
+            .min_inner_size(680.0, 480.0)
+            .center()
+            .visible(false)
+            .incognito(true)
+            .devtools(false)
+            .on_navigation(|url| url.as_str() == "about:blank" || is_console_url(url))
+            .on_new_window(move |url, _| {
+                if is_console_url(&url) {
+                    if let Some(window) = console_app.get_webview_window(CONSOLE_LABEL) {
+                        let _ = window.navigate(url);
+                    }
+                }
+                NewWindowResponse::Deny
+            })
+            .build()
+            .map_err(|_| "无法打开 NATAPP 控制台")?
+    };
+    let result = (|| {
+        for cookie in &cookies {
+            window.set_cookie(cookie.clone()).map_err(|_| "无法载入 NATAPP 登录会话")?;
+        }
+        // 原生设置 Cookie 在窗口线程执行。确认已写入后再打开后台页面。
+        let stored = window.cookies_for_url(url.clone()).map_err(|_| "无法核验 NATAPP 登录会话")?;
+        if !cookies.iter().all(|cookie| stored.iter().any(|entry| {
+            entry.name() == cookie.name() && entry.value() == cookie.value()
+        })) {
+            return Err("无法载入 NATAPP 登录会话");
+        }
+        window.navigate(url).map_err(|_| "无法打开 NATAPP 控制台页面")?;
+        window.show().map_err(|_| "无法显示 NATAPP 控制台")?;
+        window.set_focus().map_err(|_| "无法切换到 NATAPP 控制台")
+    })();
+    if let Err(error) = result {
+        let _ = window.destroy();
+        return Err(error.into());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Tunnel {
@@ -29,6 +102,12 @@ struct Tunnel {
     name: String,
     revision: u64,
     encrypted_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    remote_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    remote_details: Option<portal::RemoteDetails>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    configured_target: Option<portal::TunnelTarget>,
 }
 #[derive(Clone, Debug, PartialEq)]
 struct TunnelMapping {
@@ -258,13 +337,23 @@ struct Runtime {
     token: String,
     generation: PathBuf,
     mapping: Arc<Mutex<Option<TunnelMapping>>>,
+    inspection_port: Option<u16>,
 }
 #[derive(Default)]
 struct Inner {
     processes: HashMap<String, Runtime>,
+    target_edits: HashSet<String>,
     installing: bool,
     downloaded_bytes: u64,
     total_bytes: Option<u64>,
+}
+impl Inner {
+    fn ensure_target_idle(&self, id: &str) -> Result<(), String> {
+        if self.target_edits.contains(id) {
+            return Err("该隧道的 NATAPP 配置正在保存，请稍后再试".into());
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Default)]
 pub struct NatappManager {
@@ -279,8 +368,8 @@ impl NatappManager {
     }
     pub fn ensure_idle(&self) -> Result<(), String> {
         let inner = self.inner.lock().map_err(|e| e.to_string())?;
-        if inner.installing || inner.processes.values().any(|r| r.status == "running") {
-            Err("请先停止全部 NATAPP 隧道并等待安装完成".into())
+        if inner.installing || !inner.target_edits.is_empty() || inner.processes.values().any(|r| r.status == "running") {
+            Err("请先停止全部 NATAPP 隧道并等待安装或配置修改完成".into())
         } else {
             Ok(())
         }
@@ -489,11 +578,67 @@ fn snapshot(store: &crate::storage::Store, manager: &NatappManager) -> Result<Va
     let items = read(store)?;
     let inner = manager.inner.lock().map_err(|e| e.to_string())?;
     let dir = root(store);
-    let installed = verified(&dir).unwrap_or(false);
-    Ok(
-        json!({"installed":installed,"installing":inner.installing,"platform":platform(std::env::consts::OS,std::env::consts::ARCH).map(str::to_owned).unwrap_or_else(|_|format!("{} {}",std::env::consts::OS,std::env::consts::ARCH)),"version":read_version(&dir),"dataDir":dir,"downloadedBytes":inner.downloaded_bytes,"totalBytes":inner.total_bytes,"tunnels":items.iter().map(|t|{let r=inner.processes.get(&t.id).filter(|r|r.generation==store.generation);let mapping=r.filter(|r|r.status=="running").and_then(|r|r.mapping.lock().ok().and_then(|m|m.clone()));json!({"id":t.id,"name":t.name,"revision":t.revision,"hasAuthToken":!t.encrypted_token.is_empty(),"status":r.map(|r|r.status.as_str()).unwrap_or("stopped"),"pid":r.filter(|r|r.status=="running").map(|r|r.child.id()),"lastError":r.and_then(|r|r.last_error.as_ref()),"startedAt":r.map(|r|&r.started_at),"forwardingUrl":mapping.as_ref().map(|m|&m.forwarding_url),"localAddress":mapping.as_ref().map(|m|&m.local_address)})}).collect::<Vec<_>>()}),
-    )
+    let tunnels: Vec<_> = items.iter().map(|tunnel| {
+        let runtime = inner.processes.get(&tunnel.id).filter(|run| run.generation == store.generation);
+        let running = runtime.filter(|run| run.status == "running");
+        let mapping = running.and_then(|run| run.mapping.lock().ok().and_then(|value| value.clone()));
+        json!({
+            "id": tunnel.id,
+            "name": tunnel.name,
+            "revision": tunnel.revision,
+            "hasAuthToken": !tunnel.encrypted_token.is_empty(),
+            "remoteId": tunnel.remote_id,
+            "remoteDetails": tunnel.remote_details,
+            "configuredTarget": tunnel.configured_target,
+            "status": runtime.map(|run| run.status.as_str()).unwrap_or("stopped"),
+            "pid": running.map(|run| run.child.id()),
+            "inspectionPort": running.and_then(|run| run.inspection_port),
+            "lastError": runtime.and_then(|run| run.last_error.as_ref()),
+            "startedAt": runtime.map(|run| &run.started_at),
+            "forwardingUrl": mapping.as_ref().map(|value| &value.forwarding_url),
+            "localAddress": mapping.as_ref().map(|value| &value.local_address),
+        })
+    }).collect();
+    Ok(json!({
+        "installed": verified(&dir).unwrap_or(false),
+        "installing": inner.installing,
+        "platform": platform(std::env::consts::OS, std::env::consts::ARCH)
+            .map(str::to_owned).unwrap_or_else(|_| format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)),
+        "version": read_version(&dir),
+        "dataDir": dir,
+        "downloadedBytes": inner.downloaded_bytes,
+        "totalBytes": inner.total_bytes,
+        "tunnels": tunnels,
+    }))
 }
+
+fn with_tunnel_token<T>(
+    state: &AppState,
+    workspace_id: &str,
+    id: &str,
+    revision: u64,
+    action: impl FnOnce(String) -> Result<T, String>,
+) -> Result<T, String> {
+    let store = state.store.lock().map_err(|_| "无法读取当前工作空间")?;
+    let tunnel = portal::local_tunnel(&store, workspace_id, id, revision)?;
+    let token = credential_vault::decrypt(workspace_id, &format!("natapp:{id}"), &tunnel.encrypted_token)?;
+    action(token)
+}
+
+#[tauri::command]
+pub fn natapp_reveal_token(
+    state: State<AppState>, workspace_id: String, id: String, revision: u64,
+) -> Result<String, String> {
+    with_tunnel_token(&state, &workspace_id, &id, revision, Ok)
+}
+
+#[tauri::command]
+pub fn natapp_copy_token(
+    state: State<AppState>, workspace_id: String, id: String, revision: u64,
+) -> Result<(), String> {
+    with_tunnel_token(&state, &workspace_id, &id, revision, crate::image_actions::write_clipboard_text)
+}
+
 #[tauri::command]
 pub fn natapp_state(
     state: State<AppState>,
@@ -573,15 +718,12 @@ pub fn natapp_save(
     }
     let id = value.id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     uuid::Uuid::parse_str(&id).map_err(|_| "无效隧道 ID")?;
-    if manager
-        .inner
-        .lock()
-        .map_err(|e| e.to_string())?
-        .processes
-        .get(&id)
-        .is_some_and(|r| r.status == "running")
     {
-        return Err("请先停止隧道再编辑".into());
+        let inner = manager.inner.lock().map_err(|e| e.to_string())?;
+        inner.ensure_target_idle(&id)?;
+        if inner.processes.get(&id).is_some_and(|r| r.status == "running") {
+            return Err("请先停止隧道再编辑".into());
+        }
     }
     let old = items.iter().find(|t| t.id == id);
     if old.is_some_and(|t| Some(t.revision) != value.revision) {
@@ -597,12 +739,19 @@ pub fn natapp_save(
         credential_vault::encrypt(&store.workspace_id, &format!("natapp:{id}"), token)?
     };
     let revision = old.map(|t| t.revision + 1).unwrap_or(1);
+    let previous = old.filter(|_| token.is_empty());
+    let remote_id = previous.and_then(|t| t.remote_id.clone());
+    let remote_details = previous.and_then(|t| t.remote_details.clone());
+    let configured_target = previous.and_then(|t| t.configured_target.clone());
     items.retain(|t| t.id != id);
     items.push(Tunnel {
         id,
         name: name.into(),
         revision,
         encrypted_token: encrypted,
+        remote_id,
+        remote_details,
+        configured_target,
     });
     write(&store, &items)?;
     snapshot(&store, &manager)
@@ -621,15 +770,12 @@ pub fn natapp_delete(
     if item.revision != revision {
         return Err("隧道配置已变化".into());
     }
-    if manager
-        .inner
-        .lock()
-        .map_err(|e| e.to_string())?
-        .processes
-        .get(&id)
-        .is_some_and(|r| r.status == "running")
     {
-        return Err("请先停止隧道再删除".into());
+        let inner = manager.inner.lock().map_err(|e| e.to_string())?;
+        inner.ensure_target_idle(&id)?;
+        if inner.processes.get(&id).is_some_and(|r| r.status == "running") {
+            return Err("请先停止隧道再删除".into());
+        }
     }
     let dir = root(&store).join("tunnels").join(&id);
     for ancestor in dir.ancestors() {
@@ -680,6 +826,7 @@ fn append_log(path: &Path, bytes: &[u8], token: &str) {
 }
 #[tauri::command]
 pub fn natapp_start(
+    app: AppHandle,
     state: State<AppState>,
     manager: State<NatappManager>,
     id: String,
@@ -695,12 +842,36 @@ pub fn natapp_start(
         .find(|t| t.id == id)
         .ok_or("隧道不存在")?;
     let mut inner = manager.inner.lock().map_err(|e| e.to_string())?;
+    inner.ensure_target_idle(&id)?;
     if inner
         .processes
         .get(&id)
         .is_some_and(|r| r.status == "running")
     {
         return Err("隧道已经启动".into());
+    }
+    let inspection_port = item
+        .configured_target
+        .as_ref()
+        .map(|target| {
+            let port = target.inspection_port();
+            if port.is_some() {
+                target.validate()?;
+            }
+            Ok::<_, String>(port)
+        })
+        .transpose()?
+        .flatten();
+    if let Some(port) = inspection_port {
+        let in_use = inner
+            .processes
+            .values()
+            .any(|run| run.status == "running" && run.inspection_port == Some(port));
+        if in_use || TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).is_err() {
+            return Err(format!(
+                "流量控制台端口 {port} 已占用，请修改隧道配置后再启动"
+            ));
+        }
     }
     let token = credential_vault::decrypt(
         &store.workspace_id,
@@ -812,71 +983,183 @@ pub fn natapp_start(
             token,
             generation: store.generation.clone(),
             mapping,
+            inspection_port,
         },
     );
     drop(inner);
-    monitor_runtime(manager.inner.clone(), id, child_pid);
+    monitor_runtime(manager.inner.clone(), id, child_pid, Some(app));
     snapshot(&store, &manager)
 }
-fn monitor_runtime(manager_clone: Arc<Mutex<Inner>>, id: String, child_pid: u32) {
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_millis(200));
-        let Ok(mut inner) = manager_clone.lock() else {
-            break;
-        };
-        let Some(runtime) = inner.processes.get_mut(&id) else {
-            break;
-        };
-        if runtime.status != "running" || runtime.child.id() != child_pid {
-            break;
+fn monitor_runtime(
+    manager_clone: Arc<Mutex<Inner>>,
+    id: String,
+    child_pid: u32,
+    app: Option<AppHandle>,
+) {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_millis(200));
+            let Ok(mut inner) = manager_clone.lock() else {
+                break;
+            };
+            let Some(runtime) = inner.processes.get_mut(&id) else {
+                break;
+            };
+            if runtime.status != "running" || runtime.child.id() != child_pid {
+                break;
+            }
+            match runtime.child.try_wait() {
+                Ok(Some(exit)) => {
+                    runtime.status = if exit.success() { "stopped" } else { "error" }.into();
+                    runtime.last_error = Some(format!("客户端已退出：{exit}"));
+                    let _ = fs::remove_file(&runtime.config);
+                    runtime.token.clear();
+                    clear_mapping(runtime);
+                    break;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    runtime.last_error = Some(format!("读取客户端状态失败：{e}"));
+                    let _ = runtime.child.kill();
+                    let _ = runtime.child.wait();
+                    runtime.status = "error".into();
+                    let _ = fs::remove_file(&runtime.config);
+                    runtime.token.clear();
+                    clear_mapping(runtime);
+                    break;
+                }
+            }
         }
-        match runtime.child.try_wait() {
-            Ok(Some(exit)) => {
-                runtime.status = if exit.success() { "stopped" } else { "error" }.into();
-                runtime.last_error = Some(format!("客户端已退出：{exit}"));
-                let _ = fs::remove_file(&runtime.config);
-                runtime.token.clear();
-                clear_mapping(runtime);
-                break;
-            }
-            Ok(None) => {}
-            Err(e) => {
-                runtime.last_error = Some(format!("读取客户端状态失败：{e}"));
-                let _ = runtime.child.kill();
-                let _ = runtime.child.wait();
-                runtime.status = "error".into();
-                let _ = fs::remove_file(&runtime.config);
-                runtime.token.clear();
-                clear_mapping(runtime);
-                break;
-            }
+        if let Some(app) = &app {
+            close_inspection_window(app, &id, child_pid);
         }
     });
 }
 #[tauri::command]
 pub fn natapp_stop(
+    app: AppHandle,
     state: State<AppState>,
     manager: State<NatappManager>,
     id: String,
 ) -> Result<Value, String> {
     let _op = manager.operation.lock().map_err(|e| e.to_string())?;
     let store = state.store.lock().map_err(|e| e.to_string())?;
-    {
+    let stopped_pid = {
         let mut inner = manager.inner.lock().map_err(|e| e.to_string())?;
-        if let Some(r) = inner.processes.get_mut(&id) {
-            if r.status == "running" {
-                r.child.kill().map_err(|e| e.to_string())?;
-                r.child.wait().map_err(|e| e.to_string())?;
-            }
-            r.status = "stopped".into();
-            r.last_error = None;
-            let _ = fs::remove_file(&r.config);
-            r.token.clear();
-            clear_mapping(r);
-        }
+        inner
+            .processes
+            .get_mut(&id)
+            .map(|r| {
+                if r.status == "running" {
+                    r.child.kill().map_err(|e| e.to_string())?;
+                    r.child.wait().map_err(|e| e.to_string())?;
+                }
+                r.status = "stopped".into();
+                r.last_error = None;
+                let _ = fs::remove_file(&r.config);
+                r.token.clear();
+                clear_mapping(r);
+                Ok::<_, String>(r.child.id())
+            })
+            .transpose()?
+    };
+    if let Some(pid) = stopped_pid {
+        close_inspection_window(&app, &id, pid);
     }
     snapshot(&store, &manager)
 }
+
+fn inspection_window_label(id: &str, pid: u32) -> String {
+    format!("natapp-inspection-{id}-{pid}")
+}
+
+fn close_inspection_window(app: &AppHandle, id: &str, pid: u32) {
+    if let Some(window) = app.get_webview_window(&inspection_window_label(id, pid)) {
+        let _ = window.destroy();
+    }
+}
+
+#[tauri::command]
+pub async fn natapp_open_inspection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    manager: State<'_, NatappManager>,
+    workspace_id: String,
+    id: String,
+) -> Result<(), String> {
+    let (port, pid, generation, name) = {
+        let store = state.store.lock().map_err(|_| "无法读取当前工作空间")?;
+        if store.workspace_id != workspace_id {
+            return Err("工作空间已切换，请重新打开 NATAPP 工具".into());
+        }
+        let tunnel = read(&store)?
+            .into_iter()
+            .find(|tunnel| tunnel.id == id)
+            .ok_or("隧道不存在")?;
+        let inner = manager
+            .inner
+            .lock()
+            .map_err(|_| "无法读取 NATAPP 进程状态")?;
+        let run = inner
+            .processes
+            .get(&id)
+            .filter(|run| run.generation == store.generation && run.status == "running")
+            .ok_or("请先启动该隧道")?;
+        let port = run
+            .inspection_port
+            .ok_or("请开启流量控制台并重新启动该隧道")?;
+        (port, run.child.id(), store.generation.clone(), tunnel.name)
+    };
+    let url = Url::parse(&format!("http://127.0.0.1:{port}/")).map_err(|_| "流量控制台地址无效")?;
+    let origin = url.origin();
+    if app
+        .config()
+        .build
+        .dev_url
+        .as_ref()
+        .is_some_and(|dev| dev.origin() == origin)
+    {
+        return Err("流量控制台端口与栖点开发服务冲突，请更换端口".into());
+    }
+    let socket = SocketAddr::from(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
+    TcpStream::connect_timeout(&socket, Duration::from_millis(350))
+        .map_err(|_| "流量控制台尚未就绪，请稍后再试，并核对官网中的端口配置")?;
+
+    let label = inspection_window_label(&id, pid);
+    let window = if let Some(window) = app.get_webview_window(&label) {
+        window
+    } else {
+        // 控制台会展示请求内容。使用独立的临时窗口，仅允许导航到该回环端口。
+        WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url))
+            .title(format!("流量控制台 · {name}"))
+            .inner_size(1080.0, 720.0)
+            .min_inner_size(680.0, 480.0)
+            .center()
+            .visible(false)
+            .incognito(true)
+            .devtools(false)
+            .on_navigation(move |url| {
+                url.origin() == origin && url.username().is_empty() && url.password().is_none()
+            })
+            .on_new_window(|_, _| NewWindowResponse::Deny)
+            .build()
+            .map_err(|_| "无法打开流量控制台")?
+    };
+    let running = manager.inner.lock().ok().is_some_and(|inner| {
+        inner.processes.get(&id).is_some_and(|run| {
+            run.generation == generation && run.status == "running" && run.child.id() == pid
+        })
+    });
+    if !running {
+        let _ = window.destroy();
+        return Err("隧道已停止，请重新启动后再打开流量控制台".into());
+    }
+    window
+        .show()
+        .and_then(|_| window.set_focus())
+        .map_err(|_| "无法显示流量控制台".into())
+}
+
 #[tauri::command]
 pub fn natapp_logs(
     state: State<AppState>,
@@ -1420,6 +1703,9 @@ mod tests {
                 name: "测试隧道".into(),
                 revision: 1,
                 encrypted_token: encrypted,
+                remote_id: None,
+                remote_details: None,
+                configured_target: None,
             }],
         )
         .unwrap();
@@ -1489,6 +1775,7 @@ mod tests {
                 token: "fixture".into(),
                 generation: dir.path().to_path_buf(),
                 mapping: Arc::new(Mutex::new(None)),
+                inspection_port: None,
             },
         );
         assert!(manager.maintenance_guard().is_err());
@@ -1521,9 +1808,10 @@ mod tests {
                 token: "fixture-token".into(),
                 generation: dir.path().to_path_buf(),
                 mapping: Arc::new(Mutex::new(Some(expected_mapping()))),
+                inspection_port: None,
             },
         );
-        monitor_runtime(manager.inner.clone(), "fake".into(), pid);
+        monitor_runtime(manager.inner.clone(), "fake".into(), pid, None);
         for _ in 0..50 {
             if manager.inner.lock().unwrap().processes["fake"].status != "running" {
                 break;
@@ -1652,6 +1940,9 @@ mod tests {
                 name: "测试隧道".into(),
                 revision: 1,
                 encrypted_token: "fixture-ciphertext".into(),
+                remote_id: None,
+                remote_details: None,
+                configured_target: None,
             }],
         )
         .unwrap();
@@ -1672,6 +1963,7 @@ mod tests {
                 token: String::new(),
                 generation: store.generation.clone(),
                 mapping: current.clone(),
+                inspection_port: None,
             },
         );
         assert_eq!(

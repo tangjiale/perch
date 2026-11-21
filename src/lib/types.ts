@@ -360,6 +360,23 @@ export interface NatappTunnel {
   pid?: number | null;
   lastError?: string | null;
   startedAt?: string | null;
+  remoteId?: string | null;
+  remoteDetails?: NatappRemoteDetails | null;
+  configuredTarget?: NatappTunnelTarget | null;
+  inspectionPort?: number | null;
+}
+export interface NatappRemoteDetails {
+  endpoint?: string | null;
+  protocol?: string | null;
+  plan?: string | null;
+  status?: "online" | "offline" | "disabled" | null;
+  usedBytes?: number | null;
+  limitBytes?: number | null;
+  createdAt?: string | null;
+  expiresOn?: string | null;
+  permanent: boolean;
+  trialExpiresAt?: number | null;
+  syncedAt: string;
 }
 export interface NatappState {
   installed: boolean;
@@ -376,6 +393,26 @@ export interface NatappSaveInput {
   name: string;
   revision?: number;
   authToken?: string;
+}
+export interface NatappAccountInput {
+  account: string;
+  password: string;
+}
+export interface NatappTunnelTarget {
+  localIp: string;
+  localPort: number;
+  inspection?: { enabled: boolean; port: number } | null;
+}
+export interface NatappFreeTunnelInput extends NatappTunnelTarget {
+  name: string;
+  protocol: "http" | "tcp" | "udp";
+}
+export interface NatappConfigureTargetInput {
+  id: string;
+  revision: number;
+  name: string;
+  previous: NatappTunnelTarget;
+  target: NatappTunnelTarget;
 }
 export interface NatappLogs {
   text: string;

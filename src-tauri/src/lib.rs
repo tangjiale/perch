@@ -118,6 +118,7 @@ fn data_backup(state: State<AppState>, destination: String) -> Result<(), String
 }
 #[tauri::command]
 fn storage_move(
+    app: tauri::AppHandle,
     state: State<AppState>,
     manager: State<natapp::NatappManager>,
     target: String,
@@ -129,12 +130,14 @@ fn storage_move(
     let mut store = state.store.lock().map_err(|e| e.to_string())?;
     meeting_realtime::ensure_all_idle()?;
     let next = store.migrate_copy(std::path::Path::new(&target))?;
+    let _ = natapp::close_console(&app);
     next.activate_default_bootstrap()?;
     *store = next;
     Ok(store.info())
 }
 #[tauri::command]
 fn data_restore(
+    app: tauri::AppHandle,
     state: State<AppState>,
     manager: State<natapp::NatappManager>,
     archive: String,
@@ -150,6 +153,7 @@ fn data_restore(
         std::path::Path::new(&archive),
         std::path::Path::new(&target),
     )?;
+    let _ = natapp::close_console(&app);
     next.activate_default_bootstrap()?;
     *store = next;
     Ok(store.info())
@@ -249,12 +253,22 @@ pub fn run() {
             dingtalk_calendar::dingtalk_calendar_save,
             dingtalk_calendar::dingtalk_calendar_sync,
             storage_info,
+            natapp::portal::natapp_open_console,
+            natapp::portal::natapp_account_configured,
+            natapp::portal::natapp_disconnect_account,
+            natapp::portal::natapp_sync_tunnels,
+            natapp::portal::natapp_create_free_tunnel,
+            natapp::portal::natapp_read_target,
+            natapp::portal::natapp_configure_target,
             natapp::natapp_state,
+            natapp::natapp_reveal_token,
+            natapp::natapp_copy_token,
             natapp::natapp_install,
             natapp::natapp_save,
             natapp::natapp_delete,
             natapp::natapp_start,
             natapp::natapp_stop,
+            natapp::natapp_open_inspection,
             natapp::natapp_logs,
             save_task,
             delete_task,

@@ -6,6 +6,7 @@ import type { BackupSaveInput, BackupState } from "./backup-types";
 import type { ExchangeRateSnapshot } from "./exchange-rates";
 import type { AppCredentials, AppExcelPreview, AppExcelSource, Application, BrowserBookmarkAppInput, BrowserBookmarkImportResult, BrowserBookmarks } from "./types";
 import type { SharedTable, SharedTableGroup, SharedTableGroupInput, SharedTableInput } from "./types";
+import type { NatappAccountInput, NatappConfigureTargetInput, NatappFreeTunnelInput, NatappTunnelTarget } from "./types";
 import type { PasswordVaultCopyField, PasswordVaultDraft, PasswordVaultEntry, PasswordVaultImportResult, PasswordVaultKind, PasswordVaultPreview, PasswordVaultVersion } from "./types";
 import type { BugDraft, ZentaoBug, ZentaoBugCreateOptions, ZentaoBugDraft } from "./types";
 import type { EntityKind, Base, Snapshot, StorageInfo, ZentaoTaskAssignment, ZentaoBugHistory, ZentaoAssignee, NatappState, NatappSaveInput, NatappLogs } from "./types";
@@ -136,12 +137,32 @@ export const api = {
   backupRetry: (id: string) => command<BackupState>("backup_retry", { id }),
   backupDownload: (id: string, destination: string) => command<void>("backup_download", { id, destination }),
   backupRestore: (id: string) => command<StorageInfo>("backup_restore", { id }),
+  natappOpenConsole: (workspaceId: string, purchase = false) =>
+    command<void>("natapp_open_console", { workspaceId, purchase }),
+  natappAccountConfigured: (workspaceId: string) =>
+    command<boolean>("natapp_account_configured", { workspaceId }),
+  natappDisconnectAccount: (workspaceId: string) =>
+    command<void>("natapp_disconnect_account", { workspaceId }),
+  natappSyncTunnels: (workspaceId: string, loginInput?: NatappAccountInput) =>
+    command<NatappState>("natapp_sync_tunnels", { workspaceId, loginInput }),
+  natappCreateFreeTunnel: (workspaceId: string, value: NatappFreeTunnelInput) =>
+    command<NatappState>("natapp_create_free_tunnel", { workspaceId, value }),
+  natappReadTarget: (workspaceId: string, id: string, revision: number) =>
+    command<NatappTunnelTarget | null>("natapp_read_target", { workspaceId, id, revision }),
+  natappConfigureTarget: (workspaceId: string, value: NatappConfigureTargetInput) =>
+    command<NatappState>("natapp_configure_target", { workspaceId, value }),
   natappState: () => command<NatappState>("natapp_state"),
+  natappRevealToken: (workspaceId: string, id: string, revision: number) =>
+    command<string>("natapp_reveal_token", { workspaceId, id, revision }),
+  natappCopyToken: (workspaceId: string, id: string, revision: number) =>
+    command<void>("natapp_copy_token", { workspaceId, id, revision }),
   natappInstall: () => command<NatappState>("natapp_install"),
   natappSave: (value: NatappSaveInput) => command<NatappState>("natapp_save", { value }),
   natappDelete: (id: string, revision: number) => command<NatappState>("natapp_delete", { id, revision }),
   natappStart: (id: string) => command<NatappState>("natapp_start", { id }),
   natappStop: (id: string) => command<NatappState>("natapp_stop", { id }),
+  natappOpenInspection: (workspaceId: string, id: string) =>
+    command<void>("natapp_open_inspection", { workspaceId, id }),
   natappLogs: (id: string) => command<NatappLogs>("natapp_logs", { id }),
   bugAssignees: (bugId: string) => command<ZentaoAssignee[]>("zentao_bug_assignees", { bugId }),
   localBugSave: (workspaceId: string, value: BugDraft & { revision?: number; status?: ZentaoBug["status"] }) =>

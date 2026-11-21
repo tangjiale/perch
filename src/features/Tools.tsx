@@ -3,8 +3,11 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowLeft,
+  Activity,
   Copy,
   Download,
+  Eye,
+  EyeOff,
   ExternalLink,
   KeyRound,
   Network,
@@ -21,6 +24,7 @@ import {
 import ExchangeRateTool from "./ExchangeRateTool";
 import PromptOptimizer from "./PromptOptimizer";
 import Modal from "../components/Modal";
+import GlassSelect from "../components/GlassSelect";
 import { api, native } from "../lib/api";
 import type {
   StorageInfo,
@@ -28,6 +32,9 @@ import type {
   NatappTunnel,
   NatappLogs,
   NatappSaveInput,
+  NatappFreeTunnelInput,
+  NatappTunnelTarget,
+  NatappRemoteDetails,
 } from "../lib/types";
 import { generateTotp, parseTotp, totpTiming } from "../lib/totp";
 import "./tools.css";
@@ -35,11 +42,18 @@ import "./tools.css";
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-function isWebAddress(address: string) {
+function natappEndpoint(address: string | null | undefined) {
+  if (!address) return null;
   try {
-    return ["http:", "https:"].includes(new URL(address).protocol);
+    const url = new URL(address.includes("://") ? address : `tcp://${address}`);
+    const web = url.protocol === "http:" || url.protocol === "https:";
+    return {
+      hostname: url.hostname,
+      port: url.port || (web ? (url.protocol === "http:" ? "80" : "443") : null),
+      web,
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -56,7 +70,7 @@ export default function Tools({
   return (
     <section className="tools-page">
       {kind && (
-        <header className="tools-heading">
+        <header className={kind === "natapp" ? "tools-heading natapp-tool-heading" : "tools-heading"}>
           <button
             className="icon-button"
             title="返回工具列表"
@@ -65,6 +79,7 @@ export default function Tools({
             <ArrowLeft size={18} />
           </button>
           {kind === "natapp" && (
+            <>
               <a
                 className="tool-website"
                 href="https://natapp.cn/"
@@ -81,6 +96,10 @@ export default function Tools({
                 官网：https://natapp.cn/
                 <ExternalLink size={13} aria-hidden="true" />
               </a>
+              <p className="natapp-setup-hint">
+                <strong>首次使用</strong>请先在官网注册账号，回来连接账号并同步或创建隧道，再在下方下载安装客户端。
+              </p>
+            </>
           )}
         </header>
       )}
@@ -275,6 +294,229 @@ function TotpTool({ notify }: { notify: (text: string) => void }) {
     </div>
   );
 }
+interface TargetDraft {
+  localIp: string;
+  port: string;
+  inspection?: InspectionDraft;
+}
+
+interface InspectionDraft { enabled: boolean; port: string }
+
+const emptyTarget: TargetDraft = { localIp: "", port: "" };
+const defaultInspection: InspectionDraft = { enabled: false, port: "4040" };
+const ipv4Part = String.raw`(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)`;
+const ipv4Pattern = `${ipv4Part}(?:\\.${ipv4Part}){3}`;
+
+function NatappTargetFields({ value, disabled, onChange }: {
+  value: TargetDraft;
+  disabled: boolean;
+  onChange: (value: TargetDraft) => void;
+}) {
+  return (
+    <div className="natapp-target-fields">
+      <label className="tool-field">
+        本地地址
+        <input
+          required
+          disabled={disabled}
+          placeholder="例如：127.0.0.1"
+          pattern={ipv4Pattern}
+          title="请输入 IPv4 地址"
+          value={value.localIp}
+          onChange={(event) => onChange({ ...value, localIp: event.target.value })}
+        />
+      </label>
+      <label className="tool-field">
+        本地端口
+        <input
+          required
+          type="number"
+          min={1}
+          max={65535}
+          step={1}
+          placeholder="例如：8080"
+          disabled={disabled}
+          value={value.port}
+          onChange={(event) => onChange({ ...value, port: event.target.value })}
+        />
+      </label>
+    </div>
+  );
+}
+
+function natappTargetInput(draft: TargetDraft): NatappTunnelTarget {
+  return {
+    localIp: draft.localIp.trim(),
+    localPort: Number(draft.port),
+    ...(draft.inspection && { inspection: {
+      enabled: draft.inspection.enabled,
+      port: draft.inspection.enabled ? Number(draft.inspection.port) : 4040,
+    } }),
+  };
+}
+
+function NatappInspectionFields({ value, disabled, onChange }: {
+  value: InspectionDraft; disabled: boolean; onChange: (value: InspectionDraft) => void;
+}) {
+  return (
+    <div className="natapp-inspection-fields">
+      <label className="natapp-consent">
+        <input type="checkbox" checked={value.enabled} disabled={disabled}
+          onChange={(event) => onChange({ ...value, enabled: event.target.checked })} />
+        <span>开启本地流量控制台</span>
+      </label>
+      {value.enabled && (
+        <label className="tool-field">
+          控制台端口
+          <input type="number" min={1} max={65535} step={1} required
+            disabled={disabled} value={value.port} placeholder="4040"
+            onChange={(event) => onChange({ ...value, port: event.target.value })} />
+        </label>
+      )}
+    </div>
+  );
+}
+
+function NatappCopyButton({ label, onCopy, notify }: {
+  label: string;
+  onCopy: () => Promise<void>;
+  notify: (text: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="icon-button natapp-detail-icon"
+      title={`复制${label}`}
+      aria-label={`复制${label}`}
+      onClick={async () => {
+        try {
+          await onCopy();
+          notify(`${label}已复制`);
+        } catch {
+          notify(`${label}复制失败`);
+        }
+      }}
+    >
+      <Copy size={14} aria-hidden="true" />
+    </button>
+  );
+}
+
+function NatappTokenRow({ tunnel, workspaceId, notify }: {
+  tunnel: NatappTunnel;
+  workspaceId: string;
+  notify: (text: string) => void;
+}) {
+  const [token, setToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const request = useRef(0);
+  useEffect(() => () => { request.current++; }, []);
+
+  async function toggle() {
+    if (token) {
+      setToken(null);
+      return;
+    }
+    const current = ++request.current;
+    setLoading(true);
+    try {
+      const revealed = await api.natappRevealToken(workspaceId, tunnel.id, tunnel.revision);
+      if (current === request.current) setToken(revealed);
+    } catch (error) {
+      if (current === request.current) notify(errorText(error));
+    } finally {
+      if (current === request.current) setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <dt>Token</dt>
+      <dd className="natapp-detail-value">
+        <code>{token ?? "••••••••••••"}</code>
+        <button
+          type="button"
+          className="icon-button natapp-detail-icon"
+          aria-label={token ? "隐藏隧道 Token" : "显示隧道 Token"}
+          title={token ? "隐藏隧道 Token" : "显示隧道 Token"}
+          aria-pressed={Boolean(token)}
+          disabled={loading}
+          onClick={() => void toggle()}
+        >
+          {token ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
+        </button>
+        <NatappCopyButton
+          label="隧道 Token"
+          onCopy={() => api.natappCopyToken(workspaceId, tunnel.id, tunnel.revision)}
+          notify={notify}
+        />
+      </dd>
+    </div>
+  );
+}
+
+const natappTrafficNumber = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
+const natappTrialDate = new Intl.DateTimeFormat("zh-CN", {
+  dateStyle: "short", timeStyle: "short", timeZone: "Asia/Shanghai",
+});
+const natappStatusNames = { online: "官网在线", offline: "官网离线", disabled: "官网禁用" };
+
+function natappTraffic(bytes: number) {
+  if (!bytes) return "0 MB";
+  const gb = bytes >= 1024 ** 3;
+  const size = Math.max(0.01, bytes / (gb ? 1024 ** 3 : 1024 ** 2));
+  return `${natappTrafficNumber.format(size)} ${gb ? "GB" : "MB"}`;
+}
+
+type NatappDetails = NatappRemoteDetails | null | undefined;
+
+function NatappTrafficDetails({ details }: { details: NatappDetails }) {
+  const used = details?.usedBytes;
+  const limit = details?.limitBytes;
+  return (
+    <div>
+      <dt>本月流量</dt>
+      <dd className="natapp-detail-value">
+        {used == null ? "—" : (
+          <>
+            <span>{natappTraffic(used)}{limit ? ` / ${natappTraffic(limit)}` : ""}</span>
+            {limit ? (
+              <progress className="natapp-traffic-track" aria-label="本月流量使用比例"
+                value={Math.min(limit, used)} max={limit} />
+            ) : null}
+          </>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+function NatappDates({ details }: { details: NatappDetails }) {
+  const date = details?.expiresOn;
+  const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  const days = date ? Math.round((Date.parse(date) - Date.parse(today)) / 86_400_000) : null;
+  const remaining = days === null ? "" : days < 0 ? "已过期" : days === 0 ? "今天到期" : `剩余 ${days} 天`;
+  const trialEnd = details?.trialExpiresAt ? new Date(details.trialExpiresAt * 1000) : null;
+  const expires = trialEnd ? natappTrialDate.format(trialEnd) : date || (details?.permanent ? "长期有效" : "—");
+
+  return (
+    <>
+      <div>
+        <dt>创建时间</dt>
+        <dd>{details?.createdAt?.replace("T", " ") || "—"}</dd>
+      </div>
+      <div>
+        <dt>到期时间</dt>
+        <dd className="natapp-detail-value">
+          {expires}
+          {remaining && !trialEnd && <span className="muted">{remaining}</span>}
+          {trialEnd && <span className="muted">{trialEnd.getTime() <= Date.now() ? "试用已过期" : "试用到期"}</span>}
+        </dd>
+      </div>
+    </>
+  );
+}
+
 function NatappTool({
   info,
   notify,
@@ -285,12 +527,18 @@ function NatappTool({
   const [state, setState] = useState<NatappState | null>(null);
   const [error, setError] = useState("");
   const [readError, setReadError] = useState("");
-  const [busy, setBusy] = useState("");
+  const [busy, setBusy] = useState(native ? "entry" : "");
+  const [configured, setConfigured] = useState(false);
+  const [accountForm, setAccountForm] = useState<{ account: string; password: string; agreed: boolean } | null>(null);
+  const [freeForm, setFreeForm] = useState<({ name: string; protocol: NatappFreeTunnelInput["protocol"] } & TargetDraft) | null>(null);
   const [form, setForm] = useState<{
     tunnel?: NatappTunnel;
     name: string;
     authToken: string;
   } | null>(null);
+  const [editTarget, setEditTarget] = useState<{ previous: NatappTunnelTarget; draft: TargetDraft } | null>(null);
+  const [targetLoading, setTargetLoading] = useState(false);
+  const [targetError, setTargetError] = useState("");
   const [deleting, setDeleting] = useState<NatappTunnel | null>(null);
   const [logTunnel, setLogTunnel] = useState<NatappTunnel | null>(null);
   const [logs, setLogs] = useState<NatappLogs | null>(null);
@@ -304,6 +552,39 @@ function NatappTool({
   const logBox = useRef<HTMLPreElement>(null);
   const logGeneration = useRef(0);
   const logRequest = useRef(0);
+  const editingId = form?.tunnel?.id;
+  const editingRevision = form?.tunnel?.revision;
+  useEffect(() => {
+    setEditTarget(null);
+    setTargetError("");
+    if (!native || !configured || !editingId || editingRevision === undefined) {
+      setTargetLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setTargetLoading(true);
+    void api.natappReadTarget(info.workspaceId, editingId, editingRevision)
+      .then((previous) => {
+        if (cancelled) return;
+        if (!previous) {
+          setTargetError("当前 NATAPP 账号未找到这条隧道，请先同步并核对账号。");
+          return;
+        }
+        setEditTarget({
+          previous,
+          draft: {
+            localIp: previous.localIp,
+            port: String(previous.localPort),
+            inspection: previous.inspection
+              ? { enabled: previous.inspection.enabled, port: String(previous.inspection.port) }
+              : undefined,
+          },
+        });
+      })
+      .catch((error) => { if (!cancelled) setTargetError(errorText(error)); })
+      .finally(() => { if (!cancelled) setTargetLoading(false); });
+    return () => { cancelled = true; };
+  }, [configured, editingId, editingRevision, info.workspaceId]);
   const refresh = async (force = false) => {
     if (reading.current && !force) return;
     reading.current = true;
@@ -330,17 +611,6 @@ function NatappTool({
       if (request === readRequest.current) reading.current = false;
     }
   };
-  useEffect(() => {
-    mounted.current = true;
-    if (native) void refresh();
-    const timer = window.setInterval(() => {
-      if (native) void refresh();
-    }, 1500);
-    return () => {
-      mounted.current = false;
-      window.clearInterval(timer);
-    };
-  }, []);
   const run = async (
     key: string,
     action: () => Promise<unknown>,
@@ -394,6 +664,30 @@ function NatappTool({
       if (mounted.current) setBusy("");
     }
   };
+  useEffect(() => {
+    if (!native) return;
+    mounted.current = true;
+    let cancelled = false;
+    const workspaceId = info.workspaceId;
+    void Promise.all([api.natappAccountConfigured(workspaceId), refresh(true)])
+      .then(([hasAccount]) => {
+        if (cancelled) return;
+        setConfigured(hasAccount);
+        if (hasAccount) void run("sync", () => api.natappSyncTunnels(workspaceId));
+        else setBusy("");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setError(errorText(error));
+        setBusy("");
+      });
+    const timer = window.setInterval(() => void refresh(), 1500);
+    return () => {
+      cancelled = true;
+      mounted.current = false;
+      window.clearInterval(timer);
+    };
+  }, [info.workspaceId]);
   const readLogs = async (id: string, generation: number) => {
     const request = ++logRequest.current;
     setLogLoading(true);
@@ -452,17 +746,35 @@ function NatappTool({
   }, [logTunnel?.id]);
   const save = (event: FormEvent) => {
     event.preventDefault();
-    if (!form || busy) return;
+    if (!form || busy || targetLoading) return;
     const value: NatappSaveInput = {
       id: form.tunnel?.id,
       revision: form.tunnel?.revision,
       name: form.name.trim(),
       ...(form.authToken.trim() ? { authToken: form.authToken.trim() } : {}),
     };
+    const target = editTarget && natappTargetInput(editTarget.draft);
+    const targetChanged = editTarget && target &&
+      (target.localIp !== editTarget.previous.localIp ||
+        target.localPort !== editTarget.previous.localPort ||
+        target.inspection?.enabled !== editTarget.previous.inspection?.enabled ||
+        (target.inspection?.enabled && target.inspection.port !== editTarget.previous.inspection?.port));
+    if (targetChanged && value.authToken) {
+      setError("请先保存隧道配置，再单独更换 authToken。");
+      return;
+    }
     void run(
       "save",
       async () => {
-        const next = await api.natappSave(value);
+        const next = targetChanged && editTarget && target && form.tunnel
+          ? await api.natappConfigureTarget(info.workspaceId, {
+              id: form.tunnel.id,
+              revision: form.tunnel.revision,
+              name: value.name,
+              previous: editTarget.previous,
+              target,
+            })
+          : await api.natappSave(value);
         if (mounted.current) setForm(null);
         return next;
       },
@@ -567,163 +879,345 @@ function NatappTool({
             <div>
               <h2>穿透列表</h2>
               <p className="tool-hint">
-                每个隧道使用独立 authToken，启动后可查看实时输出。
+                连接 NATAPP 账号后可同步隧道和创建免费隧道。
               </p>
             </div>
-            <button
-              className="primary"
-              disabled={Boolean(busy)}
-              onClick={() => setForm({ name: "", authToken: "" })}
-            >
-              <Plus size={16} />
-              添加隧道
-            </button>
+            <div className="tool-actions natapp-heading-actions">
+              <button
+                disabled={Boolean(busy)}
+                onClick={() => void run("console", () => api.natappOpenConsole(info.workspaceId))}
+              >
+                <ExternalLink size={15} />
+                {busy === "console" && !freeForm ? "正在打开…" : "NATAPP 控制台"}
+              </button>
+              <button
+                disabled={Boolean(busy)}
+                onClick={() => {
+                  setError("");
+                  setAccountForm({ account: "", password: "", agreed: false });
+                }}
+              >
+                <KeyRound size={15} />
+                {configured ? "更换账号" : "连接账号"}
+              </button>
+              {configured && (
+                <button
+                  disabled={Boolean(busy)}
+                  onClick={() => void run("sync", () => api.natappSyncTunnels(info.workspaceId), "隧道已同步")}
+                >
+                  <RefreshCw size={15} />
+                  {busy === "sync" ? "同步中…" : "同步隧道"}
+                </button>
+              )}
+              <button
+                disabled={Boolean(busy)}
+                onClick={() => setForm({ name: "", authToken: "" })}
+              >
+                手动添加
+              </button>
+              <button
+                className="primary"
+                disabled={Boolean(busy)}
+                onClick={() => {
+                  setError("");
+                  setFreeForm({ name: "", protocol: "http", localIp: "127.0.0.1", port: "", inspection: defaultInspection });
+                }}
+              >
+                <Plus size={16} />
+                创建隧道
+              </button>
+            </div>
           </div>
           {!state.installed && (
             <p className="tool-hint">
-              先添加隧道并填写 authToken，再下载并安装客户端。
+              先同步、创建或手动添加隧道，再安装客户端。
             </p>
           )}
           {state.tunnels.length === 0 ? (
             <div className="tool-empty">
               <Network size={30} />
               <p>还没有隧道</p>
-              <span>添加一个隧道，填写 NATAPP 的 authToken 后启动。</span>
+              <span>连接账号同步已有隧道，或创建一条新隧道。</span>
             </div>
           ) : (
             <div className="natapp-list">
-              {state.tunnels.map((tunnel) => (
-                <article className="natapp-row" key={tunnel.id}>
-                  <div className="natapp-row-name">
-                    <strong>{tunnel.name}</strong>
-                    <span className={`natapp-status ${tunnel.status}`}>
-                      {names[tunnel.status]}
-                    </span>
-                    {tunnel.pid && <small>PID {tunnel.pid}</small>}
-                    {(tunnel.forwardingUrl?.trim() ||
-                      tunnel.localAddress?.trim()) && (
+              {state.tunnels.map((tunnel) => {
+                const details = tunnel.remoteDetails;
+                const address = tunnel.forwardingUrl || details?.endpoint;
+                const forwarding = natappEndpoint(address);
+                const target = tunnel.configuredTarget;
+                const local = natappEndpoint(tunnel.localAddress);
+                const localAddress = local?.hostname || target?.localIp;
+                const localPort = local?.port || target?.localPort;
+                return (
+                  <article className="natapp-row" key={tunnel.id}>
+                    <div className="natapp-row-title">
+                      <strong>{tunnel.name}</strong>
+                      {details?.protocol && <span className="natapp-status natapp-protocol">{details.protocol}</span>}
+                      {details?.plan && <span className="natapp-status">{details.plan}</span>}
+                      {details?.status && (
+                        <span className={`natapp-status ${details.status === "online" ? "running" : ""}`}
+                          title={`同步于 ${new Date(details.syncedAt).toLocaleString("zh-CN")}`}>
+                          {natappStatusNames[details.status]}
+                        </span>
+                      )}
+                      <span className={`natapp-status ${tunnel.status}`}>本机{names[tunnel.status]}</span>
+                      {tunnel.pid && <small className="muted">PID {tunnel.pid}</small>}
+                    </div>
+                    <div className="tool-actions natapp-row-actions">
+                      {tunnel.status === "running" ||
+                      tunnel.status === "starting" ? (
+                        <button
+                          disabled={Boolean(busy)}
+                          onClick={() =>
+                            void run(tunnel.id, () => api.natappStop(tunnel.id))
+                          }
+                        >
+                          <Square size={14} className="natapp-stop-icon" />
+                          停止
+                        </button>
+                      ) : (
+                        <button
+                          disabled={
+                            Boolean(busy) ||
+                            !state.installed ||
+                            !tunnel.hasAuthToken
+                          }
+                          onClick={() =>
+                            void run(tunnel.id, () => api.natappStart(tunnel.id))
+                          }
+                        >
+                          <Play size={14} className="natapp-start-icon" />
+                          启动
+                        </button>
+                      )}
+                      <button
+                        disabled={Boolean(busy)}
+                        onClick={() => setLogTunnel(tunnel)}
+                      >
+                        <ScrollText size={15} />
+                        日志
+                      </button>
+                      {tunnel.inspectionPort && (
+                        <button
+                          disabled={Boolean(busy)}
+                          title={`打开本地流量控制台 · 端口 ${tunnel.inspectionPort}`}
+                          onClick={() => void run("inspection", () => api.natappOpenInspection(info.workspaceId, tunnel.id))}
+                        >
+                          <Activity size={15} />
+                          流量控制台
+                        </button>
+                      )}
+                      <button
+                        className="icon-button"
+                        title="编辑隧道"
+                        disabled={
+                          Boolean(busy) ||
+                          tunnel.status === "running" ||
+                          tunnel.status === "starting"
+                        }
+                        onClick={() => {
+                          setError("");
+                          setEditTarget(null);
+                          setTargetError("");
+                          setTargetLoading(configured);
+                          setForm({ tunnel, name: tunnel.name, authToken: "" });
+                        }}
+                      >
+                        <Pencil size={15} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        title="删除隧道"
+                        disabled={
+                          Boolean(busy) ||
+                          tunnel.status === "running" ||
+                          tunnel.status === "starting"
+                        }
+                        onClick={() => setDeleting(tunnel)}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                    <div className="natapp-row-details">
                       <dl className="natapp-addresses">
-                        {tunnel.forwardingUrl?.trim() && (
+                        {tunnel.remoteId && (
                           <div>
-                            <dt>访问地址</dt>
-                            <dd>
-                              {isWebAddress(tunnel.forwardingUrl) ? (
-                                <a
-                                  className="natapp-address-link"
-                                  href={tunnel.forwardingUrl.trim()}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  title="在浏览器中打开访问地址"
-                                  onClick={(event) => {
-                                    if (!native) return;
-                                    event.preventDefault();
-                                    void openUrl(tunnel.forwardingUrl!.trim()).catch((error) =>
-                                      notify(`打开访问地址失败：${errorText(error)}`),
-                                    );
-                                  }}
-                                >
-                                  {tunnel.forwardingUrl}
-                                </a>
-                              ) : tunnel.forwardingUrl}
-                              <button
-                                type="button"
-                                className="icon-button natapp-copy-address"
-                                title="复制访问地址"
-                                aria-label="复制访问地址"
-                                onClick={async () => {
-                                  try {
-                                    await navigator.clipboard.writeText(
-                                      tunnel.forwardingUrl!,
-                                    );
-                                    notify("访问地址已复制");
-                                  } catch (error) {
-                                    notify(`复制失败：${errorText(error)}`);
-                                  }
-                                }}
-                              >
-                                <Copy size={14} aria-hidden="true" />
-                              </button>
+                            <dt>隧道 ID</dt>
+                            <dd className="natapp-detail-value">
+                              <code>{tunnel.remoteId}</code>
+                              <NatappCopyButton label="隧道 ID"
+                                onCopy={() => navigator.clipboard.writeText(tunnel.remoteId!)} notify={notify} />
                             </dd>
                           </div>
                         )}
-                        {tunnel.localAddress?.trim() && (
+                        {tunnel.hasAuthToken && (
+                          <NatappTokenRow key={`${info.workspaceId}:${tunnel.id}:${tunnel.revision}`}
+                            tunnel={tunnel} workspaceId={info.workspaceId} notify={notify} />
+                        )}
+                        <NatappTrafficDetails details={details} />
+                      </dl>
+                      <dl className="natapp-addresses">
+                        <div>
+                          <dt>转发地址</dt>
+                          <dd className="natapp-detail-value">
+                            {address ? (
+                              <>
+                                {forwarding?.web ? (
+                                  <a
+                                    className="natapp-address-link"
+                                    href={address}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="在浏览器中打开转发地址"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      void openUrl(address).catch(() => notify("打开转发地址失败"));
+                                    }}
+                                  >
+                                    {address}
+                                  </a>
+                                ) : <span>{address}</span>}
+                                <NatappCopyButton label="转发地址"
+                                  onCopy={() => navigator.clipboard.writeText(address)} notify={notify} />
+                              </>
+                            ) : "—"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>转发端口</dt>
+                          <dd>{forwarding?.port || "—"}</dd>
+                        </div>
+                        <div>
+                          <dt>本地映射</dt>
+                          <dd>{localAddress && localPort ? `${localAddress}:${localPort}` : "—"}</dd>
+                        </div>
+                      </dl>
+                      <dl className="natapp-addresses">
+                        <NatappDates details={details} />
+                        {target?.inspection && (
                           <div>
-                            <dt>本地映射</dt>
-                            <dd>{tunnel.localAddress}</dd>
+                            <dt>控制台</dt>
+                            <dd>{target.inspection.enabled ? `已开启 · ${target.inspection.port}` : "已关闭"}</dd>
                           </div>
                         )}
                       </dl>
-                    )}
+                    </div>
                     {tunnel.lastError && (
                       <p className="tool-error">{tunnel.lastError}</p>
                     )}
-                  </div>
-                  <div className="tool-actions">
-                    {tunnel.status === "running" ||
-                    tunnel.status === "starting" ? (
-                      <button
-                        disabled={Boolean(busy)}
-                        onClick={() =>
-                          void run(tunnel.id, () => api.natappStop(tunnel.id))
-                        }
-                      >
-                        <Square size={14} className="natapp-stop-icon" />
-                        停止
-                      </button>
-                    ) : (
-                      <button
-                        disabled={
-                          Boolean(busy) ||
-                          !state.installed ||
-                          !tunnel.hasAuthToken
-                        }
-                        onClick={() =>
-                          void run(tunnel.id, () => api.natappStart(tunnel.id))
-                        }
-                      >
-                        <Play size={14} className="natapp-start-icon" />
-                        启动
-                      </button>
-                    )}
-                    <button
-                      disabled={Boolean(busy)}
-                      onClick={() => setLogTunnel(tunnel)}
-                    >
-                      <ScrollText size={15} />
-                      日志
-                    </button>
-                    <button
-                      className="icon-button"
-                      title="编辑隧道"
-                      disabled={
-                        Boolean(busy) ||
-                        tunnel.status === "running" ||
-                        tunnel.status === "starting"
-                      }
-                      onClick={() =>
-                        setForm({ tunnel, name: tunnel.name, authToken: "" })
-                      }
-                    >
-                      <Pencil size={15} />
-                    </button>
-                    <button
-                      className="icon-button"
-                      title="删除隧道"
-                      disabled={
-                        Boolean(busy) ||
-                        tunnel.status === "running" ||
-                        tunnel.status === "starting"
-                      }
-                      onClick={() => setDeleting(tunnel)}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           )}
         </div>
+      )}
+      {accountForm && (
+        <Modal title="连接 NATAPP 账号" onClose={() => setAccountForm(null)} busy={busy === "connect" || busy === "disconnect"}>
+          <form className="tool-dialog-form" onSubmit={(event) => {
+            event.preventDefault();
+            if (!accountForm.agreed) return;
+            const { account, password } = accountForm;
+            void run("connect", async () => {
+              const next = await api.natappSyncTunnels(info.workspaceId, { account, password });
+              if (mounted.current) {
+                setConfigured(true);
+                setAccountForm(null);
+              }
+              return next;
+            }, "NATAPP 账号已连接，隧道已同步");
+          }}>
+            <label className="tool-field">
+              账号
+              <input required autoComplete="off" value={accountForm.account} disabled={Boolean(busy)}
+                placeholder="手机号码、邮箱或昵称"
+                onChange={(event) => setAccountForm({ ...accountForm, account: event.target.value })} />
+            </label>
+            <label className="tool-field">
+              密码
+              <input required type="password" autoComplete="new-password" value={accountForm.password} disabled={Boolean(busy)}
+                onChange={(event) => setAccountForm({ ...accountForm, password: event.target.value })} />
+            </label>
+            <label className="natapp-consent">
+              <input type="checkbox" required checked={accountForm.agreed} disabled={Boolean(busy)}
+                onChange={(event) => setAccountForm({ ...accountForm, agreed: event.target.checked })} />
+              <span>我同意 NATAPP 服务协议及隐私政策，并在当前工作空间加密保存账号密码。</span>
+            </label>
+            <div className="tool-actions">
+              {configured && (
+                <button type="button" disabled={Boolean(busy)} onClick={() => void run("disconnect", async () => {
+                  await api.natappDisconnectAccount(info.workspaceId);
+                  if (mounted.current) {
+                    setConfigured(false);
+                    setAccountForm(null);
+                  }
+                }, "已断开 NATAPP 账号")}>
+                  断开账号
+                </button>
+              )}
+              <button type="button" onClick={() => void run("terms", () => openUrl("https://natapp.cn/article/serviceagreement"))} disabled={Boolean(busy)}>
+                查看官网协议
+              </button>
+              <button className="primary" disabled={Boolean(busy) || !accountForm.agreed}>
+                {busy === "connect" ? "登录中…" : "登录并同步"}
+              </button>
+            </div>
+            {error && <p className="tool-error" role="alert">{error}</p>}
+          </form>
+        </Modal>
+      )}
+      {freeForm && (
+        <Modal title="创建 NATAPP 隧道" onClose={() => setFreeForm(null)} busy={busy === "create"}>
+          <form className="tool-dialog-form" onSubmit={(event) => {
+            event.preventDefault();
+            if (!configured) return;
+            const value = {
+              name: freeForm.name.trim(),
+              protocol: freeForm.protocol,
+              ...natappTargetInput({ ...freeForm, inspection: freeForm.protocol === "http" ? freeForm.inspection : undefined }),
+            };
+            void run("create", async () => {
+              const next = await api.natappCreateFreeTunnel(info.workspaceId, value);
+              if (mounted.current) setFreeForm(null);
+              return next;
+            }, "免费隧道已创建并添加到列表");
+          }}>
+            {!configured && <p className="tool-hint">连接 NATAPP 账号后可在这里创建免费隧道。</p>}
+            <label className="tool-field">
+              隧道名称
+              <input required maxLength={16} disabled={!configured || Boolean(busy)} value={freeForm.name}
+                onChange={(event) => setFreeForm({ ...freeForm, name: event.target.value })} />
+            </label>
+            <label className="tool-field">
+              协议
+              <GlassSelect aria-label="协议" value={freeForm.protocol} disabled={!configured || Boolean(busy)}
+                options={[{ value: "http", label: "Web (HTTP)" }, { value: "tcp", label: "TCP" }, { value: "udp", label: "UDP" }]}
+                onValueChange={(protocol) => setFreeForm({ ...freeForm, protocol: protocol as NatappFreeTunnelInput["protocol"] })} />
+            </label>
+            <NatappTargetFields
+              value={freeForm}
+              disabled={!configured || Boolean(busy)}
+              onChange={(target) => setFreeForm({ ...freeForm, ...target })}
+            />
+            {freeForm.protocol === "http" && (
+              <NatappInspectionFields
+                value={freeForm.inspection ?? defaultInspection}
+                disabled={!configured || Boolean(busy)}
+                onChange={(inspection) => setFreeForm({ ...freeForm, inspection })}
+              />
+            )}
+            <div className="tool-actions">
+              <button type="button" disabled={Boolean(busy)} onClick={() => void run("console", () => api.natappOpenConsole(info.workspaceId, true))}>
+                {busy === "console" ? "正在打开…" : "查看付费方案"}
+              </button>
+              <button className="primary" disabled={!configured || Boolean(busy) || !freeForm.name.trim()}>
+                {busy === "create" ? "创建中…" : "创建免费隧道"}
+              </button>
+            </div>
+            {error && <p className="tool-error" role="alert">{error}</p>}
+          </form>
+        </Modal>
       )}
       {form && (
         <Modal
@@ -764,6 +1258,26 @@ function NatappTool({
                 }
               />
             </label>
+            {form.tunnel && (
+              <>
+                <NatappTargetFields
+                  value={editTarget?.draft ?? emptyTarget}
+                  disabled={!editTarget || targetLoading || Boolean(busy)}
+                  onChange={(draft) => setEditTarget((current) => current && { ...current, draft })}
+                />
+                {editTarget?.draft.inspection && (
+                  <NatappInspectionFields
+                    value={editTarget.draft.inspection}
+                    disabled={targetLoading || Boolean(busy)}
+                    onChange={(inspection) => setEditTarget((current) =>
+                      current && { ...current, draft: { ...current.draft, inspection } })}
+                  />
+                )}
+                {targetLoading && <p className="tool-hint" role="status">正在读取 NATAPP 配置…</p>}
+                {!configured && <p className="tool-hint">连接对应的 NATAPP 账号后可配置地址和端口。</p>}
+                {targetError && <p className="tool-hint" role="alert">{targetError}</p>}
+              </>
+            )}
             <p className="tool-hint">
               从 NATAPP 官网隧道列表复制 16 位字母或数字的
               authToken，请勿填写账户 API Token。 authToken
@@ -784,7 +1298,7 @@ function NatappTool({
               </button>
               <button
                 className="primary"
-                disabled={Boolean(busy) || !form.name.trim()}
+                disabled={Boolean(busy) || targetLoading || !form.name.trim()}
               >
                 {busy === "save" ? "保存中…" : "保存"}
               </button>

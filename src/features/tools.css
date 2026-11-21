@@ -32,6 +32,22 @@
 .tool-website:hover {
   text-decoration: underline;
 }
+.natapp-tool-heading {
+  flex-wrap: wrap;
+}
+.natapp-tool-heading .tool-website {
+  margin-top: 0;
+  white-space: nowrap;
+}
+.natapp-tool-heading .natapp-setup-hint {
+  flex: 1 1 420px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.natapp-setup-hint strong {
+  margin-right: 6px;
+}
 .tools-heading p,
 .tool-card p {
   color: var(--muted);
@@ -205,6 +221,34 @@
   justify-content: space-between;
   margin-bottom: 16px;
 }
+.natapp-heading-actions {
+  flex-wrap: wrap;
+}
+.natapp-heading-actions button {
+  white-space: nowrap;
+}
+.natapp-consent {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.natapp-consent input {
+  width: auto;
+  flex: 0 0 auto;
+}
+.natapp-target-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(100px, 1fr);
+  gap: 12px;
+}
+.natapp-inspection-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(100px, 1fr);
+  align-items: center;
+  gap: 12px;
+}
 .tool-empty {
   text-align: center;
   padding: 35px 12px;
@@ -221,33 +265,46 @@
   font-size: 12px;
 }
 .natapp-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 15px;
-  padding: 16px 0;
+  gap: 8px 16px;
+  padding: 12px 0;
   border-top: 1px solid var(--line);
 }
-.natapp-row-name {
-  min-width: 0;
-  flex: 1;
-}
-.natapp-row-name strong {
+.natapp-row-title strong {
   overflow-wrap: anywhere;
 }
-.natapp-row-name small {
-  display: inline-block;
-  margin-left: 10px;
-  color: var(--muted);
+.natapp-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.natapp-row-actions {
+  flex-wrap: wrap;
+}
+.natapp-row-details {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 4px 24px;
+}
+.natapp-row > .tool-error {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 .natapp-status {
   display: inline-flex;
-  margin-left: 12px;
   border-radius: 5px;
   padding: 2px 7px;
   font-size: 11px;
   background: #89899415;
   color: var(--muted);
+}
+.natapp-protocol {
+  color: var(--command);
+  background: color-mix(in srgb, var(--command) 12%, transparent);
 }
 .natapp-status.running {
   color: #289665;
@@ -293,8 +350,7 @@
 }
 @media (max-width: 760px) {
   .natapp-row {
-    align-items: flex-start;
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
   }
   .tool-section-heading {
     align-items: flex-start;
@@ -306,14 +362,15 @@
 }
 
 .natapp-addresses {
-  margin: 7px 0 0;
+  margin: 0;
   font-size: 12px;
 }
 .natapp-addresses > div {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
   gap: 8px;
-  margin-top: 3px;
+  min-height: 23px;
 }
 .natapp-addresses dt {
   color: var(--muted);
@@ -323,12 +380,26 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.natapp-detail-value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.natapp-detail-value code {
+  font-size: inherit;
+}
+.natapp-traffic-track {
+  width: 112px;
+  height: 6px;
+  accent-color: var(--command);
+}
 .natapp-address-link {
   color: var(--command);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-button.natapp-copy-address {
+button.natapp-detail-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -336,8 +407,6 @@ button.natapp-copy-address {
   height: 24px;
   min-height: 24px;
   padding: 4px;
-  margin-left: 6px;
-  vertical-align: middle;
 }
 .natapp-start-icon {
   color: var(--theme-green, #289665);
