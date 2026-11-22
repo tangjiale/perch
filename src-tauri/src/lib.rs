@@ -109,13 +109,20 @@ fn delete_task(state: State<AppState>, id: String, revision: Option<i64>) -> Res
         .delete("task", &id, revision)
 }
 #[tauri::command]
-fn data_backup(state: State<AppState>, destination: String) -> Result<(), String> {
-    let _backup_guard = backup::maintenance_guard()?;
-    state
-        .store
-        .lock()
-        .map_err(|e| e.to_string())?
-        .backup(std::path::Path::new(&destination))
+async fn data_backup(app: tauri::AppHandle, destination: String) -> Result<(), String> {
+    let backup_guard = backup::maintenance_guard()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _backup_guard = backup_guard;
+        let source = app
+            .state::<AppState>()
+            .store
+            .lock()
+            .map_err(|_| "工作空间不可用")?
+            .backup_source();
+        source.write(std::path::Path::new(&destination), |_| {})
+    })
+    .await
+    .map_err(|_| "完整备份导出异常中断，请重试")?
 }
 #[tauri::command]
 fn storage_move(

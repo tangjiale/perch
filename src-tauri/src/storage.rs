@@ -55,6 +55,11 @@ pub struct BackupProgress {
     pub total: u64,
 }
 
+pub(crate) struct BackupSource {
+    generation: PathBuf,
+    workspace_id: String,
+}
+
 struct TemporaryFile(PathBuf);
 
 impl Drop for TemporaryFile {
@@ -1642,7 +1647,24 @@ impl Store {
         self.backup_with_progress(destination, |_| {})
     }
 
+    pub(crate) fn backup_source(&self) -> BackupSource {
+        BackupSource {
+            generation: self.generation.clone(),
+            workspace_id: self.workspace_id.clone(),
+        }
+    }
+
     pub fn backup_with_progress(
+        &self,
+        destination: &Path,
+        progress: impl FnMut(BackupProgress),
+    ) -> Result<(), String> {
+        self.backup_source().write(destination, progress)
+    }
+}
+
+impl BackupSource {
+    pub(crate) fn write(
         &self,
         destination: &Path,
         mut progress: impl FnMut(BackupProgress),
@@ -1650,7 +1672,19 @@ impl Store {
         if destination.exists() {
             return Err("备份目标文件已存在，请选择其他文件名".into());
         }
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        // SQLite 在线备份使用独立连接，导出期间页面仍可读写工作空间。
+        let mut conn = Connection::open_with_flags(
+            self.generation.join("workbench.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .map_err(|e| format!("无法打开备份源数据库：{e}"))?;
+        let source = conn.transaction().map_err(|e| e.to_string())?;
+        // 固定 WAL 快照，避免录音、同步等持续写入反复重置备份进度。
+        source
+            .query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|e| e.to_string())?;
         let staging = self
             .generation
             .join("staging")
@@ -1658,7 +1692,7 @@ impl Store {
         let _staging_cleanup = TemporaryFile(staging.clone());
         let mut target = Connection::open(&staging).map_err(|e| e.to_string())?;
         let backup =
-            rusqlite::backup::Backup::new(&conn, &mut target).map_err(|e| e.to_string())?;
+            rusqlite::backup::Backup::new(&source, &mut target).map_err(|e| e.to_string())?;
         progress(BackupProgress {
             phase: "database",
             completed: 0,
@@ -1688,16 +1722,8 @@ impl Store {
         }
         drop(backup);
         drop(target);
-        let archive_staging = destination.with_extension(format!("{}.tmp", uuid::Uuid::now_v7()));
-        let _archive_cleanup = TemporaryFile(archive_staging.clone());
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&archive_staging)
-            .map_err(|e| e.to_string())?;
-        let mut zip = zip::ZipWriter::new(file);
-        let options = zip::write::SimpleFileOptions::default();
-        let mut manifest = vec![];
+        source.commit().map_err(|e| e.to_string())?;
+        drop(conn);
         let mut files = vec![(staging.clone(), "workbench.sqlite3".to_string())];
         collect_files(
             &self.generation.join("objects"),
@@ -1709,6 +1735,17 @@ impl Store {
             sum.checked_add(size)
                 .ok_or_else(|| "备份文件总大小超出范围".to_string())
         })?;
+        // 先收集内容再打开输出，避免把正在生成的 ZIP 收进备份自身。
+        let archive_staging = destination.with_extension(format!("{}.tmp", uuid::Uuid::now_v7()));
+        let _archive_cleanup = TemporaryFile(archive_staging.clone());
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&archive_staging)
+            .map_err(|e| e.to_string())?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        let mut manifest = vec![];
         let mut completed = 0u64;
         let mut buffer = vec![0u8; 128 * 1024];
         progress(BackupProgress {
@@ -2577,6 +2614,57 @@ mod tests {
             fs::read(restored.generation.join("objects/progress-test.bin")).unwrap(),
             bytes
         );
+    }
+
+    #[test]
+    fn local_backup_export_keeps_an_isolated_snapshot() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let store = Store::open_at(sandbox.path().join("source")).unwrap();
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute("INSERT INTO settings VALUES ('export-test', json_quote('before'))", [])
+            .unwrap();
+        let archive = store.generation.join("objects/export.zip");
+        let mut wrote_during_export = false;
+        store
+            .backup_source()
+            .write(&archive, |event| {
+                if event.phase == "database" && !wrote_during_export {
+                    store
+                        .conn
+                        .try_lock()
+                        .unwrap()
+                        .execute(
+                            "UPDATE settings SET value=json_quote('after') WHERE key='export-test'",
+                            [],
+                        )
+                        .unwrap();
+                    wrote_during_export = true;
+                }
+            })
+            .unwrap();
+        assert!(wrote_during_export);
+        let zip = zip::ZipArchive::new(File::open(&archive).unwrap()).unwrap();
+        assert_eq!(zip.len(), 2);
+        assert!(zip.file_names().all(|name| !name.ends_with(".tmp")));
+        drop(zip);
+
+        let restored = Store::restore_to(&archive, &sandbox.path().join("restored")).unwrap();
+        for (workspace, expected) in [(&store, "after"), (&restored, "before")] {
+            let value: String = workspace
+                .conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT json_extract(value, '$') FROM settings WHERE key='export-test'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(value, expected);
+        }
     }
     #[test]
     fn tools_follow_data_migration_without_copying_runtime_credentials() {
