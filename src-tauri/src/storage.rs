@@ -31,6 +31,23 @@ pub struct Store {
     _lock: File,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SaveMode {
+    Local,
+    TrustedRemote,
+    ZentaoSnapshot,
+}
+
+impl SaveMode {
+    fn ordinary(trusted_remote: bool) -> Self {
+        if trusted_remote {
+            Self::TrustedRemote
+        } else {
+            Self::Local
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BackupProgress {
     pub phase: &'static str,
@@ -678,13 +695,13 @@ impl Store {
         }
         let mut output = Vec::with_capacity(changes.len());
         for (kind, value) in changes {
-            output.push(Self::save_in_transaction(
-                &tx,
-                &self.workspace_id,
-                entity_table(kind)?,
-                value,
-                trusted_remote,
-            )?);
+            let table = entity_table(kind)?;
+            let mode = if connection.is_some() && matches!(table, "tasks" | "projects") {
+                SaveMode::ZentaoSnapshot
+            } else {
+                SaveMode::ordinary(trusted_remote)
+            };
+            output.push(Self::write_entity(&tx, &self.workspace_id, table, value, mode)?);
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(output)
@@ -1300,9 +1317,26 @@ impl Store {
         tx: &rusqlite::Transaction<'_>,
         workspace: &str,
         table: &str,
-        mut value: Value,
+        value: Value,
         trusted_remote: bool,
     ) -> Result<Value, String> {
+        Self::write_entity(
+            tx,
+            workspace,
+            table,
+            value,
+            SaveMode::ordinary(trusted_remote),
+        )
+    }
+
+    fn write_entity(
+        tx: &rusqlite::Transaction<'_>,
+        workspace: &str,
+        table: &str,
+        mut value: Value,
+        mode: SaveMode,
+    ) -> Result<Value, String> {
+        let trusted_remote = mode != SaveMode::Local;
         if !value.is_object() {
             return Err("数据必须是对象".into());
         }
@@ -1350,6 +1384,7 @@ impl Store {
             )
             .optional()
             .map_err(|e| e.to_string())?;
+        let mut current_snapshot = None;
         let revision = if let Some((revision, old)) = &previous {
             if value.get("revision").and_then(Value::as_i64) != Some(*revision) {
                 return Err("数据已被修改，请刷新后重试".into());
@@ -1365,6 +1400,9 @@ impl Store {
                 return Err("禅道来源及项目关联只能通过同步更新".into());
             }
             value["createdAt"] = old["createdAt"].clone();
+            if mode == SaveMode::ZentaoSnapshot {
+                current_snapshot = Some(old);
+            }
             revision + 1
         } else {
             if value
@@ -1401,8 +1439,6 @@ impl Store {
             value["versions"] = json!(versions);
         }
         value["id"] = json!(id);
-        value["revision"] = json!(revision);
-        value["updatedAt"] = json!(now);
         if table == "messages" && previous.is_none() {
             let sequence: i64 = tx
                 .query_row(
@@ -1459,6 +1495,15 @@ impl Store {
             };
             value.as_object_mut().unwrap().remove("closedAt");
         }
+        if let Some(old) = current_snapshot {
+            // 规范化后的全部业务字段参与比较，忽略落库时间。
+            value["updatedAt"] = old["updatedAt"].clone();
+            if value == old {
+                return Ok(old);
+            }
+        }
+        value["revision"] = json!(revision);
+        value["updatedAt"] = json!(now);
         let stored_data = if table == "connections" {
             crate::credential_vault::encrypt_json(workspace, &format!("connections:{id}"), &value)?
         } else {

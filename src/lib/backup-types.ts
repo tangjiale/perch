@@ -8,9 +8,6 @@ export interface BackupConfig {
   hasCredentials: boolean;
   enabled: boolean;
   cron: string;
-  retentionDays: number;
-  maxBackups: number;
-  monthlyArchive: boolean;
 }
 
 export interface BackupSaveInput extends BackupConfig {

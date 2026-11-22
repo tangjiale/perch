@@ -4,7 +4,7 @@
 // 隔离界面夹具；所有配置为测试值，不读取真实凭据或连接 S3。
 globalThis.isTauri = !new URLSearchParams(location.search).has('preview');
 window.__calls = [];
-window.__state = { config: { revision: 1, endpoint: 'https://s3.example.test', region: 'auto', bucket: 'perch-demo', prefix: 'backups/perch/', forcePathStyle: false, hasCredentials: true, enabled: true, cron: '0 2 * * *', retentionDays: 14, maxBackups: 10, monthlyArchive: true }, records: [], nextRunAt: '2026-10-14T02:00:00+08:00', running: false };
+window.__state = { config: { revision: 1, endpoint: 'https://s3.example.test', region: 'auto', bucket: 'perch-demo', prefix: 'backups/perch/', forcePathStyle: false, hasCredentials: true, enabled: true, cron: '0 2 * * *' }, records: [], nextRunAt: '2026-10-14T02:00:00+08:00', running: false };
 window.__records = [{id:'backup-fixture', key:'backups/perch/fixture-workspace/perch-monthly-20261013T020000Z.zip', filename:'perch-monthly-20261013T020000Z.zip', size:2359296, createdAt:'2026-10-13T02:00:00Z',trigger:'manual',status:'success',monthlyArchive:true}];
 const callbacks = {}; let callbackId=0; window.__listeners=[];
 window.__emit=(event='backup-updated',payload=null)=>window.__listeners.filter(item=>item.event===event).forEach(item=>callbacks[item.handler]?.({event,payload}));

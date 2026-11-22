@@ -1975,6 +1975,60 @@ mod tests {
         assert!(requests.iter().all(|r| !r.contains("/tasks")));
     }
     #[test]
+    fn identical_sync_keeps_task_and_project_revisions_instead_of_saving_history() {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = crate::storage::Store::open_at(temporary.path().to_path_buf()).unwrap();
+        let connection = store.save("connection", json!({"name":"禅道"})).unwrap();
+        let connection_id = text(&connection, "id");
+        let sync = |project_name: &str, status: &str, synced_at: i64| {
+            let current = store.snapshot().unwrap();
+            let remote = RemoteSnapshot {
+                projects: vec![json!({"id":30,"name":project_name,"status":"doing"})],
+                items: vec![(
+                    "30".into(),
+                    "execution".into(),
+                    json!({"id":35,"name":"执行","status":status,"begin":"2026-11-20","end":"2026-11-22","PM":"alice"}),
+                )],
+            };
+            let mut changes = merge(&current, connection_id, remote).unwrap();
+            let mut latest = current["connections"][0].clone();
+            latest["syncAccount"] = json!("alice");
+            latest["lastSync"] = json!(synced_at);
+            changes.push(("connection", latest));
+            store
+                .save_zentao_snapshot(changes, vec![], connection_id)
+                .unwrap();
+            store.snapshot().unwrap()
+        };
+        let initial = sync("项目", "wait", 1);
+        let repeated = sync("项目", "wait", 2);
+        assert_eq!(repeated["projects"], initial["projects"]);
+        assert_eq!(repeated["tasks"], initial["tasks"]);
+        assert_eq!(repeated["connections"][0]["lastSync"], 2);
+
+        let changed = sync("项目更新", "doing", 3);
+        assert_eq!(changed["projects"][0]["name"], "项目更新");
+        assert_eq!(changed["tasks"][0]["status"], "doing");
+        assert_eq!(
+            changed["tasks"][0]["schedule"],
+            initial["tasks"][0]["schedule"]
+        );
+        assert_eq!(changed["projects"][0]["revision"], 2);
+        assert_eq!(changed["tasks"][0]["revision"], 2);
+        let conn = store.conn.lock().unwrap();
+        for table in ["projects", "tasks"] {
+            let versions: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM entity_history WHERE entity_type=?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(versions, 2);
+        }
+    }
+
+    #[test]
     fn execution_scope_never_matches_display_names_or_unknown_owners() {
         assert!(
             !responsible_for(&json!({"PM":{"account":"bob","realname":"alice"}}), "alice").unwrap()

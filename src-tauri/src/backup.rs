@@ -16,6 +16,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{Mutex, MutexGuard};
 const KEY: &str = "s3-backup-v1";
+const RETAINED_BACKUPS: usize = 10;
 fn operation() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -61,9 +62,6 @@ pub struct BackupConfig {
     pub has_credentials: bool,
     pub enabled: bool,
     pub cron: String,
-    pub retention_days: u32,
-    pub max_backups: u32,
-    pub monthly_archive: bool,
 }
 impl Default for BackupConfig {
     fn default() -> Self {
@@ -77,9 +75,6 @@ impl Default for BackupConfig {
             has_credentials: false,
             enabled: false,
             cron: "0 2 * * *".into(),
-            retention_days: 14,
-            max_backups: 10,
-            monthly_archive: false,
         }
     }
 }
@@ -267,9 +262,6 @@ fn secrets(workspace: &str, c: &BackupConfig) -> Result<S3Credentials, String> {
 }
 fn validate(c: &BackupConfig) -> Result<(), String> {
     CronSchedule::parse(&c.cron)?.next_after(Utc::now())?;
-    if c.retention_days > 36500 || c.max_backups > 100000 {
-        return Err("备份保留设置超出允许范围".into());
-    }
     Ok(())
 }
 fn identity(a: &BackupConfig, b: &BackupConfig) -> bool {
@@ -297,43 +289,33 @@ fn validate_save(
     Ok(())
 }
 fn owned_backup_key(c: &Context, key: &str) -> bool {
-    let prefix = owned_prefix(c);
-    let Some(name) = key.strip_prefix(&prefix) else {
-        return false;
-    };
-    let Some(name) = name.strip_prefix("perch-") else {
-        return false;
-    };
-    let name = name.strip_prefix("monthly-").unwrap_or(name);
-    let Some(name) = name.strip_suffix(".zip") else {
-        return false;
-    };
-    if name.len() != 53 || name.as_bytes().get(16) != Some(&b'-') {
-        return false;
-    }
-    chrono::NaiveDateTime::parse_from_str(&name[..16], "%Y%m%dT%H%M%SZ").is_ok()
-        && uuid::Uuid::parse_str(&name[17..]).is_ok()
+    owned_backup_name(c, key).is_some()
 }
-fn retention_candidates(c: &Context, records: &[BackupRecord], now: DateTime<Utc>) -> Vec<String> {
+fn owned_backup_name<'a>(c: &Context, key: &'a str) -> Option<&'a str> {
+    let prefix = owned_prefix(c);
+    let name = key.strip_prefix(&prefix)?.strip_prefix("perch-")?;
+    let name = name.strip_prefix("monthly-").unwrap_or(name);
+    let name = name.strip_suffix(".zip")?;
+    if name.len() != 53 || name.as_bytes().get(16) != Some(&b'-') {
+        return None;
+    }
+    (chrono::NaiveDateTime::parse_from_str(&name[..16], "%Y%m%dT%H%M%SZ").is_ok()
+        && uuid::Uuid::parse_str(&name[17..]).is_ok())
+    .then_some(name)
+}
+fn retention_candidates(c: &Context, records: &[BackupRecord]) -> Vec<String> {
     let mut eligible: Vec<_> = records
         .iter()
-        .filter(|r| r.status == "success" && !r.monthly_archive && owned_backup_key(c, &r.key))
+        .filter(|r| r.status == "success")
+        .filter_map(|r| owned_backup_name(c, &r.key).map(|name| (name, &r.key)))
         .collect();
-    eligible.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    // 从对象名取得原始创建时间，让旧归档和普通备份使用相同的 UTC 顺序。
+    eligible.sort_unstable_by(|a, b| b.cmp(a));
+    eligible.dedup();
     eligible
         .into_iter()
-        .enumerate()
-        .filter(|(index, r)| {
-            let expired = DateTime::parse_from_rfc3339(&r.created_at)
-                .ok()
-                .is_some_and(|t| {
-                    c.config.retention_days > 0
-                        && now.signed_duration_since(t.with_timezone(&Utc)).num_days()
-                            >= i64::from(c.config.retention_days)
-                });
-            expired || (c.config.max_backups > 0 && *index >= c.config.max_backups as usize)
-        })
-        .map(|(_, r)| r.key.clone())
+        .skip(RETAINED_BACKUPS)
+        .map(|(_, key)| key.clone())
         .collect()
 }
 #[cfg(test)]
@@ -797,30 +779,7 @@ async fn create_inner(app: &AppHandle, c: &Context, id: &str) -> Result<BackupSt
     if client.head(&pending.key).await?.is_some() {
         return Err("远端已存在同名对象，禁止覆盖；请核验记录或重新创建备份".into());
     }
-    let month = Utc::now()
-        .with_timezone(&chrono::Local)
-        .format("%Y-%m")
-        .to_string();
-    let archive = {
-        let state = app.state::<AppState>();
-        let store = state.store.lock().map_err(|_| "工作空间不可用")?;
-        let s = read(&store)?;
-        c.config.monthly_archive
-            && !s.records.iter().any(|r| {
-                r.id != id
-                    && r.status == "success"
-                    && r.monthly_archive
-                    && DateTime::parse_from_rfc3339(&r.created_at).is_ok_and(|d| {
-                        d.with_timezone(&chrono::Local).format("%Y-%m").to_string() == month
-                    })
-            })
-    };
     persist_record(app, c, id, |r| {
-        r.monthly_archive = archive;
-        if archive {
-            r.filename = r.filename.replacen("perch-", "perch-monthly-", 1);
-            r.key = format!("{}{}", owned_prefix(c), r.filename);
-        }
         r.status = "packing".into();
         r.progress = Some(BackupProgressView {
             phase: "database".into(),
@@ -870,7 +829,7 @@ async fn after_success(
 ) -> Result<BackupState, String> {
     let result = async {
         let s = refresh_inner(app, c, client).await?;
-        for key in retention_candidates(c, &s.records, Utc::now()) {
+        for key in retention_candidates(c, &s.records) {
             client.delete(&key).await?;
             update(app, c, |s| s.records.retain(|r| r.key != key))?;
         }
@@ -1306,33 +1265,63 @@ mod tests {
         }
     }
     #[test]
-    fn generation_revision_reject_stale_and_retention_protects_archives() {
+    fn generation_revision_reject_stale() {
         let root = tempfile::tempdir().unwrap();
         let store = Store::open_at(root.path().to_path_buf()).unwrap();
         let mut c = context(&store);
         assert!(check(&store, &c).is_ok());
         c.generation = PathBuf::from("stale");
         assert!(check(&store, &c).is_err());
-        c = context(&store);
-        let ordinary = record(format!(
-            "{}perch-20200101T000000Z-00000000-0000-0000-0000-000000000001.zip",
-            owned_prefix(&c)
+    }
+    #[test]
+    fn retention_keeps_latest_ten_including_monthly_archives() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let c = context(&store);
+        let prefix = owned_prefix(&c);
+        let mut records: Vec<_> = (1..=13)
+            .map(|day| {
+                let monthly_archive = [2, 12].contains(&day);
+                let label = if monthly_archive { "monthly-" } else { "" };
+                let mut item = record(format!(
+                    "{prefix}perch-{label}202001{day:02}T000000Z-00000000-0000-0000-0000-000000000001.zip"
+                ));
+                item.monthly_archive = monthly_archive;
+                item
+            })
+            .collect();
+        let expired: Vec<_> = records[..3].iter().rev().map(|r| r.key.clone()).collect();
+        assert!(retention_candidates(&c, &records[..10]).is_empty());
+        records.push(records[3].clone());
+        records.push(record(format!("{prefix}perch-user-file.zip")));
+        records.push(record(
+            "another-workspace/perch-20210201T000000Z-00000000-0000-0000-0000-000000000001.zip".into(),
         ));
-        let mut archive = ordinary.clone();
-        archive.key = format!(
-            "{}perch-monthly-20200101T000000Z-00000000-0000-0000-0000-000000000002.zip",
-            owned_prefix(&c)
-        );
-        archive.monthly_archive = true;
-        let unrelated = record(format!("{}perch-user-file.zip", owned_prefix(&c)));
-        assert!(!owned_backup_key(&c, &unrelated.key));
+        let mut unverified = record(format!(
+            "{prefix}perch-20210201T000000Z-00000000-0000-0000-0000-000000000001.zip"
+        ));
+        unverified.status = "unknown".into();
+        records.push(unverified);
+        assert_eq!(retention_candidates(&c, &records), expired);
+    }
+    #[test]
+    fn legacy_backup_config_keeps_connection_and_schedule() {
+        let parsed: BackupConfig = serde_json::from_value(serde_json::json!({
+            "revision": 4, "endpoint":"https://s3.example.test", "region":"auto", "bucket":"fixtures",
+            "prefix":"backup/", "forcePathStyle":false, "hasCredentials":true, "enabled":true,
+            "cron":"0 2 * * *", "monthlyArchive":true, "retentionDays":30, "maxBackups":0
+        }))
+        .unwrap();
         assert_eq!(
-            retention_candidates(&c, &[ordinary.clone(), archive, unrelated], Utc::now()),
-            vec![ordinary.key.clone()]
+            (
+                parsed.revision,
+                parsed.bucket.as_str(),
+                parsed.prefix.as_str(),
+                parsed.cron.as_str()
+            ),
+            (4, "fixtures", "backup/", "0 2 * * *")
         );
-        c.config.retention_days = 0;
-        c.config.max_backups = 0;
-        assert!(retention_candidates(&c, &[ordinary], Utc::now()).is_empty());
+        assert!(parsed.enabled && parsed.has_credentials);
     }
     #[test]
     fn unknown_upload_and_records_survive_reopen_without_credentials() {

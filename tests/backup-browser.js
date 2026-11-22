@@ -8,6 +8,7 @@
   const fill = (text,value) => {const el=field(text);if(!el)throw Error('缺少字段 '+text);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}));};
   await wait(()=>field('上传目录'));
   assert(document.body.textContent.includes('还没有备份记录'),'空态提示');
+  assert(!field('保留天数') && !field('最大保留份数') && !field('保留月度归档'),'统一的保留规则去掉旧配置入口');
   assert(field('Secret Access Key').value==='' && field('Access Key ID').value==='','已存凭据不回显');
   fill('上传目录','edited/folder/');
   await new Promise(r=>setTimeout(r,50));
@@ -29,7 +30,7 @@
   await wait(()=>document.body.textContent.includes('备份已上传至 S3'));
   assert(window.__calls.filter(c=>c.name==='backup_create').length===1,'手动备份只提交一次');
   assert(document.querySelectorAll('.backup-table tbody tr').length===1,'成功记录可见');
-  assert(button('下载') && document.body.textContent.includes('成功备份保存在 S3'),'成功记录提供下载并说明云端存储');
+  assert(button('下载') && document.body.textContent.includes('S3 保留本工作空间最新 10 份成功备份'),'成功记录提供下载并说明云端保留规则');
   const statesBeforeCancel=window.__calls.filter(c=>c.name==='backup_state').length;
   window.__dialogResponses=[null]; button('下载').click();
   await wait(()=>window.__calls.filter(c=>c.name==='backup_state').length>statesBeforeCancel && button('下载') && !button('下载').disabled);

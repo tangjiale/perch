@@ -378,10 +378,14 @@
 .meeting-duration.active {
   color: #d54848;
 }
-.meeting-stop {
+.meetings-page button.meeting-stop {
   background: #b93636;
   color: white;
   border-color: #b93636;
+}
+.meetings-page button.meeting-stop:hover:not(:disabled) {
+  background: #a52c2c;
+  border-color: #a52c2c;
 }
 .meeting-state,
 .meeting-hint,
