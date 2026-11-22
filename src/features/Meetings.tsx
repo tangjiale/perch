@@ -1,5 +1,6 @@
 import { Channel } from "@tauri-apps/api/core";
-import type { MeetingRealtimeEvent } from "../lib/api";
+import type { MeetingRealtimeEvent, MeetingSpeechStatus } from "../lib/api";
+import { Link, useLocation } from "react-router-dom";
 import {
   useEffect,
   useLayoutEffect,
@@ -19,6 +20,7 @@ import {
   Play,
   Save,
   Search,
+  Settings2,
   Square,
   Trash2,
   WandSparkles,
@@ -28,6 +30,7 @@ import Modal from "../components/Modal";
 import MeetingContextFields from "./meetings/MeetingContext";
 import MeetingActions from "./meetings/MeetingActions";
 import { api, native } from "../lib/api";
+import { eligibleMeetingSpeechModels, type MeetingSpeechPreferences } from "../lib/meeting-speech";
 import type { Snapshot } from "../lib/types";
 import {
   layoutMindMap,
@@ -44,6 +47,16 @@ import {
 } from "../lib/meetings";
 import { MeetingRecorder } from "../lib/meeting-recorder";
 import "./meetings.css";
+
+type RecordingMode = "realtime" | "chunks" | "record";
+
+const speechStatusLabels: Record<MeetingSpeechStatus["state"], string> = {
+  ready: "X-ASR 160 ms（中英文）已就绪",
+  downloading: "本机模型下载中，可先仅录音",
+  error: "本机模型安装失败，可先仅录音",
+  missing: "下载本机模型后可实时转录，也可先仅录音",
+};
+
 function download(content: BlobPart, type: string, filename: string) {
   const url = URL.createObjectURL(new Blob([content], { type }));
   const link = document.createElement("a");
@@ -133,6 +146,14 @@ export default function Meetings({
   onTasksChanged?: () => Promise<unknown>;
   onOpenTask?: (id: string) => void;
 }) {
+  const { pathname } = useLocation();
+  const [speechStatus, setSpeechStatus] = useState<MeetingSpeechStatus>();
+  const [speakerStatus, setSpeakerStatus] = useState<MeetingSpeechStatus>();
+  const [speechStatusFailed, setSpeechStatusFailed] = useState(false);
+  const [speechPreferences, setSpeechPreferences] = useState<MeetingSpeechPreferences>();
+  const [speechPreferencesError, setSpeechPreferencesError] = useState(false);
+  const [onlyRecord, setOnlyRecord] = useState(false);
+  const [activeMode, setActiveMode] = useState<RecordingMode>();
   const [meetings, setMeetings] = useState<Meeting[]>([]),
     [current, setCurrent] = useState<Meeting>(),
     [search, setSearch] = useState(""),
@@ -158,11 +179,9 @@ export default function Meetings({
     [dirty, setDirty] = useState(false),
     [recording, setRecording] = useState(false),
     [elapsed, setElapsed] = useState(0),
-    [mode, setMode] = useState<"realtime" | "chunks" | "record">("realtime"),
     [preview, setPreview] = useState(""),
     [previewMeetingId, setPreviewMeetingId] = useState(""),
     [realtimeStatus, setRealtimeStatus] = useState(""),
-    [speechId, setSpeechId] = useState(""),
     [chatId, setChatId] = useState(""),
     [deleting, setDeleting] = useState(false),
     [retranscribing, setRetranscribing] = useState(false),
@@ -191,6 +210,7 @@ export default function Meetings({
           id: string;
           sessionId: string;
           failed: boolean;
+          diarize: boolean;
           channel: Channel<MeetingRealtimeEvent>;
         }
       | undefined
@@ -198,6 +218,68 @@ export default function Meetings({
     epoch = useRef(0),
     stopping = useRef<Promise<void> | undefined>(undefined);
   currentRef.current = current;
+  useEffect(() => {
+    // 会议页面离开后仍挂载，返回时重新读取本机模型状态与已保存的语音设置。
+    if (!native || !workspaceId || pathname !== "/meetings") return;
+    setSpeechStatus(undefined);
+    setSpeakerStatus(undefined);
+    setSpeechStatusFailed(false);
+    setSpeechPreferences(undefined);
+    setSpeechPreferencesError(false);
+    let cancelled = false;
+    let timer: number | undefined;
+    let speakerTimer: number | undefined;
+    let requestedWarmup = false;
+    async function refreshSpeechStatus(keepPolling = false) {
+      try {
+        const status = await api.meetingSpeechStatus();
+        if (cancelled) return;
+        setSpeechStatus(status);
+        setSpeechStatusFailed(false);
+        keepPolling = status.state === "downloading" || status.runtime === "loading";
+        if (status.state === "ready" && status.runtime === "cold" && !requestedWarmup) {
+          requestedWarmup = true;
+          await api.meetingSpeechPrepare(workspaceId);
+          keepPolling = true;
+        }
+      } catch {
+        if (cancelled) return;
+        setSpeechStatus(undefined);
+        setSpeechStatusFailed(true);
+      }
+      if (!cancelled && keepPolling)
+        timer = window.setTimeout(() => void refreshSpeechStatus(true), 1000);
+    }
+    async function refreshSpeakerStatus() {
+      try {
+        const status = await api.meetingSpeakerModelStatus();
+        if (cancelled) return;
+        setSpeakerStatus(status);
+        if (status.state === "downloading")
+          speakerTimer = window.setTimeout(() => void refreshSpeakerStatus(), 1500);
+      } catch {
+        if (!cancelled) setSpeakerStatus(undefined);
+      }
+    }
+    void api.meetingSpeechPreferences(workspaceId).then(
+      (preferences) => {
+        if (cancelled) return;
+        setSpeechPreferences(preferences);
+        if (preferences.mode === "local") {
+          void refreshSpeechStatus();
+          if (preferences.localSpeakerDiarization) void refreshSpeakerStatus();
+        }
+      },
+      () => {
+        if (!cancelled) setSpeechPreferencesError(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      window.clearTimeout(speakerTimer);
+    };
+  }, [pathname, workspaceId]);
   useEffect(() => {
     setTranscriptSearch("");
     setSpeakerFilter("all");
@@ -209,30 +291,55 @@ export default function Meetings({
     const text = previewText.current;
     if (text && followPreview.current) text.scrollTop = text.scrollHeight;
   }, [preview, tab, current?.id, realtimeStatus]);
-  const speech = data.models.filter(
-      (m) =>
-        m.enabled &&
-        m.capability === "speech" &&
-        data.providers.some(
-          (p) =>
-            p.id === m.providerId &&
-            p.enabled &&
-            p.protocol !== "anthropic-messages",
-        ),
-    ),
-    chats = data.models.filter(
+  const apiSpeechId = speechPreferences?.mode === "api" ? speechPreferences.modelId : "";
+  const speechModel = apiSpeechId
+    ? eligibleMeetingSpeechModels(data).find((model) => model.id === apiSpeechId)
+    : undefined;
+  const selectedSpeech = speechModel?.id ?? "";
+  const localDiarization = speechPreferences?.mode === "local" && !!speechPreferences.localSpeakerDiarization;
+  const speakerModelReady = speakerStatus?.state === "ready";
+  const configuredMode = speechPreferences?.mode === "api" ? "chunks" : "realtime";
+  const configuredReady = speechPreferences?.mode === "api"
+    ? !!speechModel
+    : speechPreferences?.mode === "local" && speechStatus?.state === "ready";
+  const mode = activeMode ?? (!onlyRecord && configuredReady ? configuredMode : "record");
+  const recordingModes = [
+    {
+      value: configuredMode,
+      label: configuredMode === "chunks" ? "API 分片转录" : "本机实时转录",
+      disabled: !configuredReady,
+    },
+    { value: "record", label: "仅录音" },
+  ];
+  useEffect(() => setOnlyRecord(false), [configuredMode, apiSpeechId]);
+  const chats = data.models.filter(
       (m) =>
         m.enabled &&
         (m.capability === "chat" || m.capability === "vision") &&
         data.providers.some((p) => p.id === m.providerId && p.enabled),
     );
   const locked = !!busy || recording || loading || markerSaving;
-  const selectedSpeech = speech.some((m) => m.id === speechId)
-      ? speechId
-      : speech[0]?.id || "",
-    selectedChat = chats.some((m) => m.id === chatId)
+  const selectedChat = chats.some((m) => m.id === chatId)
       ? chatId
       : chats[0]?.id || "";
+  const canStartMode = (!!speechPreferences || speechPreferencesError) &&
+    (mode === "record" || configuredReady);
+  const localSpeechLabel = speechStatus?.state === "ready" && speechStatus.runtime === "loading"
+    ? "正在后台预加载本机语音模型…"
+    : speechStatus?.state === "ready" && speechStatus.runtime === "error"
+      ? "本机模型预加载失败，可在设置中重试"
+      : speechStatus ? speechStatusLabels[speechStatus.state] : "正在检查本机模型…";
+  const speechStatusLabel = speechPreferencesError
+    ? "无法读取会议语音设置，可用系统默认麦克风仅录音"
+    : !speechPreferences
+      ? "正在读取会议语音设置…"
+      : speechPreferences.mode === "api"
+        ? speechModel
+          ? `${speechModel.name} · API 分片转录`
+          : "所选语音 API 已不可用，可先仅录音"
+        : speechStatusFailed
+          ? "无法读取本机模型状态，可先仅录音"
+          : localSpeechLabel;
   function accept(m: Meeting) {
     if (!mounted.current) return;
     if (
@@ -286,6 +393,7 @@ export default function Meetings({
   useEffect(() => {
     mounted.current = true;
     setRecording(false);
+    setActiveMode(undefined);
     setBusy("");
     setPreview("");
     setRealtimeStatus("");
@@ -357,6 +465,8 @@ export default function Meetings({
       setBusy("正在保存录音…");
       setRecording(false);
       let stopError: unknown;
+      let speakerFeedback = "";
+      let speakerFailure = "";
       try {
         await rec?.stop();
       } catch (e) {
@@ -374,6 +484,23 @@ export default function Meetings({
             setPreview("");
             setRealtimeStatus("");
           }
+          if (
+            !stopError && active.diarize && saved.segments.some((segment) => !segment.speaker) &&
+            mounted.current && token === epoch.current
+          ) {
+            setBusy("录音已保存 · 正在识别说话人…");
+            try {
+              const result = await api.meetingDiarize(active.workspaceId, active.id, saved.revision);
+              if (mounted.current && token === epoch.current) {
+                accept(result.meeting);
+                speakerFeedback = result.assigned
+                  ? `录音已保存，已标注 ${result.assigned} 段说话人`
+                  : "录音已保存，暂无可确认的说话人标注";
+              }
+            } catch (error) {
+              speakerFailure = `录音及转录已保存，说话人识别失败，可在转录页重试。 ${String(error)}`;
+            }
+          }
         } catch (e) {
           stopError = e;
           try {
@@ -389,12 +516,15 @@ export default function Meetings({
       }
       if (mounted.current && token === epoch.current) {
         if (stopError) {
-          setRealtimeStatus(
-            "实时转录异常结束；请核对已保存文字，以下预览可复制保留",
-          );
+          if (active)
+            setRealtimeStatus(
+              "实时转录异常结束。请核对已保存文字，可复制下方预览留存。",
+            );
           fail(`录音收尾未全部完成：${String(stopError)}`);
-        } else notify("录音已保存");
+        } else if (speakerFailure) fail(speakerFailure);
+        else notify(speakerFeedback || "录音已保存");
         setBusy("");
+        setActiveMode(undefined);
         setElapsed(0);
       }
       if (session.current === active) session.current = undefined;
@@ -414,23 +544,30 @@ export default function Meetings({
       markerLock.current ||
       !native ||
       busy ||
-      (mode !== "record" && !selectedSpeech)
+      recording ||
+      !canStartMode
     )
       return;
     const id = current.id,
       model = selectedSpeech,
       method = mode,
+      inputDeviceId = speechPreferences?.inputDeviceId,
       token = epoch.current;
     const duration = current.durationMs;
     setPreviewMeetingId(id);
     followPreview.current = true;
-    setBusy(method === "realtime" ? "正在连接实时转录…" : "正在打开麦克风…");
+    setActiveMode(method);
+    setBusy(
+      method === "realtime" && speechStatus?.runtime !== "ready"
+        ? "正在等候本机语音模型就绪…"
+        : "正在打开麦克风…",
+    );
     setError("");
     setPreview("");
     setRealtimeStatus("");
     let active: typeof session.current;
     let transcriptionFailed = false;
-    let connectionReady = method !== "realtime";
+    let speechReady = method !== "realtime";
     const valid = () => mounted.current && token === epoch.current;
     try {
       if (method === "realtime") {
@@ -440,6 +577,7 @@ export default function Meetings({
           id,
           sessionId: crypto.randomUUID(),
           failed: false,
+          diarize: localDiarization && speakerModelReady,
           channel,
         };
         const linked = active;
@@ -462,14 +600,14 @@ export default function Meetings({
             );
           } else {
             linked.failed = true;
-            setRealtimeStatus("实时转录已中断；录音继续保存，可停止后重新转录");
+            setRealtimeStatus("实时转录已中断，录音继续保存");
             fail(event.message || "实时转录失败");
           }
         };
         await api.meetingRealtimeStart(
           workspaceId,
           id,
-          model,
+          "local",
           linked.sessionId,
           channel,
         );
@@ -478,10 +616,10 @@ export default function Meetings({
           return;
         }
         if (linked.failed)
-          throw new Error("实时转录连接失败，请检查服务认证，或选择仅录音");
-        connectionReady = true;
+          throw new Error("本机实时转录启动失败");
+        speechReady = true;
         setBusy("正在打开麦克风…");
-        setRealtimeStatus("实时连接已就绪，等待语音…");
+        setRealtimeStatus("等待语音…");
       }
       const rec = new MeetingRecorder(
         async (chunkId, base64) => {
@@ -514,7 +652,7 @@ export default function Meetings({
               active.failed = true;
               if (valid()) {
                 setRealtimeStatus(
-                  "实时转录已中断；录音继续保存，可停止后重新转录",
+                  "实时转录已中断，录音继续保存",
                 );
                 fail(`音频已保存，但实时转录失败：${String(e)}`);
               }
@@ -548,7 +686,8 @@ export default function Meetings({
             void stop();
           }
         },
-        method === "realtime" ? 1 : 10,
+        method === "realtime" ? 0.16 : 10,
+        inputDeviceId,
       );
       recorder.current = rec;
       await rec.start();
@@ -560,13 +699,15 @@ export default function Meetings({
       baseDuration.current = duration;
       setElapsed(0);
       setRecording(true);
+      if (method === "realtime") setTab("transcript");
     } catch (e) {
       if (valid()) {
-        fail(e);
-        setRealtimeStatus(
-          connectionReady
-            ? "麦克风启动失败，尚未开始录音；请检查设备与录音权限"
-            : "连接失败，尚未开始录音；请检查供应商地址与 API Key，或选择仅录音",
+        setRealtimeStatus("");
+        setActiveMode(undefined);
+        fail(
+          speechReady
+            ? `麦克风启动失败，请检查设备与录音权限。${String(e)}`
+            : `本机实时转录启动失败，可在会议语音设置中查看状态，或切换为仅录音。${String(e)}`,
         );
       }
       if (active)
@@ -580,12 +721,20 @@ export default function Meetings({
     }
   }
   async function retranscribe() {
-    if (!current) return;
+    if (!current || !selectedSpeech) return;
     await run("正在完整转录…", async () => {
       accept(
         await api.meetingTranscribe(workspaceId, current.id, selectedSpeech),
       );
       setRetranscribing(false);
+    });
+  }
+  async function recognizeSpeakers() {
+    if (!current || !speakerModelReady || dirty || locked) return;
+    await run("正在识别说话人…", async () => {
+      const result = await api.meetingDiarize(workspaceId, current.id, current.revision);
+      accept(result.meeting);
+      notify(result.assigned ? `已标注 ${result.assigned} 段说话人` : "暂无可新增的说话人标注");
     });
   }
   function edit(value: Partial<Meeting>) {
@@ -836,6 +985,16 @@ export default function Meetings({
           "done"
         : !action.completed,
     ).length ?? 0;
+  const recordingStatus = {
+    realtime: realtimeStatus || "录音中 · 本机实时转录",
+    chunks: "录音中 · 每约 10 秒通过 API 转录",
+    record: "录音中 · 仅保存音频",
+  }[mode];
+  const speechSettingsLink = !locked && native && (
+    <Link className="meeting-speech-link" to="/settings?tab=meeting-speech">
+      <Settings2 size={14} /> 会议语音设置
+    </Link>
+  );
   return (
     <section className="meetings-page">
       <aside className="meeting-sidebar">
@@ -941,6 +1100,8 @@ export default function Meetings({
             <h2>让讨论留下清晰的结论</h2>
             <p>录制会议、整理发言，再生成纪要与会议脑图。</p>
             <p>从左侧新建一场会议开始。</p>
+            {native && <p role="status">{speechStatusLabel}</p>}
+            {speechSettingsLink}
           </div>
         ) : (
           <>
@@ -977,10 +1138,9 @@ export default function Meetings({
               <button
                 className={recording ? "meeting-stop" : "primary"}
                 disabled={
-                  !!busy ||
+                  !native || !!busy ||
                   dirty ||
-                  (!recording && markerSaving) ||
-                  (mode !== "record" && !selectedSpeech && !recording)
+                  (!recording && (markerSaving || !canStartMode))
                 }
                 onClick={recording ? stop : start}
               >
@@ -999,18 +1159,42 @@ export default function Meetings({
                     : current.durationMs,
                 )}
               </span>
+              <div className="meeting-record-options">
+                <label>
+                  录音模式
+                  <GlassSelect
+                    aria-label="录音模式"
+                    value={mode}
+                    disabled={locked}
+                    options={recordingModes}
+                    onValueChange={(value) => setOnlyRecord(value === "record")}
+                  />
+                </label>
+                {current.audioChunks > 0 && (
+                  <button
+                    disabled={locked}
+                    onClick={() =>
+                      run("正在读取录音…", async () => {
+                        await loadAudio();
+                      })
+                    }
+                  >
+                    <Play size={15} /> 播放 / 下载录音
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="meeting-record-status">
               <span className="meeting-state" role="status">
-                {busy ||
-                  (recording
-                    ? mode === "realtime"
-                      ? "录音中 · 实时转录"
-                      : mode === "chunks"
-                        ? "录音中 · 每 10 秒分片转录"
-                        : "录音中 · 仅保存音频"
-                    : current.audioChunks
-                      ? `${current.audioChunks} 个音频片段已保存`
-                      : "麦克风就绪后开始记录")}
+                {busy || (recording ? recordingStatus : speechStatusLabel)}
               </span>
+              {speechSettingsLink}
+              {localDiarization && !speakerModelReady && !locked && (
+                <span className="meeting-hint">说话人模型未就绪，仍可实时转录</span>
+              )}
+              {!recording && !!current.audioChunks && (
+                <span className="meeting-record-count">已保存 {current.audioChunks} 个音频片段</span>
+              )}
             </div>
             <div className="meeting-marker-bar">
               <label className="meeting-marker-input">
@@ -1058,139 +1242,6 @@ export default function Meetings({
                     : "标记重点"}
               </button>
             </div>
-            <div className="meeting-model-bar">
-              <label>
-                语音模型
-                <GlassSelect
-                  aria-label="语音模型"
-                  options={speech.map((m) => ({ value: m.id, label: m.name }))}
-                  value={selectedSpeech}
-                  onValueChange={setSpeechId}
-                  disabled={locked}
-                  placeholder="请先添加语音模型"
-                />
-              </label>
-              <label>
-                转录方式
-                <GlassSelect
-                  aria-label="转录方式"
-                  value={mode}
-                  disabled={locked}
-                  options={[
-                    { value: "realtime", label: "实时转录（oMLX）" },
-                    { value: "chunks", label: "分片转录" },
-                    { value: "record", label: "仅录音" },
-                  ]}
-                  onValueChange={(value) => setMode(value as typeof mode)}
-                />
-              </label>
-              <button
-                disabled={
-                  locked || dirty || !selectedSpeech || !current.audioChunks
-                }
-                onClick={() =>
-                  current.segments.length
-                    ? setRetranscribing(true)
-                    : void retranscribe()
-                }
-              >
-                <AudioLines size={15} />
-                {speech.find((m) => m.id === selectedSpeech)?.speechMode ===
-                "diarization"
-                  ? "重新转录并识别人声"
-                  : "重新转录"}
-              </button>
-            </div>
-            {current.audioChunks > 0 && (
-              <p className="meeting-hint">
-                重新转录将替换校对文本并重置说话人姓名。
-              </p>
-            )}
-            {!speech.length && (
-              <p className="meeting-notice">
-                <a href="#/settings?tab=models">前往大模型设置</a>
-                ，添加可用语音模型后可转录；选择「仅录音」可先保存音频。实时模式需要
-                oMLX 实时接口，说话人识别需要服务支持。
-              </p>
-            )}
-            <div className="meeting-analysis-bar">
-              <label>
-                纪要模型
-                <GlassSelect
-                  aria-label="纪要模型"
-                  options={chats.map((m) => ({ value: m.id, label: m.name }))}
-                  value={selectedChat}
-                  onValueChange={setChatId}
-                  disabled={locked}
-                  placeholder="选择文本模型"
-                />
-              </label>
-              <label>
-                整理方式
-                <GlassSelect
-                  aria-label="纪要整理方式"
-                  value={context.summaryStyle}
-                  disabled={locked}
-                  options={[
-                    { value: "brief", label: "简明" },
-                    { value: "standard", label: "标准" },
-                    { value: "detailed", label: "详细" },
-                  ]}
-                  onValueChange={(value) =>
-                    editContext({
-                      ...context,
-                      summaryStyle: value as MeetingContext["summaryStyle"],
-                    })
-                  }
-                />
-              </label>
-              <button
-                disabled={
-                  locked || dirty || !selectedChat || !current.segments.length
-                }
-                onClick={() =>
-                  run("正在生成会议纪要与脑图…", async () => {
-                    accept(
-                      await api.meetingGenerate(
-                        workspaceId,
-                        current.id,
-                        selectedChat,
-                        current.revision,
-                      ),
-                    );
-                    setTab("minutes");
-                  })
-                }
-              >
-                <WandSparkles size={15} />
-                生成纪要与脑图
-              </button>
-              <button
-                disabled={locked}
-                onClick={() =>
-                  download(
-                    meetingMarkdown(current),
-                    "text/markdown;charset=utf-8",
-                    `${current.title}.md`,
-                  )
-                }
-              >
-                <Download size={15} />
-                导出纪要
-              </button>
-              {current.audioChunks > 0 && (
-                <button
-                  disabled={locked}
-                  onClick={() =>
-                    run("正在读取录音…", async () => {
-                      await loadAudio();
-                    })
-                  }
-                >
-                  播放 / 下载录音
-                </button>
-              )}
-            </div>
             {audioUrl && (
               <div className="meeting-audio">
                 <audio
@@ -1229,17 +1280,83 @@ export default function Meetings({
               ))}
             </nav>
             <div className="meeting-content">
+              {tab !== "transcript" && (
+                <div className="meeting-analysis-bar">
+                  <label>
+                    纪要模型
+                    <GlassSelect
+                      aria-label="纪要模型"
+                      options={chats.map((m) => ({ value: m.id, label: m.name }))}
+                      value={selectedChat}
+                      onValueChange={setChatId}
+                      disabled={locked}
+                      placeholder="选择文本模型"
+                    />
+                  </label>
+                  <label>
+                    整理方式
+                    <GlassSelect
+                      aria-label="纪要整理方式"
+                      value={context.summaryStyle}
+                      disabled={locked}
+                      options={[
+                        { value: "brief", label: "简明" },
+                        { value: "standard", label: "标准" },
+                        { value: "detailed", label: "详细" },
+                      ]}
+                      onValueChange={(value) =>
+                        editContext({
+                          ...context,
+                          summaryStyle: value as MeetingContext["summaryStyle"],
+                        })
+                      }
+                    />
+                  </label>
+                  <button
+                    disabled={
+                      locked || dirty || !selectedChat || !current.segments.length
+                    }
+                    onClick={() =>
+                      run("正在生成会议纪要与脑图…", async () => {
+                        accept(
+                          await api.meetingGenerate(
+                            workspaceId,
+                            current.id,
+                            selectedChat,
+                            current.revision,
+                          ),
+                        );
+                        setTab("minutes");
+                      })
+                    }
+                  >
+                    <WandSparkles size={15} />
+                    生成纪要与脑图
+                  </button>
+                  <button
+                    disabled={locked}
+                    onClick={() =>
+                      download(
+                        meetingMarkdown(current),
+                        "text/markdown;charset=utf-8",
+                        `${current.title}.md`,
+                      )
+                    }
+                  >
+                    <Download size={15} />
+                    导出纪要
+                  </button>
+                </div>
+              )}
               {tab === "transcript" &&
                 previewMeetingId === current.id &&
-                realtimeStatus && (
-                  <div
-                    className="meeting-realtime"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    <strong>{realtimeStatus}</strong>
+                (preview || activeMode === "realtime" || realtimeStatus) && (
+                  <section className="meeting-realtime" aria-label="本机实时转录">
+                    <strong>实时转录</strong>
                     <span className="meeting-realtime-hint">
-                      实时文字持续更新，短句结果可能稍后补全。
+                      {activeMode === "realtime"
+                        ? "识别中的文字会持续更新，结束录音后保存。"
+                        : realtimeStatus}
                     </span>
                     {preview && (
                       <p
@@ -1260,7 +1377,7 @@ export default function Meetings({
                         {preview}
                       </p>
                     )}
-                  </div>
+                  </section>
                 )}
               {tab !== "transcript" && current.analysis?.stale && (
                 <p className="meeting-notice" role="status">
@@ -1269,6 +1386,34 @@ export default function Meetings({
               )}
               {tab === "transcript" ? (
                 <>
+                  {!activeMode && current.audioChunks > 0 && speechModel && (
+                    <section className="meeting-retranscribe-bar" aria-label="会后转录">
+                      <button
+                        disabled={locked || dirty}
+                        onClick={() =>
+                          current.segments.length
+                            ? setRetranscribing(true)
+                            : void retranscribe()
+                        }
+                      >
+                        <AudioLines size={15} />
+                        {speechModel.speechMode === "diarization"
+                          ? "重新转录并识别人声"
+                          : "重新转录"}
+                      </button>
+                      {current.segments.length > 0 && (
+                        <span className="meeting-hint">将替换校对文本并重置说话人姓名。</span>
+                      )}
+                    </section>
+                  )}
+                  {!activeMode && current.audioChunks > 0 && current.segments.length > 0 && localDiarization && (
+                    <section className="meeting-retranscribe-bar" aria-label="本机说话人识别">
+                      <button disabled={locked || dirty || !speakerModelReady} onClick={() => void recognizeSpeakers()}>
+                        <AudioLines size={15} />识别说话人
+                      </button>
+                      <span className="meeting-hint">为可以确认的转录片段补标说话人。</span>
+                    </section>
+                  )}
                   {!!current.markers?.length && (
                     <section className="meeting-markers" aria-label="会议重点">
                       <h3>
@@ -1338,22 +1483,25 @@ export default function Meetings({
                     </>
                   )}
                   {!current.segments.length &&
+                    activeMode !== "realtime" &&
                     !(previewMeetingId === current.id && preview) && (
                       <div className="meeting-empty">
                         <AudioLines size={30} />
                         <h3>
-                          {recording
-                            ? "正在听取会议内容…"
-                            : "转录内容将在这里逐段出现"}
+                          {recording ? "正在录音…" : "转录内容将在这里逐段出现"}
                         </h3>
                         <p>
                           {recording
-                            ? mode === "realtime"
-                              ? "文字会随识别结果持续显示。"
-                              : mode === "chunks"
-                                ? "每约 10 秒显示一段转录。"
-                                : "仅保存录音，不进行转录。"
-                            : "开始录音，或对已保存录音重新转录。"}
+                            ? mode === "chunks"
+                              ? "每约 10 秒显示一段转录。"
+                              : "正在保存音频。"
+                          : current.audioChunks
+                            ? speechModel
+                              ? "可在上方重新转录已保存的录音。"
+                              : "可在会议语音设置中启用 API 后重新转录。"
+                              : mode === "record"
+                                ? "仅录音会保存音频，供后续回听或转录。"
+                                : "开始录音后，文字会在这里显示。"}
                         </p>
                       </div>
                     )}
@@ -1550,7 +1698,7 @@ export default function Meetings({
               </button>
               <button
                 className="primary"
-                disabled={!!busy}
+                disabled={!!busy || !selectedSpeech}
                 onClick={() => void retranscribe()}
               >
                 继续重新转录

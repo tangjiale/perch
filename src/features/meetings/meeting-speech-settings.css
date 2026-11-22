@@ -1,0 +1,203 @@
+.meeting-speech-settings {
+  width: min(100%, 720px);
+}
+.meeting-speech-settings > h2,
+.meeting-speech-model h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.meeting-speech-settings > h2 {
+  font-size: 18px;
+}
+.meeting-speech-settings > p,
+.meeting-speech-form p,
+.meeting-speech-model-info > p,
+.meeting-speech-progress > p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.meeting-speech-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.meeting-speech-form p {
+  margin: 0;
+}
+.meeting-speech-field {
+  display: grid;
+  gap: 6px;
+  max-width: 360px;
+}
+.meeting-speech-field > label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.meeting-speech-local {
+  display: grid;
+  gap: 6px;
+}
+.meeting-microphone-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.meeting-microphone-field {
+  min-width: 0;
+  max-width: none;
+}
+.meeting-microphone-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.meeting-microphone-check button {
+  white-space: nowrap;
+}
+.meeting-microphone-meter {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+}
+.meeting-microphone-meter > span {
+  width: 5px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.meeting-microphone-meter > span[data-lit] {
+  background: var(--command);
+}
+.meeting-microphone-message {
+  grid-column: 1 / -1;
+}
+@media (max-width: 640px) {
+  .meeting-microphone-settings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.meeting-speech-api {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.meeting-speech-actions,
+.meeting-speech-load-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.meeting-speech-actions > a {
+  padding: 8px 0;
+  color: var(--command);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.meeting-speech-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--command);
+  font-size: 13px;
+}
+.meeting-speech-model {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.meeting-speech-model-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.meeting-speech-model-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  color: var(--command);
+  background: color-mix(in srgb, var(--command) 12%, transparent);
+}
+.meeting-speech-model-info {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.meeting-speech-model-heading > button,
+.meeting-speech-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.meeting-speech-model-path {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.meeting-speech-model-path > span {
+  flex: none;
+}
+.meeting-speech-model-path > code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.meeting-speech-status {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.meeting-speech-status[data-state="ready"] {
+  color: var(--command);
+}
+.meeting-speech-progress {
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.meeting-speech-progress > progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  accent-color: var(--command);
+}
+.meeting-speech-resource-notice {
+  margin: 8px 0 0;
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.meeting-speech-settings .meeting-speech-error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-inline-start: 2px solid currentColor;
+  color: var(--danger, inherit);
+  background: color-mix(in srgb, var(--danger, #c73c3c) 9%, transparent);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.meeting-speech-form .meeting-speech-error {
+  margin: 0;
+}

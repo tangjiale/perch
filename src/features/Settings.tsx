@@ -5,6 +5,7 @@ import McpSettings from "./McpSettings";
 import GeneralSettings from "./GeneralSettings";
 import MailSettings from "./MailSettings";
 import DingCalendarSettings from "./DingCalendarSettings";
+import MeetingSpeechSettings from "./meetings/MeetingSpeechSettings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import BackupSettings from "./BackupSettings";
 import {
@@ -103,6 +104,7 @@ export default function Settings({
   const tabs = [
     ["zentao", "禅道连接"],
     ["models", "大模型管理"],
+    ["meeting-speech", "会议语音"],
     ["mail", "邮箱设置"],
     ["ding-calendar", "钉钉日历"],
     ["agents", "Agent"],
@@ -135,6 +137,17 @@ export default function Settings({
     } finally {
       setBusy(false);
     }
+  }
+  function configureProvider(value?: Provider) {
+    setSecret("");
+    setError("");
+    setProvider(value ?? {
+      id: crypto.randomUUID(),
+      name: "",
+      baseUrl: "https://api.openai.com/v1",
+      protocol: "openai-completions",
+      enabled: true,
+    });
   }
   async function storeProvider(e: React.FormEvent) {
     e.preventDefault();
@@ -246,17 +259,7 @@ export default function Settings({
               <h2>供应商与模型</h2>
               <button
                 className="primary"
-                onClick={() => {
-                  setSecret("");
-                  setError("");
-                  setProvider({
-                    id: crypto.randomUUID(),
-                    name: "",
-                    baseUrl: "https://api.openai.com/v1",
-                    protocol: "openai-completions",
-                    enabled: true,
-                  });
-                }}
+                onClick={() => configureProvider()}
               >
                 <Plus size={15} />
                 添加供应商
@@ -292,11 +295,7 @@ export default function Settings({
                       测试连接
                     </button>
                     <button
-                      onClick={() => {
-                        setProvider(p);
-                        setSecret("");
-                        setError("");
-                      }}
+                      onClick={() => configureProvider(p)}
                     >
                       <Settings2 size={14} />
                       配置
@@ -492,6 +491,14 @@ export default function Settings({
           />
         )}
         {tab === "mail" && <MailSettings />}
+        {tab === "meeting-speech" && (
+          <MeetingSpeechSettings
+            key={`${info.workspaceId}:${info.dataRoot}`}
+            data={data}
+            workspaceId={info.workspaceId}
+            onConfigureProvider={configureProvider}
+          />
+        )}
         {tab === "ding-calendar" && (
           <DingCalendarSettings key={`${info.workspaceId}:${info.dataRoot}`} />
         )}

@@ -39,6 +39,6 @@
   fill(search, "");
   await tick();
   assert(document.documentElement.scrollWidth <= innerWidth, "页面无横向溢出");
-  assert(window.__calls.every((call) => call.args.workspaceId === "fixture"), "领域 IPC 均绑定当前工作空间");
+  assert(window.__calls.filter((call) => call.name !== "meeting_speech_status").every((call) => call.args.workspaceId === "fixture"), "会议数据 IPC 均绑定当前工作空间");
   return { passed: checks.length, checks, viewport: [innerWidth, innerHeight] };
 })()

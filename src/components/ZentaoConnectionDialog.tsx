@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CircleAlert, KeyRound, LogIn, RefreshCw, Save } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { CircleAlert, Eye, EyeOff, KeyRound, LogIn, RefreshCw, Save } from "lucide-react";
 import { command } from "../lib/api";
 import type { Connection } from "../lib/types";
 import GlassSelect from "./GlassSelect";
@@ -46,6 +46,13 @@ export default function ZentaoConnectionDialog({
     connection.rememberCredentials ?? false,
   );
   const [password, setPassword] = useState("");
+  const [showDraftPassword, setShowDraftPassword] = useState(false);
+  const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
+  const [revealingPassword, setRevealingPassword] = useState(false);
+  const revealRequest = useRef(0);
+  const passwordId = useId();
+  const passwordInput = useRef<HTMLInputElement>(null);
+  const focusPasswordAfterEdit = useRef(false);
   const [token, setToken] = useState("");
   const [allowInsecureHttp, setAllowInsecureHttp] = useState(false);
   const [hasSavedPassword, setHasSavedPassword] = useState(false);
@@ -77,6 +84,73 @@ export default function ZentaoConnectionDialog({
     !editingPassword &&
     account.trim() === (connection.loginAccount || "");
   const loggingIn = mode === "account" && !retainingPassword;
+  const passwordVisible = retainingPassword ? revealedPassword !== null : showDraftPassword;
+  const passwordAction = passwordVisible ? "隐藏密码" : "查看密码";
+  const hidePassword = useCallback(() => {
+    revealRequest.current++;
+    setShowDraftPassword(false);
+    setRevealedPassword(null);
+    setRevealingPassword(false);
+  }, []);
+
+  function editPassword() {
+    if (locked) return;
+    hidePassword();
+    focusPasswordAfterEdit.current = true;
+    setEditingPassword(true);
+    setPassword("");
+  }
+
+  useLayoutEffect(() => {
+    if (!focusPasswordAfterEdit.current || retainingPassword) return;
+    focusPasswordAfterEdit.current = false;
+    passwordInput.current?.focus({ preventScroll: true });
+    passwordInput.current?.setSelectionRange(0, 0);
+  }, [retainingPassword]);
+
+  useEffect(() => {
+    hidePassword();
+    const hideWhenHidden = () => {
+      if (document.hidden) hidePassword();
+    };
+    window.addEventListener("blur", hidePassword);
+    document.addEventListener("visibilitychange", hideWhenHidden);
+    return () => {
+      revealRequest.current++;
+      window.removeEventListener("blur", hidePassword);
+      document.removeEventListener("visibilitychange", hideWhenHidden);
+    };
+  }, [workspaceId, connection.id, connection.baseUrl, connection.loginAccount, hidePassword]);
+
+  async function togglePassword() {
+    if (locked || revealingPassword) return;
+    if (passwordVisible) {
+      hidePassword();
+      return;
+    }
+    if (!retainingPassword) {
+      setShowDraftPassword(true);
+      return;
+    }
+    const request = ++revealRequest.current;
+    setRevealingPassword(true);
+    setError("");
+    try {
+      const value = await command<string>("zentao_reveal_password", {
+        workspaceId,
+        connectionId: connection.id,
+        serviceAddress: draft.baseUrl.trim(),
+        account: account.trim(),
+      });
+      if (request === revealRequest.current) setRevealedPassword(value);
+    } catch (cause) {
+      if (request === revealRequest.current) {
+        setError(cause instanceof Error ? cause.message : "无法查看已保存密码");
+      }
+    } finally {
+      if (request === revealRequest.current) setRevealingPassword(false);
+    }
+  }
   const helpButton = (
     <button
       className="icon-button"
@@ -120,7 +194,7 @@ export default function ZentaoConnectionDialog({
         if (active) {
           setEditingPassword(true);
           setError(
-            "无法检查已保存的登录配置，可重新输入密码保存；原密码不会显示在界面中。",
+            "无法检查已保存的登录配置，可重新输入密码保存。",
           );
         }
       })
@@ -134,6 +208,7 @@ export default function ZentaoConnectionDialog({
 
   function close() {
     if (inFlight.current) return;
+    hidePassword();
     setPassword("");
     setToken("");
     onClose();
@@ -141,6 +216,7 @@ export default function ZentaoConnectionDialog({
 
   function changeMode(next: "account" | "token") {
     if (locked) return;
+    hidePassword();
     setMode(next);
     setPassword("");
     setToken("");
@@ -156,6 +232,7 @@ export default function ZentaoConnectionDialog({
     )
       return;
     inFlight.current = true;
+    hidePassword();
     setBusy(true);
     onBusyChange?.(true);
     setError("");
@@ -234,6 +311,7 @@ export default function ZentaoConnectionDialog({
               normalizedServiceAddress(draft.baseUrl)
             ) {
               // 更换发送目标后，必须由用户为当前地址重新输入凭据并确认 HTTP 许可。
+              hidePassword();
               setPassword("");
               setToken("");
               setAllowInsecureHttp(false);
@@ -311,11 +389,13 @@ export default function ZentaoConnectionDialog({
           <label>
             <span className="zentao-field-title">禅道账号</span>
             <input
+              className="zentao-credential-input"
               required
               disabled={locked}
               autoComplete="username"
               value={account}
               onChange={(event) => {
+                hidePassword();
                 setAccount(event.target.value);
                 setPassword("");
                 setEditingPassword(true);
@@ -330,10 +410,7 @@ export default function ZentaoConnectionDialog({
                   type="button"
                   className="text-link"
                   disabled={locked}
-                  onClick={() => {
-                    setEditingPassword(true);
-                    setPassword("");
-                  }}
+                  onClick={editPassword}
                 >
                   修改密码
                 </button>
@@ -347,6 +424,7 @@ export default function ZentaoConnectionDialog({
                     className="text-link"
                     disabled={locked}
                     onClick={() => {
+                      hidePassword();
                       setEditingPassword(false);
                       setPassword("");
                     }}
@@ -355,23 +433,42 @@ export default function ZentaoConnectionDialog({
                   </button>
                 )}
             </span>
-            <input
-              required={!saved && !retainingPassword}
-              type="password"
-              aria-label="禅道密码"
-              disabled={locked}
-              autoComplete="off"
-              readOnly={retainingPassword}
-              placeholder={
-                preferencesLoading
-                  ? "正在检查已保存凭据…"
-                  : retainingPassword
-                    ? ""
-                    : "请输入密码"
-              }
-              value={retainingPassword ? "********" : password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
+            <span className="zentao-password-control">
+              <input
+                id={passwordId}
+                ref={passwordInput}
+                className="zentao-credential-input"
+                required={!saved && !retainingPassword}
+                type={passwordVisible ? "text" : "password"}
+                aria-label="禅道密码"
+                disabled={locked}
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                readOnly={retainingPassword}
+                placeholder={
+                  preferencesLoading
+                    ? "正在检查已保存凭据…"
+                    : retainingPassword
+                      ? ""
+                      : "请输入密码"
+                }
+                value={retainingPassword ? revealedPassword ?? "********" : password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                className="icon-button"
+                type="button"
+                aria-controls={passwordId}
+                aria-label={passwordAction}
+                title={passwordAction}
+                aria-busy={revealingPassword}
+                disabled={locked || revealingPassword || (!retainingPassword && !password)}
+                onClick={() => void togglePassword()}
+              >
+                {passwordVisible ? <EyeOff size={16} aria-hidden="true" /> : <Eye size={16} aria-hidden="true" />}
+              </button>
+            </span>
           </label>
         </>
       ) : (

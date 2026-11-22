@@ -12,6 +12,7 @@ const GROUP_PCM: usize = 20 * 1024 * 1024;
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
 const CONFLICT: &str = "会议已被修改，请刷新后重试";
 mod workflow;
+pub(crate) mod speakers;
 pub(crate) use workflow::add_marker;
 fn db(error: rusqlite::Error) -> String {
     error.to_string()
@@ -36,7 +37,7 @@ fn identifier(value: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn workspace(store: &Store, workspace_id: &str) -> Result<(), String> {
+pub(crate) fn workspace(store: &Store, workspace_id: &str) -> Result<(), String> {
     if store.workspace_id != workspace_id {
         return Err("工作空间已切换，请重新打开会议".into());
     }
@@ -428,14 +429,9 @@ fn append(
         }
         return Ok(value);
     }
-    let total: usize = tx
-        .query_row(
-            "SELECT COALESCE(SUM(length(pcm)),0) FROM meeting_audio_chunks WHERE meeting_id=?1",
-            [id],
-            |r| r.get(0),
-        )
-        .map_err(db)?;
-    if total + pcm.len() > MAX_PCM {
+    let duration = value["durationMs"].as_i64().ok_or("录音时长无效")?;
+    let added = (pcm.len() / 32) as i64;
+    if duration + added > (MAX_PCM / 32) as i64 {
         return Err("单场会议录音最多 2 小时".into());
     }
     let seq: i64 = tx
@@ -447,15 +443,17 @@ fn append(
         .map_err(db)?;
     tx.execute(
         "INSERT INTO meeting_audio_chunks(meeting_id,chunk_id,sequence,duration_ms,pcm) VALUES(?1,?2,?3,?4,?5)",
-        params![id, chunk_id, seq, pcm.len() as i64 / 32, pcm],
+        params![id, chunk_id, seq, added, pcm],
     )
     .map_err(db)?;
     let rev = value["revision"].as_i64().ok_or("会议版本无效")?;
     stale_analysis(&mut value);
     write_metadata(&tx, &mut value, rev)?;
-    let result = read(&tx, id)?;
+    let count = value["audioChunks"].as_i64().ok_or("录音片段计数无效")?;
+    value["audioChunks"] = json!(count + 1);
+    value["durationMs"] = json!(duration + added);
     tx.commit().map_err(db)?;
-    Ok(result)
+    Ok(value)
 }
 #[tauri::command]
 pub fn meeting_append_audio(
@@ -516,6 +514,18 @@ pub(crate) struct Job {
     pub(crate) provider: Value,
     pub(crate) key: String,
 }
+pub(crate) fn enabled_speech_pair(snapshot: &Value, model_id: &str) -> Result<(Value, Value), String> {
+    let model = integrations::get(snapshot, "models", model_id)?;
+    if model["enabled"] != true || model["capability"] != "speech" {
+        return Err("请选择已启用的语音模型".into());
+    }
+    let provider = integrations::get(snapshot, "providers", text(&model, "providerId"))?;
+    if provider["enabled"] != true || text(&provider, "protocol") == "anthropic-messages" {
+        return Err("该供应商不支持语音转录接口".into());
+    }
+    Ok((model, provider))
+}
+
 pub(crate) fn job(
     store: &Store,
     workspace_id: &str,
@@ -526,15 +536,7 @@ pub(crate) fn job(
     workspace(store, workspace_id)?;
     let snapshot = store.snapshot()?;
     let (model, provider) = if speech {
-        let model = integrations::get(&snapshot, "models", model_id)?;
-        if model["enabled"] != true || model["capability"] != "speech" {
-            return Err("请选择已启用的语音模型".into());
-        }
-        let provider = integrations::get(&snapshot, "providers", text(&model, "providerId"))?;
-        if provider["enabled"] != true || text(&provider, "protocol") == "anthropic-messages" {
-            return Err("该供应商不支持语音转录接口".into());
-        }
-        (model, provider)
+        enabled_speech_pair(&snapshot, model_id)?
     } else {
         integrations::live_chat_model(&snapshot, model_id)?
     };

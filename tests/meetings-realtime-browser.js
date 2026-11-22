@@ -1,5 +1,5 @@
 // 在全新 /tests/meetings.html 页面通过 agent-browser eval --stdin 执行。
-// 只使用内存 IPC、模拟媒体设备；不使用真实录音或 oMLX。
+// 只使用内存 IPC、模拟媒体设备。
 (async () => {
   const checks = [];
   const tick = () => new Promise((resolve) => setTimeout(resolve, 30));
@@ -19,23 +19,29 @@
   const calls = (name) => window.__calls.filter((call) => call.name === name);
   const preview = () => document.querySelector(".meeting-realtime")?.textContent || "";
   const baseDuration = window.__meetings[0].durationMs;
-  assert(document.querySelector('[aria-label="转录方式"]').textContent.includes("实时转录（oMLX）"), "默认选择明确的oMLX实时方式");
-  assert(!!button("重新转录") && !button("重新转录并识别人声"), "Whisper不会假称支持发言人识别");
+  await until(() => document.querySelector('[aria-label="录音模式"]')?.textContent.includes("本机实时转录"));
+  assert(ready(), "本机模型就绪后默认选择本机实时转录");
+  if (new URLSearchParams(location.search).get("runtime") === "cold") {
+    await until(() => window.__speechModel.runtime === "ready");
+    assert(calls("prepare_meeting_speech_model").length === 1 && window.__micOpenCount === 0, "会议页后台预加载且不打开麦克风");
+  }
+  assert(!document.querySelector(".meeting-retranscribe-bar"), "本机模式不显示 API 模型或会后转录操作");
 
-  window.__realtimeStartFail = "语音服务认证失败（HTTP 401），请在设置中保存供应商API Key";
+  window.__realtimeStartFail = "本机语音模型加载失败";
   button("继续录音").click();
-  await until(() => document.body.textContent.includes("HTTP 401") && ready());
-  assert(window.__micOpenCount === 0, "认证失败不打开麦克风、不显示正在录音");
-  assert(calls("meeting_append_audio").length === 0, "连接失败不伪造音频或转录成功");
+  await until(() => document.body.textContent.includes("本机语音模型加载失败") && ready());
+  assert(window.__micOpenCount === 0, "本机模型加载失败时不打开麦克风");
+  assert(calls("meeting_append_audio").length === 0, "加载失败时未产生音频");
 
   window.__realtimeStartFail = "";
   button("继续录音").click();
   await until(() => button("结束录音"));
+  assert(calls("meeting_realtime_start").at(-1).args.modelId === "local", "实时转录不使用供应商模型");
   const firstSession = window.__realtimeSessions.get(window.__lastRealtimeSession);
-  window.__emitAudio(0.75);
+  window.__emitAudio(0.12);
   await tick();
-  assert(calls("meeting_realtime_push").length === 0, "不足一秒的音频保留至下一块或停止");
-  window.__emitAudio(0.25);
+  assert(calls("meeting_realtime_push").length === 0, "不足 160 毫秒的音频保留至下一块或停止");
+  window.__emitAudio(0.04);
   await until(() => preview().includes("实时识别第1句"));
   assert(window.__micActive && !!button("结束录音"), "录音未停止就能看到识别文字");
   assert(window.__meetings[0].segments.length === 2, "实时预览独立于原有转录校对文本");
@@ -68,10 +74,10 @@
   firstSession.onEvent.onmessage({ type: "delta", sessionId: "expired-session", workspaceId: firstSession.workspaceId, meetingId: firstSession.id, text: "过期会话内容" });
   await tick();
   assert(!preview().includes("错误工作空间") && !preview().includes("过期会话"), "过滤其他工作空间和过期会话的事件");
-  window.__emitAudio(0.35);
+  window.__emitAudio(0.07);
   button("结束录音").click();
   await until(() => !window.__micActive && ready() && window.__meetings[0].segments.length === 3);
-  assert(window.__meetings[0].durationMs === baseDuration + 1350, "停止时完整保存不足一秒的尾部音频");
+  assert(window.__meetings[0].durationMs === baseDuration + 230, "停止时完整保存不足 160 毫秒的尾部音频");
   assert(window.__meetings[0].segments[2].text === "实时识别第1句。实时识别第2句。", "停止后持久化最终全文且保留原段落");
   assert(!document.querySelector(".meeting-realtime"), "成功收尾后移除临时预览");
   firstSession.onEvent.onmessage({ type: "delta", sessionId: firstSession.sessionId, workspaceId: firstSession.workspaceId, meetingId: firstSession.id, text: "已关闭会话迟到结果" });
@@ -80,14 +86,14 @@
 
   button("继续录音").click();
   await until(() => button("结束录音"));
-  window.__emitAudio(1);
+  window.__emitAudio(0.16);
   await until(() => preview().includes("实时识别第1句"));
   window.__realtimePushFail = "模拟识别连接中断";
-  window.__emitAudio(1);
+  window.__emitAudio(0.16);
   await until(() => document.body.textContent.includes("模拟识别连接中断"));
   const pushesAtFailure = calls("meeting_realtime_push").length;
   const chunksAtFailure = window.__audioChunks.size;
-  window.__emitAudio(1);
+  window.__emitAudio(0.16);
   await until(() => window.__audioChunks.size > chunksAtFailure);
   assert(window.__micActive && calls("meeting_realtime_push").length === pushesAtFailure, "识别中断继续保存录音且不自动重发");
   assert(preview().includes("实时识别第1句"), "识别中断保留已收到的文字");

@@ -111,10 +111,14 @@ export function meetingMarkdown(m: Meeting): string {
     "## 转录",
     ...[...m.segments]
       .sort((a, b) => a.startMs - b.startMs)
-      .map(
-        (s) =>
-          `${meetingTime(s.startMs)} ${s.speaker ? m.speakerNames[s.speaker] || s.speaker : "未标记说话人"}：${s.text}`,
-      ),
+      .map((s) => {
+        const speaker = s.speaker;
+        const name = speaker
+          ? m.speakerNames[speaker] ||
+            (speaker.startsWith("local-speaker:") ? speakerLabel(speaker, m.segments) : speaker)
+          : "未标记说话人";
+        return `${meetingTime(s.startMs)} ${name}：${s.text}`;
+      }),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -242,6 +246,9 @@ export function mindMapSvg(root: MindMapNode): string {
 
 /** 实时分片内的供应商编号不能伪装为跨片段统一身份。 */
 export function speakerLabel(key: string, segments: MeetingSegment[]): string {
+  if (key.startsWith("local-speaker:")) {
+    return `说话人 ${key.slice("local-speaker:".length)}`;
+  }
   if (key.startsWith("chunk:")) {
     const scope = key.split(":").slice(0, 2).join(":");
     const scopes = [

@@ -17,6 +17,12 @@ const ENCRYPTION_CHECK_KEY: &str = "credential-encryption-check";
 const ENCRYPTION_CHECK_PURPOSE: &str = "settings:credential-encryption-check";
 const ENCRYPTION_CLEANUP_KEY: &str = "credential-encryption-cleanup-pending";
 
+pub(crate) fn default_data_root() -> Result<PathBuf, String> {
+    dirs::home_dir()
+        .map(|home| home.join(DEFAULT_DATA_DIR))
+        .ok_or_else(|| "无法确定用户目录".into())
+}
+
 pub struct Store {
     pub root: PathBuf,
     pub generation: PathBuf,
@@ -371,9 +377,7 @@ impl Store {
     }
 
     pub fn activate_default_bootstrap(&self) -> Result<(), String> {
-        let default = dirs::home_dir()
-            .ok_or("无法确定用户目录")?
-            .join(DEFAULT_DATA_DIR);
+        let default = default_data_root()?;
         fs::create_dir_all(&default).map_err(|e| e.to_string())?;
         atomic_json(
             &default.join("bootstrap.json"),
@@ -2474,8 +2478,15 @@ mod tests {
         let object = store.generation.join("objects/sha256/ab/test");
         fs::create_dir_all(object.parent().unwrap()).unwrap();
         fs::write(&object, b"sample").unwrap();
+        let model_cache = store.root.join("models/meeting-speech/x-asr");
+        fs::create_dir_all(&model_cache).unwrap();
+        fs::write(model_cache.join("encoder.onnx"), b"model cache").unwrap();
         let archive = sandbox.path().join("backup.zip");
         store.backup(&archive).unwrap();
+        let zip = zip::ZipArchive::new(File::open(&archive).unwrap()).unwrap();
+        assert_eq!(zip.len(), 3);
+        assert!(zip.file_names().all(|name| !name.starts_with("models/")));
+        drop(zip);
         let restored = Store::restore_to(&archive, &sandbox.path().join("restore")).unwrap();
         assert_eq!(
             restored.snapshot().unwrap()["skills"][0]["content"],

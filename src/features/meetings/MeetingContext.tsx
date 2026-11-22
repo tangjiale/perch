@@ -87,7 +87,7 @@ export default function MeetingContext({
             }}
           />
           <small>
-            用于普通分片、会后转录与纪要；oMLX 实时接口暂不支持热词。
+            用于兼容的分片转录、会后转录和纪要。本机实时转录暂不使用热词。
           </small>
         </label>
         <label className="meeting-context-wide">

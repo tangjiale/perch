@@ -1060,6 +1060,25 @@ html .task-card.task-is-done .tag:not(.expired) {
   margin-left: auto;
   font-size: 12px;
 }
+.zentao-credential-input {
+  display: block;
+  appearance: none;
+  caret-color: var(--theme-accent, var(--command));
+}
+.zentao-password-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+.zentao-password-control > input {
+  grid-area: 1 / 1;
+  padding-inline-end: 42px;
+}
+.zentao-password-control > .icon-button {
+  grid-area: 1 / 1;
+  justify-self: end;
+  margin-inline-end: 4px;
+}
 .zentao-inline-form .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

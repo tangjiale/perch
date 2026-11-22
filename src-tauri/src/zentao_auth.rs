@@ -174,20 +174,29 @@ struct RememberedLogin {
     blocked: bool,
 }
 
-// 只返回界面恢复所需的布尔信息，密码及授权策略仍以加密凭据库为准。
-fn login_preferences(connection: &Value, logins: &impl Secrets) -> Result<Value, String> {
+fn matching_login(
+    connection: &Value,
+    logins: &impl Secrets,
+) -> Result<Option<RememberedLogin>, String> {
+    if connection["rememberCredentials"] != true {
+        return Ok(None);
+    }
     let saved = logins.read()?;
     let login = saved
         .as_deref()
         .map(serde_json::from_str::<RememberedLogin>)
         .transpose()
         .map_err(|_| "保存的登录凭据无效，请重新登录")?;
-    let matching = login.as_ref().filter(|login| {
-        connection["rememberCredentials"] == true
-            && login.base == text(connection, "baseUrl")
+    Ok(login.filter(|login| {
+        login.base == text(connection, "baseUrl")
             && login.account == text(connection, "loginAccount")
             && !login.password.is_empty()
-    });
+    }))
+}
+
+// 常规回显只返回界面恢复所需的布尔信息。
+fn login_preferences(connection: &Value, logins: &impl Secrets) -> Result<Value, String> {
+    let matching = matching_login(connection, logins)?;
     Ok(json!({
         "hasSavedPassword": matching.is_some(),
         "allowInsecureHttp": matching.is_some_and(|login| login.allow_http)
@@ -211,6 +220,32 @@ pub fn zentao_auth_preferences(
         .ok_or("禅道连接不存在")?;
     let logins = login_credential(&workspace_id, &connection_id)?;
     login_preferences(connection, &logins)
+}
+
+/// 仅由密码眼睛按钮调用。校对表单和实际连接，防止迁址、改账号后显示旧密码。
+#[tauri::command]
+pub fn zentao_reveal_password(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    connection_id: String,
+    service_address: String,
+    account: String,
+) -> Result<String, String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    if store.workspace_id != workspace_id {
+        return Err("工作空间已切换，请重新打开连接设置".into());
+    }
+    let snapshot = store.snapshot()?;
+    let connection = get(&snapshot, "connections", &connection_id)?;
+    if base_url(&service_address)? != text(&connection, "baseUrl")
+        || account.trim() != text(&connection, "loginAccount")
+    {
+        return Err("服务地址或账号已变化，请重新打开连接设置".into());
+    }
+    let logins = login_credential(&workspace_id, &connection_id)?;
+    matching_login(&connection, &logins)?
+        .map(|login| login.password)
+        .ok_or_else(|| "此连接没有可查看的已保存密码".into())
 }
 
 pub(crate) struct AutoAuth<'a> {
@@ -942,11 +977,19 @@ mod tests {
             json!({"hasSavedPassword":true,"allowInsecureHttp":true})
         );
         assert!(!preferences.to_string().contains("fixture-password"));
+        assert_eq!(
+            matching_login(&connection, &logins)
+                .unwrap()
+                .unwrap()
+                .password,
+            "fixture-password"
+        );
         connection["loginAccount"] = json!("other-user");
         assert_eq!(
             login_preferences(&connection, &logins).unwrap(),
             json!({"hasSavedPassword":false,"allowInsecureHttp":false})
         );
+        assert!(matching_login(&connection, &logins).unwrap().is_none());
         connection["loginAccount"] = json!("tester");
         connection["rememberCredentials"] = json!(false);
         assert_eq!(

@@ -231,7 +231,7 @@ export default function BackupSettings({ info, onRestored, notify }: {
           await command("storage_move", { target: info.defaultRoot }); await workspaceChanged(); notify("已恢复默认目录");
         })}>恢复默认路径</button>
       </div>
-      <p className="backup-hint">备份包含数据库、加密配置与文档原件；不包含本机主密钥和独立登录凭据。跨机还原需要原本机主密钥。</p>
+      <p className="backup-hint">备份包含数据库、加密配置与文档原件。本机模型、主密钥和独立登录凭据不随备份导出。跨机还原需要原本机主密钥。</p>
     </section>
 
     {!native && <p className="backup-feedback" role="status">请在栖点桌面应用中配置 S3 存储和备份。浏览器预览不保存业务数据。</p>}

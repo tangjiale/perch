@@ -1,5 +1,6 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import type { Meeting } from "./meetings";
+import type { MeetingSpeechPreferences } from "./meeting-speech";
 import type { PromptEntry, PromptProgress, PromptRequest, PromptResult } from "./prompt-optimizer";
 import { version } from "../../package.json";
 import type { BackupSaveInput, BackupState } from "./backup-types";
@@ -42,6 +43,16 @@ export async function command<T>(
 export interface MeetingRealtimeEvent {
   sessionId: string; workspaceId: string; meetingId: string;
   type: "delta" | "error"; text?: string; message?: string;
+}
+export interface MeetingSpeechStatus {
+  state: "missing" | "downloading" | "ready" | "error";
+  downloadedBytes: number;
+  totalBytes: number;
+  error?: string | null;
+  runtime?: "cold" | "loading" | "ready" | "error";
+  runtimeError?: string | null;
+  modelPath: string;
+  canUninstall: boolean;
 }
 export const api = {
   listPasswordVault: (workspaceId: string, kind: PasswordVaultKind) =>
@@ -104,6 +115,20 @@ export const api = {
   deleteSharedTableGroup: (workspaceId: string, id: string, revision: number) =>
     command<void>("delete_shared_table_group", { workspaceId, id, revision }),
   meetingRealtimeStart: (workspaceId: string, id: string, modelId: string, sessionId: string, onEvent: Channel<MeetingRealtimeEvent>) => command<void>("meeting_realtime_start", {workspaceId, id, modelId, sessionId, onEvent}),
+  meetingSpeechStatus: () => command<MeetingSpeechStatus>("meeting_speech_status"),
+  meetingSpeechPrepare: (workspaceId: string) =>
+    command<void>("prepare_meeting_speech_model", { workspaceId }),
+  meetingSpeechInstall: () => command<void>("install_meeting_speech_model"),
+  meetingSpeakerModelStatus: () => command<MeetingSpeechStatus>("meeting_speaker_model_status"),
+  meetingSpeakerModelInstall: () => command<void>("install_meeting_speaker_model"),
+  meetingSpeechUninstall: (model: "transcription" | "speaker") =>
+    command<MeetingSpeechStatus>("uninstall_meeting_speech_model", { model }),
+  meetingDiarize: (workspaceId: string, id: string, revision: number) =>
+    command<{ meeting: Meeting; assigned: number }>("meeting_diarize", { workspaceId, id, revision }),
+  meetingSpeechPreferences: (workspaceId: string) =>
+    command<MeetingSpeechPreferences>("meeting_speech_preferences", { workspaceId }),
+  saveMeetingSpeechPreferences: (workspaceId: string, value: MeetingSpeechPreferences) =>
+    command<void>("save_meeting_speech_preferences", { workspaceId, value }),
   meetingRealtimePush: (workspaceId: string, id: string, sessionId: string, chunkId: string) => command<void>("meeting_realtime_push", {workspaceId, id, sessionId, chunkId}),
   meetingRealtimeStop: (workspaceId: string, id: string, sessionId: string) => command<Meeting>("meeting_realtime_stop", {workspaceId, id, sessionId}),
   meetingList: (workspaceId: string) => command<Meeting[]>("meeting_list", { workspaceId }),

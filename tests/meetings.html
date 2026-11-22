@@ -10,6 +10,19 @@
     <script>
       window.isTauri = true;
       window.__calls = [];
+      window.__speechModel = {
+        state: new URLSearchParams(location.search).get("speech") || "ready",
+        downloadedBytes: 0,
+        totalBytes: 133898007,
+        runtime: new URLSearchParams(location.search).get("runtime") || "ready",
+        modelPath: "/fixture/.perch/models/meeting-speech/x-asr",
+        canUninstall: !new URLSearchParams(location.search).has("speech"),
+      };
+      window.__meetingSpeechPreferences = { mode: "local" };
+      window.__speakerModel = {
+        state: "missing", downloadedBytes: 0, totalBytes: 34274078, canUninstall: false,
+        modelPath: "/fixture/.perch/models/meeting-speech/pyannote-campplus",
+      };
       window.__meetings = [
         {
           id: "meeting-1",
@@ -82,6 +95,45 @@
         unregisterCallback: (id) => delete window.__callbacks[id],
         invoke: async (name, args) => {
           window.__calls.push({ name, args });
+          if (name === "meeting_speech_status") return structuredClone(window.__speechModel);
+          if (name === "prepare_meeting_speech_model") {
+            window.__speechModel.runtime = "ready";
+            return;
+          }
+          if (name === "meeting_speech_preferences") return structuredClone(window.__meetingSpeechPreferences);
+          if (name === "meeting_speaker_model_status") return structuredClone(window.__speakerModel);
+          if (name === "install_meeting_speaker_model") {
+            window.__speakerModel.state = "ready";
+            window.__speakerModel.downloadedBytes = window.__speakerModel.totalBytes;
+            window.__speakerModel.canUninstall = true;
+            return;
+          }
+          if (name === "uninstall_meeting_speech_model") {
+            if (window.__modelUninstallFail) throw new Error("模拟模型正在使用");
+            const model = args.model === "transcription" ? window.__speechModel : window.__speakerModel;
+            Object.assign(model, { state: "missing", downloadedBytes: 0, canUninstall: false, runtime: "cold" });
+            return structuredClone(model);
+          }
+          if (name === "meeting_diarize") {
+            const meeting = window.__meetings.find((value) => value.id === args.id);
+            if (meeting.revision !== args.revision) throw "会议版本已变化";
+            let assigned = 0;
+            for (const segment of meeting.segments) {
+              if (!segment.speaker) segment.speaker = `local-speaker:${++assigned}`;
+            }
+            if (assigned) meeting.revision++;
+            return structuredClone({ meeting, assigned });
+          }
+          if (name === "save_meeting_speech_preferences") {
+            window.__meetingSpeechPreferences = structuredClone(args.value);
+            return;
+          }
+          if (name === "install_meeting_speech_model") {
+            window.__speechModel.state = "downloading";
+            window.__speechModel.downloadedBytes = 80_000_000;
+            window.__speechModel.canUninstall = false;
+            return;
+          }
           if (name === "meeting_list")
             return structuredClone(window.__meetings);
           if (name === "meeting_save") {
@@ -220,18 +272,34 @@
       window.__micOpenCount = 0;
       window.__micActive = false;
       window.__micListeners = new Set();
+      window.__micConstraints = [];
+      window.__availableMics = [
+        { kind: "audioinput", deviceId: "default", label: "系统默认麦克风" },
+        { kind: "audioinput", deviceId: "fixture-usb", label: "USB 麦克风" },
+      ];
+      Object.defineProperty(navigator.mediaDevices, "enumerateDevices", {
+        configurable: true,
+        value: async () => structuredClone(window.__availableMics),
+      });
       Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
         configurable: true,
-        value: async () => {
+        value: async (constraints) => {
           window.__micOpenCount++;
+          window.__micConstraints.push(structuredClone(constraints));
           if (window.__micFailure) throw new Error(window.__micFailure);
+          const deviceId = constraints?.audio?.deviceId?.exact || "default";
+          if (!window.__availableMics.some((device) => device.deviceId === deviceId)) {
+            throw new DOMException("模拟设备断开", "NotFoundError");
+          }
           window.__micActive = true;
           const track = {
             stop: () => { window.__micActive = false; },
+            kind: "audio", readyState: "live",
+            getSettings: () => ({ deviceId }),
             addEventListener: (_name, listener) => window.__micListeners.add(listener),
             removeEventListener: (_name, listener) => window.__micListeners.delete(listener),
           };
-          return { getTracks: () => [track] };
+          return { getTracks: () => [track], getAudioTracks: () => [track] };
         },
       });
       window.AudioContext = class {
@@ -240,6 +308,14 @@
         async resume() {}
         async close() {}
         createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+        createAnalyser() {
+          return {
+            fftSize: 512,
+            getFloatTimeDomainData: (data) => data.fill(window.__mockMicrophoneGain ?? 0.12),
+            getByteTimeDomainData: (data) => data.fill((window.__mockMicrophoneGain ?? 0.12) * 128 + 128),
+            connect() {}, disconnect() {},
+          };
+        }
         createScriptProcessor() {
           const processor = { onaudioprocess: null, connect() {}, disconnect() { processor.onaudioprocess = null; } };
           window.__audioProcessor = processor;

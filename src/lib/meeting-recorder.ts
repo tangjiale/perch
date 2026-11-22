@@ -36,6 +36,18 @@ export function bytesBase64(bytes: Uint8Array): string {
     text += String.fromCharCode(...bytes.subarray(i, i + 8192));
   return btoa(text);
 }
+
+export function meetingAudioConstraints(deviceId?: string): MediaStreamConstraints {
+  return {
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+    },
+    video: false,
+  };
+}
+
 export class MeetingRecorder {
   private stream?: MediaStream;
   private context?: AudioContext;
@@ -60,12 +72,22 @@ export class MeetingRecorder {
     private onChunk: (id: string, base64: string) => Promise<void>,
     private onFailure: (error: unknown) => void,
     private chunkSeconds = 10,
+    private inputDeviceId?: string,
   ) {}
   async start() {
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true },
-      video: false,
-    });
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia(
+        meetingAudioConstraints(this.inputDeviceId),
+      );
+    } catch (error) {
+      if (
+        this.inputDeviceId && error instanceof Error &&
+        ["NotFoundError", "OverconstrainedError"].includes(error.name)
+      ) {
+        throw new Error("选定的麦克风已不可用，请在会议语音设置中重新选择。");
+      }
+      throw error;
+    }
     if (this.stopped) {
       this.stream.getTracks().forEach((t) => t.stop());
       return;
@@ -78,7 +100,7 @@ export class MeetingRecorder {
       await this.context.resume();
       if (this.stopped) return;
       this.source = this.context.createMediaStreamSource(this.stream);
-      this.processor = this.context.createScriptProcessor(4096, 1, 1);
+      this.processor = this.context.createScriptProcessor(this.chunkSeconds < 1 ? 1024 : 4096, 1, 1);
       this.processor.onaudioprocess = (event) => {
         if (this.stopped) return;
         const data = event.inputBuffer.getChannelData(0).slice();
@@ -120,7 +142,7 @@ export class MeetingRecorder {
         this.pending--;
       }
     });
-    if (this.pending >= 6) {
+    if (this.pending >= Math.max(6, Math.ceil(3 / this.chunkSeconds))) {
       this.onFailure(
         new Error(
           "转录处理较慢，已暂停录音。已采集音频会继续保存，请稍后继续。",

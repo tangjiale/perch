@@ -41,7 +41,7 @@
     await tick();
   };
   const select = async (label, option) => {
-    field(label).click();
+    (field(label) || document.getElementById(label)).click();
     await tick();
     const item = [...document.querySelectorAll('[role="option"]')].find((el) =>
       el.textContent.includes(option),
@@ -56,6 +56,8 @@
   await fill(field("参会人"), "林晓，陈舟\n待核对的参会人");
   await fill(field("会议笔记"), "客户意见尚待核实，不作为已确认结论。");
   await fill(field("会议热词"), "Perch\nNebula");
+  tab("会议纪要").click();
+  await tick();
   await select("纪要整理方式", "详细");
   window.__saveFail = true;
   button("保存修改").click();
@@ -245,12 +247,40 @@
     "录音继续与停止后重点完整保留",
   );
 
-  await select("转录方式", "分片转录");
+  document.querySelector(".meeting-speech-link").click();
+  await until(() => document.getElementById("meeting-speech-mode"));
+  await select("meeting-microphone-device", "USB 麦克风");
+  const savedAudioBeforeCheck = calls("meeting_append_audio").length;
+  button("检测麦克风").click();
+  await until(() => Number(document.querySelector('[role="meter"]')?.getAttribute("aria-valuenow")) > 0);
+  assert(
+    window.__micConstraints.at(-1).audio.deviceId.exact === "fixture-usb" &&
+      calls("meeting_append_audio").length === savedAudioBeforeCheck,
+    "麦克风检测读取所选设备的音量且不创建会议录音",
+  );
+  button("结束检测").click();
+  assert(!window.__micActive, "结束检测释放麦克风");
+  await select("meeting-speech-mode", "API 转录");
+  await select("meeting-speech-api-model", "支持说话人识别的服务");
+  button("保存设置").click();
+  await until(() => document.body.textContent.includes("设置已保存"));
+  assert(window.__meetingSpeechPreferences.inputDeviceId === "fixture-usb", "输入设备随会议语音设置保存");
+  button("检测麦克风").click();
+  await until(() => window.__micActive);
+  [...document.querySelectorAll("a")].find((link) => link.textContent === "返回会议").click();
+  await until(() => field("录音模式")?.textContent.includes("API 分片转录"));
+  assert(!window.__micActive, "离开设置自动结束检测");
+  assert(
+    !!button("重新转录并识别人声") && !document.querySelector(".meeting-retranscribe-bar [role=combobox]"),
+    "会议页从设置读取所选 API 和说话人能力，无重复的模型选择",
+  );
   window.__transcribePending = true;
   button("继续录音").click();
   await until(() => !!button("结束录音"));
+  assert(window.__micConstraints.at(-1).audio.deviceId.exact === "fixture-usb", "正式录音使用保存的麦克风");
   window.__emitAudio(10);
   await until(() => typeof window.__releaseTranscribe === "function");
+  assert(calls("meeting_transcribe").at(-1).args.modelId === "speech-diarized", "API 分片使用设置中指定的模型");
   assert(
     button("标记重点").disabled,
     "普通分片识别在途时禁止打点，保护转录版本",
@@ -278,9 +308,47 @@
   await until(() => !!button("继续录音") && !button("继续录音").disabled);
   assert(meeting().markers.length === 2, "串行打点与分片识别都完成且无丢失");
   assert(
-    window.__calls.every((call) => call.args.workspaceId === "fixture"),
+    window.__calls
+      .filter((call) => !["meeting_speech_status", "meeting_speaker_model_status"].includes(call.name))
+      .every((call) => call.args.workspaceId === "fixture"),
     "新增领域操作均绑定当前工作空间",
   );
+
+  Object.assign(window.__speakerModel, { state: "ready", canUninstall: true });
+  document.querySelector(".meeting-speech-link").click();
+  const uninstall = (model) => field(`卸载 ${model}`);
+  const speakerModel = "Pyannote + CAM++";
+  await until(() => uninstall("X-ASR") && uninstall(speakerModel));
+  const modelPaths = [...document.querySelectorAll(".meeting-speech-model-path code")].map((element) => element.textContent);
+  assert(modelPaths.includes(window.__speechModel.modelPath) && modelPaths.includes(window.__speakerModel.modelPath),
+    "API 转录模式仍显示本机模型的独立存储目录和卸载入口");
+  uninstall(speakerModel).click();
+  await until(() => button("确认卸载"));
+  button("取消").click();
+  await until(() => !button("确认卸载"));
+  assert(calls("uninstall_meeting_speech_model").length === 0, "取消确认时不卸载模型");
+  uninstall(speakerModel).click();
+  await until(() => button("确认卸载"));
+  window.__modelUninstallFail = true;
+  button("确认卸载").click();
+  await until(() => document.body.textContent.includes("模拟模型正在使用") && button("确认卸载")?.disabled === false);
+  assert(window.__speakerModel.state === "ready", "后端拒绝卸载时保留模型并显示原因");
+  window.__modelUninstallFail = false;
+  await until(() => {
+    const confirm = button("确认卸载");
+    if (confirm?.disabled !== false) return false;
+    confirm.click();
+    return true;
+  });
+  await until(() => !uninstall(speakerModel) && !button("确认卸载"));
+  assert(calls("uninstall_meeting_speech_model").at(-1).args.model === "speaker" && window.__speechModel.state === "ready",
+    "卸载说话人模型时保留 X-ASR");
+  uninstall("X-ASR").click();
+  await until(() => button("确认卸载"));
+  button("确认卸载").click();
+  await until(() => !uninstall("X-ASR") && button("下载模型"));
+  assert(calls("uninstall_meeting_speech_model").at(-1).args.model === "transcription" && window.__speechModel.runtime === "cold",
+    "卸载 X-ASR 后可重新下载");
   window.__workflowChecks = checks;
   return { passed: checks.length, checks, viewport: [innerWidth, innerHeight] };
 })();

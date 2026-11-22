@@ -8,6 +8,7 @@
   for (const node of document.querySelectorAll('style,link[rel="stylesheet"]'))
     doc.head.append(node.cloneNode(true));
   const requests = [],
+    reveals = [],
     errors = [],
     results = [];
   win.isTauri = true;
@@ -22,7 +23,7 @@
       name === "zentao_auth_preferences"
         ? Promise.resolve(win.preferences)
         : new Promise((resolve, reject) =>
-            requests.push({ name, args, resolve, reject }),
+            (name === "zentao_reveal_password" ? reveals : requests).push({ name, args, resolve, reject }),
           ),
   };
   const script = doc.createElement("script");
@@ -74,6 +75,7 @@
     input.dispatchEvent(new win.Event("input", { bubbles: true }));
   };
   const submit = () => doc.querySelector("footer button");
+  const eye = (label) => doc.querySelector(`button[aria-label="${label}"]`);
   const mode = (text) =>
     [...doc.querySelectorAll(".segmented button")].find((b) =>
       b.textContent.includes(text),
@@ -167,16 +169,36 @@
         field("禅道账号").value === "fixture-user",
     );
     assert(
-      "已保存密码仅用固定掩码且不可直接查看",
+      "打开表单只显示掩码且不读取密码",
       field("密码").value === "********" &&
         field("密码").type === "password" &&
-        field("密码").readOnly,
+        field("密码").readOnly && reveals.length === 0,
     );
+    field("密码").focus();
+    field("密码").click();
+    await wait(() => doc.activeElement === field("密码"));
+    assert("点击和聚焦已保存密码时保留掩码", field("密码").readOnly && field("密码").value === "********" && reveals.length === 0);
+    eye("查看密码").click();
+    await wait(() => reveals.length === 1);
+    assert("查看使用当前连接、地址和账号", reveals[0].args.workspaceId === "fixture-workspace" &&
+      reveals[0].args.connectionId === "fixture-connection" &&
+      reveals[0].args.serviceAddress === "http://example.test/zentao" &&
+      reveals[0].args.account === "fixture-user");
+    reveals[0].resolve("fixture-saved-password");
+    await wait(() => field("密码").type === "text");
+    assert("已保存密码按需显示且保持只读", field("密码").value === "fixture-saved-password" && field("密码").readOnly);
+    eye("隐藏密码").click();
+    await wait(() => field("密码").type === "password");
+    assert("再次点击恢复固定掩码", field("密码").value === "********");
+    eye("查看密码").click();
+    await wait(() => reveals.length === 2);
+    reveals[1].resolve("fixture-saved-password");
+    await wait(() => field("密码").type === "text");
     assert("已有自动登录选项保持开启", field("记住登录凭据").checked);
     submit().click();
     await wait(() => requests.length === 3);
     assert(
-      "普通编辑保留记住凭据且不读取密码",
+      "查看明文后保存仍保留凭据且不提交密码",
       requests[2].args.rememberCredentials === true &&
         requests[2].args.password === null,
     );
@@ -204,15 +226,27 @@
           field("禅道账号").getBoundingClientRect().top,
       ) < 1,
     );
+    const accountStyle = win.getComputedStyle(field("禅道账号"));
+    const passwordStyle = win.getComputedStyle(field("密码"));
+    assert("账号和密码框底色、圆角及高度一致",
+      accountStyle.backgroundColor === passwordStyle.backgroundColor &&
+      accountStyle.borderRadius === passwordStyle.borderRadius &&
+      Math.abs(field("密码").getBoundingClientRect().height - field("禅道账号").getBoundingClientRect().height) < 1,
+    );
     [...doc.querySelectorAll("button")]
       .find((button) => button.textContent === "修改密码")
       .click();
     await wait(() => !field("密码").readOnly);
     assert(
       "主动修改时清空掩码且仍隐藏输入",
-      field("密码").value === "" && field("密码").type === "password",
+      field("密码").value === "" && field("密码").type === "password" &&
+        doc.activeElement === field("密码") && field("密码").selectionStart === 0,
     );
     fill(field("密码"), "replacement-password");
+    await wait(() => !eye("查看密码").disabled);
+    eye("查看密码").click();
+    await wait(() => field("密码").type === "text");
+    assert("新输入的密码在本地切换显示", field("密码").value === "replacement-password" && reveals.length === 2);
     [...doc.querySelectorAll("button")]
       .find((button) => button.textContent === "保留原密码")
       .click();

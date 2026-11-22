@@ -22,6 +22,7 @@ mod mail_history;
 mod mcp;
 mod meetings;
 mod meeting_realtime;
+mod meeting_speech;
 mod natapp;
 mod parser;
 mod password_vault;
@@ -237,6 +238,7 @@ pub fn run() {
             updater::update_prepare,
             zentao_auth::zentao_connect,
             zentao_auth::zentao_auth_preferences,
+            zentao_auth::zentao_reveal_password,
             website_icon::website_icon_fetch,
             browser_bookmarks::read_browser_bookmarks,
             bookmark_apps::import_browser_bookmark_apps,
@@ -315,11 +317,20 @@ pub fn run() {
             meeting_realtime::meeting_realtime_start,
             meeting_realtime::meeting_realtime_push,
             meeting_realtime::meeting_realtime_stop,
+            meeting_speech::meeting_speech_status,
+            meeting_speech::install_meeting_speech_model,
+            meeting_speech::uninstall_meeting_speech_model,
+            meeting_speech::meeting_speech_preferences,
+            meeting_speech::save_meeting_speech_preferences,
+            meeting_speech::prepare_meeting_speech_model,
+            meeting_speech::meeting_speaker_model_status,
+            meeting_speech::install_meeting_speaker_model,
             meetings::meeting_list,
             meetings::meeting_save,
             meetings::meeting_delete,
             meetings::meeting_append_audio,
             meetings::meeting_transcribe,
+            meetings::speakers::meeting_diarize,
             meetings::meeting_generate,
             meetings::meeting_audio,
             meetings::meeting_action_complete,
