@@ -240,8 +240,10 @@ impl Decoder {
                 return Err("实时转录已取消".into());
             }
             let samples: Vec<f32> = frame
-                .chunks_exact(2)
-                .map(|sample| f32::from(i16::from_le_bytes([sample[0], sample[1]])) / 32768.0)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&sample| f32::from(i16::from_le_bytes(sample)) / 32768.0)
                 .collect();
             self.stream.accept_waveform(SAMPLE_RATE, &samples);
             self.elapsed_ms += (frame.len() / PCM_BYTES_PER_MS) as i64;

@@ -196,12 +196,14 @@ pub(super) fn read(
     budget: &mut u64,
 ) -> Result<Vec<BookmarkNode>, Issue> {
     // SQLite 只打开私有快照，浏览器目录不会产生 SHM、锁文件或 checkpoint。
-    let mut temp = tempfile::Builder::new();
+    let temp = tempfile::Builder::new();
     #[cfg(unix)]
-    {
+    let temp = {
         use std::os::unix::fs::PermissionsExt;
+        let mut temp = temp;
         temp.permissions(std::fs::Permissions::from_mode(0o700));
-    }
+        temp
+    };
     for attempt in 0..3 {
         let tempdir = temp.tempdir().map_err(|_| Issue::Io)?;
         let db = tempdir.path().join("places.sqlite");

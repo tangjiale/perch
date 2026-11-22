@@ -71,8 +71,10 @@ pub async fn meeting_diarize(
         }
         let duration = (pcm.len() / 32) as i64;
         let samples: Vec<f32> = pcm
-            .chunks_exact(2)
-            .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&sample| f32::from(i16::from_le_bytes(sample)) / 32768.0)
             .collect();
         drop(pcm);
         let result = diarizer.process(&samples).ok_or("本机说话人识别失败")?;
