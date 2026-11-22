@@ -37,10 +37,13 @@ async function fetchRelease(fetcher = fetch) {
 if (typeof module !== 'undefined') module.exports = { releaseAssetUrl, releaseInfo, fetchRelease };
 if (typeof document !== 'undefined') {
   const $ = s => document.querySelector(s);
+  const themeToggle = $('#theme-toggle');
   try { if (localStorage.getItem('perch-theme') === 'dark') document.documentElement.classList.add('dark'); } catch { /* 隐私模式仍可切换主题。 */ }
-  $('#theme-toggle').addEventListener('click', () => {
-    document.documentElement.classList.toggle('dark');
-    try { localStorage.setItem('perch-theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light'); } catch { /* 存储不可用不阻断交互。 */ }
+  themeToggle.setAttribute('aria-pressed', String(document.documentElement.classList.contains('dark')));
+  themeToggle.addEventListener('click', () => {
+    const dark = document.documentElement.classList.toggle('dark');
+    themeToggle.setAttribute('aria-pressed', String(dark));
+    try { localStorage.setItem('perch-theme', dark ? 'dark' : 'light'); } catch { /* 存储不可用不阻断交互。 */ }
   });
   const film = $('#perch-film');
   if (film) {
