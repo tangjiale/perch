@@ -1,5 +1,5 @@
 //! NATAPP 本地管理：密文配置、受保护运行目录和独立子进程。
-//! 官方 3.0.5 契约来源：natapp.cn/get.sh、get.ps1 和 article/config_ini。
+//! 官方客户端契约来源：natapp.cn/download、get.sh、get.ps1 和 article/config_ini。
 //! 仅解析脚本中的版本和 KEY 字面值，绝不执行下载脚本。
 //! macOS 分发原始 Mach-O，Windows 分发 ZIP；Token 仅进入 HTTPS 请求
 //! 和私有临时 config.ini，不出现在进程参数或返回状态中。
@@ -30,6 +30,8 @@ const KEY: &str = "tools:natapp";
 const CONSOLE_LABEL: &str = "natapp-console";
 const LOG_LIMIT: usize = 256 * 1024;
 const PACKAGE_LIMIT: u64 = 64 * 1024 * 1024;
+const CLIENT_VERSION: &str = "3.0.6";
+const DOWNLOAD_PAGE: &str = "https://natapp.cn/download";
 
 fn is_console_url(url: &tauri::Url) -> bool {
     url.scheme() == "https"
@@ -414,6 +416,19 @@ impl NatappManager {
 fn root(store: &crate::storage::Store) -> PathBuf {
     store.root.join("tools/natapp")
 }
+// 仅转换 Windows 路径的显示形式，保留底层长路径和设备路径支持。
+#[cfg(any(windows, test))]
+fn display_windows_path(path: &str) -> std::borrow::Cow<'_, str> {
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc}").into();
+    }
+    if let Some(drive) = path.strip_prefix(r"\\?\") {
+        if matches!(drive.as_bytes(), [letter, b':', b'\\', ..] if letter.is_ascii_alphabetic()) {
+            return drive.into();
+        }
+    }
+    path.into()
+}
 fn executable() -> &'static str {
     if cfg!(windows) {
         "natapp.exe"
@@ -567,7 +582,7 @@ fn read_version(dir: &Path) -> String {
     }
     if fs::metadata(&path).is_ok_and(|m| m.len() <= 32) {
         if let Ok(value) = fs::read_to_string(path) {
-            if value == "3.0.5" {
+            if parse_client_version(&value).is_some() {
                 return value;
             }
         }
@@ -578,6 +593,9 @@ fn snapshot(store: &crate::storage::Store, manager: &NatappManager) -> Result<Va
     let items = read(store)?;
     let inner = manager.inner.lock().map_err(|e| e.to_string())?;
     let dir = root(store);
+    let display_dir = dir.to_string_lossy();
+    #[cfg(windows)]
+    let display_dir = display_windows_path(&display_dir);
     let tunnels: Vec<_> = items.iter().map(|tunnel| {
         let runtime = inner.processes.get(&tunnel.id).filter(|run| run.generation == store.generation);
         let running = runtime.filter(|run| run.status == "running");
@@ -605,7 +623,7 @@ fn snapshot(store: &crate::storage::Store, manager: &NatappManager) -> Result<Va
         "platform": platform(std::env::consts::OS, std::env::consts::ARCH)
             .map(str::to_owned).unwrap_or_else(|_| format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)),
         "version": read_version(&dir),
-        "dataDir": dir,
+        "dataDir": display_dir,
         "downloadedBytes": inner.downloaded_bytes,
         "totalBytes": inner.total_bytes,
         "tunnels": tunnels,
@@ -652,26 +670,21 @@ pub fn natapp_state(
     snapshot(&store, &manager)
 }
 #[tauri::command]
+pub async fn natapp_client_release() -> Result<String, String> {
+    fetch_client_release(&download_client()?).await
+}
+
+#[tauri::command]
 pub async fn natapp_install(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     manager: State<'_, NatappManager>,
+    package_path: Option<PathBuf>,
+    update: Option<bool>,
 ) -> Result<Value, String> {
-    let (dir, token, generation) = {
+    let (dir, generation) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
-        let item = read(&store)?
-            .into_iter()
-            .next()
-            .ok_or("请先添加隧道并填写 authToken")?;
-        (
-            root(&store),
-            credential_vault::decrypt(
-                &store.workspace_id,
-                &format!("natapp:{}", item.id),
-                &item.encrypted_token,
-            )?,
-            store.generation.clone(),
-        )
+        (root(&store), store.generation.clone())
     };
     let worker = manager.inner().clone();
     let expected_generation = generation.clone();
@@ -685,7 +698,33 @@ pub async fn natapp_install(
             }
         }
         let _installing = InstallationFlag::begin(worker.inner.clone())?;
-        tauri::async_runtime::block_on(install_client(&dir, &token, &worker.inner))
+        if let Some(path) = package_path {
+            let _snapshot_guard = worker.inner.lock().map_err(|_| "无法读取安装状态")?;
+            return install_local_package(&dir, &path);
+        }
+        let configured_token = || {
+            let current = app.state::<AppState>();
+            let store = current.store.lock().map_err(|e| e.to_string())?;
+            if store.generation != expected_generation {
+                return Err("工作空间已变化，请重试安装".into());
+            }
+            read(&store)?
+                .first()
+                .map(|item| {
+                    credential_vault::decrypt(
+                        &store.workspace_id,
+                        &format!("natapp:{}", item.id),
+                        &item.encrypted_token,
+                    )
+                })
+                .transpose()
+        };
+        tauri::async_runtime::block_on(install_client(
+            &dir,
+            configured_token,
+            &worker.inner,
+            update.unwrap_or(false),
+        ))
     })
     .await
     .map_err(|_| "安装任务失败")??;
@@ -1275,7 +1314,7 @@ fn literal(script: &str, key: &str) -> Result<String, String> {
     }
     found.ok_or_else(|| "官方安装信息格式已变化".into())
 }
-fn installation_metadata(script: &str) -> Result<String, String> {
+fn installation_metadata(script: &str, expected_version: &str) -> Result<String, String> {
     // 官方拒绝无效 Token 时仍返回 HTTP 200 和仅含 echo/exit 的错误脚本。
     // 不回显响应正文，避免响应中烘焙的 Token 进入界面或日志。
     let version = match literal(script, "NATAPP_VERSION") {
@@ -1290,8 +1329,8 @@ fn installation_metadata(script: &str) -> Result<String, String> {
             return Err(error);
         }
     };
-    if version != "3.0.5" {
-        return Err("官方客户端版本已变化，请等待栖点适配".into());
+    if version != expected_version {
+        return Err("NATAPP 官网的下载版本与安装脚本不一致，请检查更新或从文件安装".into());
     }
     let key = literal(script, "KEY")?;
     if key.len() > 32 || !key.bytes().all(|b| b.is_ascii_alphanumeric()) {
@@ -1299,18 +1338,83 @@ fn installation_metadata(script: &str) -> Result<String, String> {
     }
     Ok(key)
 }
-fn artifact(os: &str, arch: &str) -> Result<String, String> {
+fn artifact(os: &str, arch: &str, version: &str) -> Result<String, String> {
     platform(os, arch)?;
+    let [major, minor, patch] = parse_client_version(version).ok_or("NATAPP 客户端版本无效")?;
+    let version = format!("{major}_{minor}_{patch}");
     let name = match (os, arch) {
-        ("macos", "aarch64") => "natapp_darwin_arm64/natapp",
-        ("macos", "x86_64") => "natapp_darwin_amd64/natapp",
-        ("windows", "x86") => "natapp_windows_386_3_0_5.zip",
-        ("windows", "x86_64") => "natapp_windows_amd64_3_0_5.zip",
+        ("macos", "aarch64") => "natapp_darwin_arm64/natapp".into(),
+        ("macos", "x86_64") => "natapp_darwin_amd64/natapp".into(),
+        ("windows", "x86") => format!("natapp_windows_386_{version}.zip"),
+        ("windows", "x86_64") => format!("natapp_windows_amd64_{version}.zip"),
         _ => return Err("当前系统不支持".into()),
     };
     Ok(format!(
-        "https://download.natapp.cn/assets/downloads/clients/3_0_5/{name}"
+        "https://download.natapp.cn/assets/downloads/clients/{version}/{name}"
     ))
+}
+
+fn parse_client_version(value: &str) -> Option<[u32; 3]> {
+    let mut parts = value.split('.');
+    let mut version = [0; 3];
+    for number in &mut version {
+        let part = parts.next()?;
+        if !part.bytes().all(|byte| byte.is_ascii_digit())
+            || (part.len() > 1 && part.starts_with('0'))
+        {
+            return None;
+        }
+        *number = part.parse().ok()?;
+    }
+    parts.next().is_none().then_some(version)
+}
+
+fn client_release_from_page(page: &str) -> Result<String, String> {
+    use scraper::{Html, Selector};
+    let headings = Selector::parse("h3").map_err(|_| "无法识别 NATAPP 官网版本标题")?;
+    let changelog = Selector::parse("a.changelog").map_err(|_| "无法识别 NATAPP 官网版本标题")?;
+    let document = Html::parse_document(page);
+    let mut versions = document
+        .select(&headings)
+        .filter(|heading| heading.select(&changelog).next().is_some())
+        .flat_map(|heading| heading.text())
+        .map(str::trim)
+        .filter_map(|text| text.strip_prefix("版本:").or_else(|| text.strip_prefix("版本：")))
+        .map(str::trim)
+        .filter(|version| parse_client_version(version).is_some());
+    let latest = versions
+        .next()
+        .ok_or("NATAPP 官网未提供可识别的客户端版本")?;
+    if versions.any(|version| version != latest) {
+        return Err("NATAPP 官网提供了多个最新版本，请稍后再检查".into());
+    }
+    Ok(latest.to_owned())
+}
+
+fn download_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(90))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "无法创建下载连接".into())
+}
+
+async fn fetch_client_release(client: &reqwest::Client) -> Result<String, String> {
+    let response = client
+        .get(DOWNLOAD_PAGE)
+        .timeout(Duration::from_secs(12))
+        .send()
+        .await
+        .map_err(|_| "暂时无法连接 NATAPP 官网检查更新")?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "NATAPP 官网检查更新失败（HTTP {}）",
+            response.status().as_u16()
+        ));
+    }
+    let body = bounded(response, 512 * 1024).await?;
+    let page = std::str::from_utf8(&body).map_err(|_| "NATAPP 官网下载页编码无效")?;
+    client_release_from_page(page)
 }
 async fn bounded(response: reqwest::Response, limit: u64) -> Result<Vec<u8>, String> {
     if !response.status().is_success() {
@@ -1332,14 +1436,30 @@ async fn bounded(response: reqwest::Response, limit: u64) -> Result<Vec<u8>, Str
     }
     Ok(data)
 }
-fn payload(data: &[u8], windows: bool) -> Result<Vec<u8>, String> {
-    if windows {
+fn windows_pe_machine(data: &[u8]) -> Option<u16> {
+    if !data.starts_with(b"MZ") {
+        return None;
+    }
+    let offset = u32::from_le_bytes(data.get(0x3c..0x40)?.try_into().ok()?) as usize;
+    let pe = data.get(offset..)?.get(..26)?;
+    if offset < 0x40 || !pe.starts_with(b"PE\0\0") {
+        return None;
+    }
+    let machine = u16::from_le_bytes([pe[4], pe[5]]);
+    let optional_magic = u16::from_le_bytes([pe[24], pe[25]]);
+    matches!((machine, optional_magic), (0x014c, 0x010b) | (0x8664, 0x020b)).then_some(machine)
+}
+
+fn payload(data: &[u8], os: &str, arch: &str) -> Result<Vec<u8>, String> {
+    let windows = os == "windows";
+    let bin = if windows || data.starts_with(b"PK\x03\x04") {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data))
             .map_err(|_| "官方安装包不是有效 ZIP")?;
         let mut output = None;
+        let executable_name = if windows { "natapp.exe" } else { "natapp" };
         for i in 0..zip.len() {
             let mut file = zip.by_index(i).map_err(|_| "安装包损坏")?;
-            if file.name() == "natapp.exe" {
+            if file.name() == executable_name {
                 if output.is_some()
                     || file.size() > PACKAGE_LIMIT
                     || file.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000)
@@ -1351,27 +1471,32 @@ fn payload(data: &[u8], windows: bool) -> Result<Vec<u8>, String> {
                     .take(PACKAGE_LIMIT + 1)
                     .read_to_end(&mut bytes)
                     .map_err(|_| "无法读取安装包")?;
+                if bytes.len() as u64 > PACKAGE_LIMIT {
+                    return Err("安装包客户端内容异常".into());
+                }
                 output = Some(bytes);
             }
         }
-        let bytes = output.ok_or("安装包中没有 natapp.exe")?;
-        if !bytes.starts_with(b"MZ") {
-            return Err("安装包不是 Windows 客户端".into());
-        }
-        Ok(bytes)
+        output.ok_or_else(|| format!("安装包中没有 {executable_name}"))?
     } else {
-        if ![
-            &[0xcf, 0xfa, 0xed, 0xfe][..],
-            &[0xfe, 0xed, 0xfa, 0xcf][..],
-            &[0xca, 0xfe, 0xba, 0xbe][..],
-        ]
-        .iter()
-        .any(|magic| data.starts_with(magic))
-        {
-            return Err("下载内容不是 macOS 客户端".into());
+        data.to_vec()
+    };
+    if windows {
+        let machine = windows_pe_machine(&bin).ok_or("安装包不是有效的 Windows 客户端")?;
+        if !matches!((arch, machine), ("x86", 0x014c) | ("x86_64", 0x8664)) {
+            return Err("NATAPP 安装包与当前 Windows 架构不匹配".into());
         }
-        Ok(data.to_vec())
+    } else if ![
+        &[0xcf, 0xfa, 0xed, 0xfe][..],
+        &[0xfe, 0xed, 0xfa, 0xcf][..],
+        &[0xca, 0xfe, 0xba, 0xbe][..],
+    ]
+    .iter()
+    .any(|magic| bin.starts_with(magic))
+    {
+        return Err("安装包不是 macOS 客户端".into());
     }
+    Ok(bin)
 }
 fn replace_client(source: &Path, target: &Path) -> Result<(), String> {
     #[cfg(not(windows))]
@@ -1403,54 +1528,92 @@ fn replace_client(source: &Path, target: &Path) -> Result<(), String> {
 }
 async fn install_client(
     dir: &Path,
-    token: &str,
+    configured_token: impl FnOnce() -> Result<Option<String>, String>,
     progress: &Arc<Mutex<Inner>>,
+    update: bool,
 ) -> Result<(), String> {
-    validate_auth_token(token)?;
-    let url = artifact(std::env::consts::OS, std::env::consts::ARCH)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(90))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "无法创建下载连接")?;
+    let client = download_client()?;
+    let version = match fetch_client_release(&client).await {
+        Ok(version) => version,
+        Err(error) if update => return Err(error),
+        Err(_) => CLIENT_VERSION.to_owned(),
+    };
+    if update {
+        let current = parse_client_version(&read_version(dir));
+        if current.is_some()
+            && current >= parse_client_version(&version)
+            && verified(dir).unwrap_or(false)
+        {
+            return Err("本机 NATAPP 客户端已是官网最新版本或更新版本".into());
+        }
+    }
+    let url = artifact(std::env::consts::OS, std::env::consts::ARCH, &version)?;
     let script_url = if cfg!(windows) {
         "https://natapp.cn/get.ps1"
     } else {
         "https://natapp.cn/get.sh"
     };
-    install_from_sources(dir, token, progress, &client, script_url, &url).await
+    install_from_sources(dir, configured_token, progress, &client, script_url, &url, &version).await
 }
+fn download_login_hint(status: reqwest::StatusCode) -> Option<String> {
+    matches!(status.as_u16(), 401 | 403).then(|| {
+        format!(
+            "NATAPP 官网要求登录后下载（HTTP {}）。请打开「NATAPP 官网下载」登录并获取安装包，再选择「从文件安装」或「从文件更新」。",
+            status.as_u16()
+        )
+    })
+}
+
 // 来源仅由上方固定官方契约构造；拆出下载流程供本地模拟服务验收，不对 IPC 暴露 URL。
 async fn install_from_sources(
     dir: &Path,
-    token: &str,
+    configured_token: impl FnOnce() -> Result<Option<String>, String>,
     progress: &Arc<Mutex<Inner>>,
     client: &reqwest::Client,
     script_url: &str,
     url: &str,
+    version: &str,
 ) -> Result<(), String> {
-    let response = client
-        .get(script_url)
-        .query(&[("authtoken", token)])
-        .send()
-        .await
-        .map_err(|_| "无法读取官方安装信息")?;
-    let script = bounded(response, 256 * 1024).await?;
-    let script = std::str::from_utf8(&script).map_err(|_| "官方安装信息编码无效")?;
-    let key = installation_metadata(script)?;
-    let response = client
+    let mut response = client
         .get(url)
-        .query(&[("key", key.as_str()), ("authtoken", token)])
         .send()
         .await
         .map_err(|_| "官方客户端下载连接失败")?;
+    if let Some(hint) = download_login_hint(response.status()) {
+        // 仅在官网拒绝匿名请求后，读取已配置隧道的凭据作兼容回退。
+        let Some(token) = configured_token()? else {
+            return Err(hint);
+        };
+        validate_auth_token(&token)?;
+        let metadata_response = client
+            .get(script_url)
+            .query(&[("authtoken", token.as_str())])
+            .send()
+            .await
+            .map_err(|_| "无法读取官方安装信息")?;
+        if let Some(hint) = download_login_hint(metadata_response.status()) {
+            return Err(hint);
+        }
+        let script = bounded(metadata_response, 256 * 1024).await?;
+        let script = std::str::from_utf8(&script).map_err(|_| "官方安装信息编码无效")?;
+        let key = installation_metadata(script, version)?;
+        // 跳转仍由客户端配置禁止，避免把凭据转发到其他来源。
+        response = client
+            .get(url)
+            .query(&[("key", key.as_str()), ("authtoken", token.as_str())])
+            .send()
+            .await
+            .map_err(|_| "官方客户端下载连接失败")?;
+    }
+    if let Some(hint) = download_login_hint(response.status()) {
+        return Err(hint);
+    }
     if !response.status().is_success() {
         return Err(format!(
-            "官方客户端下载失败（HTTP {}），请检查 authToken 及下载权限",
+            "官方客户端下载失败（HTTP {}），请检查官网的下载权限",
             response.status().as_u16()
         ));
     }
-    let mut response = response;
     let total = response.content_length();
     if total.is_some_and(|n| n > PACKAGE_LIMIT) {
         return Err("客户端下载文件过大".into());
@@ -1468,34 +1631,96 @@ async fn install_from_sources(
         data.extend_from_slice(&chunk);
         progress.lock().map_err(|e| e.to_string())?.downloaded_bytes = data.len() as u64;
     }
-    let bin = payload(&data, cfg!(windows))?;
-    safe_dir(dir)?;
-    let temp = dir.join(format!("client-{}.tmp", uuid::Uuid::now_v7()));
-    safe_write(&temp, &bin).map_err(|_| "无法保存客户端")?;
-    let _temporary = TemporaryConfig(temp.clone());
-    #[cfg(unix)]
+    let _snapshot_guard = progress.lock().map_err(|_| "无法读取安装状态")?;
+    install_package(dir, &data, version)
+}
+
+fn install_local_package(dir: &Path, path: &Path) -> Result<(), String> {
+    platform(std::env::consts::OS, std::env::consts::ARCH)?;
+    if !fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= PACKAGE_LIMIT)
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o700))
-            .map_err(|_| "无法设置客户端权限")?;
+        return Err("请选择不超过 64 MiB 的 NATAPP 安装包".into());
     }
-    safe_write(
-        &dir.join(if cfg!(windows) {
+    let mut data = vec![];
+    fs::File::open(path)
+        .map_err(|_| "无法打开 NATAPP 安装包")?
+        .take(PACKAGE_LIMIT + 1)
+        .read_to_end(&mut data)
+        .map_err(|_| "无法读取 NATAPP 安装包")?;
+    if data.len() as u64 > PACKAGE_LIMIT {
+        return Err("NATAPP 安装包过大".into());
+    }
+    // 本地包没有经过官网版本协商，安装后不为它标注线上版本号。
+    install_package(dir, &data, "")
+}
+
+fn install_package(dir: &Path, data: &[u8], version: &str) -> Result<(), String> {
+    let bin = payload(data, std::env::consts::OS, std::env::consts::ARCH)?;
+    safe_dir(dir)?;
+    let stage = tempfile::Builder::new()
+        .prefix(".client-install-")
+        .tempdir_in(dir)
+        .map_err(|_| "无法创建 NATAPP 安装临时目录")?;
+    let checksum = hex::encode(Sha256::digest(&bin));
+    let mut files = vec![
+        ("client.sha256", checksum.as_bytes()),
+        ("client.version", version.as_bytes()),
+        (executable(), bin.as_slice()),
+    ];
+    if !version.is_empty() {
+        let package = if cfg!(windows) {
             "official-package.zip"
         } else {
             "official-package.bin"
-        }),
-        &data,
-    )
-    .map_err(|_| "无法保存官方安装包")?;
-    reject_link(&dir.join(executable()))?;
-    replace_client(&temp, &dir.join(executable()))?;
-    safe_write(
-        &dir.join("client.sha256"),
-        hex::encode(Sha256::digest(bin)).as_bytes(),
-    )
-    .map_err(|_| "无法保存安装校验")?;
-    safe_write(&dir.join("client.version"), b"3.0.5")?;
+        };
+        files.insert(0, (package, data));
+    }
+    let mut staged = Vec::new();
+    for (name, bytes) in files {
+        let target = dir.join(name);
+        let new = stage.path().join(name);
+        let previous = match fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.is_file() && metadata.len() <= PACKAGE_LIMIT => {
+                let backup = stage.path().join(format!("previous-{name}"));
+                fs::hard_link(&target, &backup)
+                    .or_else(|_| fs::copy(&target, &backup).map(|_| ()))
+                    .map_err(|_| "无法保留现有 NATAPP 客户端，请检查安装目录权限")?;
+                Some(backup)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            _ => return Err("NATAPP 安装目录存在无法覆盖的文件".into()),
+        };
+        safe_write(&new, bytes).map_err(|_| "无法暂存 NATAPP 客户端或校验文件")?;
+        staged.push((target, new, previous));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            stage.path().join(executable()),
+            fs::Permissions::from_mode(0o700),
+        )
+        .map_err(|_| "无法设置客户端权限")?;
+    }
+    // 新包和校验文件均就绪后才替换，失败时恢复已经替换的文件。
+    for (index, (target, new, _)) in staged.iter().enumerate() {
+        if let Err(error) = replace_client(new, target) {
+            let mut restored = true;
+            for (target, _, previous) in staged[..index].iter().rev() {
+                let result = match previous {
+                    Some(backup) => replace_client(backup, target).is_ok(),
+                    None => fs::remove_file(target).is_ok(),
+                };
+                restored &= result;
+            }
+            return Err(if restored {
+                error
+            } else {
+                "NATAPP 更新中断，请从文件重新安装官方安装包".into()
+            });
+        }
+    }
     Ok(())
 }
 #[cfg(test)]
@@ -1503,31 +1728,82 @@ mod tests {
     use super::*;
     #[test]
     fn platform_selection() {
-        assert!(artifact("macos", "aarch64")
+        assert!(artifact("macos", "aarch64", CLIENT_VERSION)
             .unwrap()
             .contains("darwin_arm64"));
-        assert!(artifact("windows", "x86_64")
-            .unwrap()
-            .ends_with("amd64_3_0_5.zip"));
-        assert!(artifact("windows", "aarch64").is_err());
+        assert_eq!(
+            artifact("windows", "x86_64", CLIENT_VERSION).unwrap(),
+            "https://download.natapp.cn/assets/downloads/clients/3_0_6/natapp_windows_amd64_3_0_6.zip"
+        );
+        assert!(artifact("windows", "aarch64", CLIENT_VERSION).is_err());
+        assert!(artifact("windows", "x86_64", "3.0.6/other.zip").is_err());
+    }
+
+    #[test]
+    fn official_download_page_uses_the_current_release_heading() {
+        let page = r#"<h3>版本: 3.0.12 <a class="changelog">更新日志</a></h3>
+                      <h3>历史版本下载 v3.0.5</h3><h3>版本: 9.0.0</h3>"#;
+        assert_eq!(client_release_from_page(page).unwrap(), "3.0.12");
+        assert!(parse_client_version("3.0.12") > parse_client_version("3.0.9"));
+        assert!(client_release_from_page("<h3>版本: 3.0.12</h3>").is_err());
+        assert!(client_release_from_page(&format!(
+            "{page}<h3>版本：3.0.13 <a class=changelog></a></h3>"
+        ))
+        .is_err());
+    }
+    #[test]
+    fn windows_paths_display_without_extended_drive_or_unc_prefix() {
+        assert_eq!(
+            display_windows_path(r"\\?\C:\Users\fixture\.perch\tools\natapp"),
+            r"C:\Users\fixture\.perch\tools\natapp"
+        );
+        assert_eq!(
+            display_windows_path(r"\\?\UNC\server\share\.perch\tools\natapp"),
+            r"\\server\share\.perch\tools\natapp"
+        );
+        assert_eq!(display_windows_path(r"D:\tools"), r"D:\tools");
+        assert_eq!(
+            display_windows_path(r"\\?\GLOBALROOT\Device"),
+            r"\\?\GLOBALROOT\Device"
+        );
     }
     #[test]
     fn invalid_packages_rejected() {
-        assert!(payload(b"html error", false).is_err());
-        assert!(payload(b"bad zip", true).is_err());
+        assert!(payload(b"html error", "macos", "aarch64").is_err());
+        assert!(payload(b"bad zip", "windows", "x86_64").is_err());
+    }
+    fn windows_fixture(machine: u16, optional_magic: u16) -> Vec<u8> {
+        let mut bytes = vec![0; 0x60];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+        bytes[0x40..0x44].copy_from_slice(b"PE\0\0");
+        bytes[0x44..0x46].copy_from_slice(&machine.to_le_bytes());
+        bytes[0x58..0x5a].copy_from_slice(&optional_magic.to_le_bytes());
+        bytes
+    }
+    fn zip_fixture(name: &str, binary: &[u8]) -> Vec<u8> {
+        let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        archive
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(binary).unwrap();
+        archive.finish().unwrap().into_inner()
     }
     #[test]
     fn package_paths_and_binary_headers() {
-        use std::io::Write;
-        let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        archive
-            .start_file("../natapp.exe", zip::write::SimpleFileOptions::default())
-            .unwrap();
-        archive.write_all(b"MZfixture").unwrap();
-        let data = archive.finish().unwrap().into_inner();
-        assert!(payload(&data, true).is_err());
-        assert!(payload(&[0xcf, 0xfa, 0xed, 0xfe, 0], false).is_ok());
-        assert!(payload(b"MZwindows", false).is_err());
+        let amd64 = windows_fixture(0x8664, 0x020b);
+        let i386 = windows_fixture(0x014c, 0x010b);
+        let data = zip_fixture("../natapp.exe", &amd64);
+        assert!(payload(&data, "windows", "x86_64").is_err());
+        let data = zip_fixture("natapp.exe", &amd64);
+        assert_eq!(payload(&data, "windows", "x86_64").unwrap(), amd64);
+        assert!(payload(&data, "windows", "x86").is_err());
+        let data = zip_fixture("natapp.exe", &i386);
+        assert!(payload(&data, "windows", "x86_64").is_err());
+        assert!(windows_pe_machine(b"MZfixture").is_none());
+        assert!(windows_pe_machine(&windows_fixture(0x8664, 0x010b)).is_none());
+        assert!(payload(&[0xcf, 0xfa, 0xed, 0xfe, 0], "macos", "aarch64").is_ok());
+        assert!(payload(b"MZwindows", "macos", "aarch64").is_err());
     }
     #[tokio::test]
     async fn http_errors_never_expose_request_secrets() {
@@ -1564,31 +1840,33 @@ mod tests {
     }
     #[test]
     fn current_official_shell_and_powershell_metadata() {
-        // 2026-10-13 官方占位请求的真实赋值行；不存下载脚本烘焙的任何凭据。
-        const SHELL:&str="#!/bin/sh\nNATAPP_VERSION=\"3.0.5\"\nNATAPP_SCRIPT_BASE=\"https://natapp.cn\"\nKEY=\"6561\"\n";
-        const POWERSHELL:&str="# natapp Windows\r\n$NATAPP_VERSION = \"3.0.5\"\r\n$NATAPP_SCRIPT_BASE = \"https://natapp.cn\"\r\n$KEY            = \"6561\"\r\n";
-        assert_eq!(installation_metadata(SHELL).unwrap(), "6561");
+        // 仅使用官网脚本的版本与 KEY 赋值作为测试数据。
+        const SHELL: &str = "#!/bin/sh\nNATAPP_VERSION=\"3.0.6\"\nKEY=\"6561\"\n";
+        const POWERSHELL: &str = "$NATAPP_VERSION = \"3.0.6\"\r\n$KEY = \"6561\"\r\n";
+        assert_eq!(installation_metadata(SHELL, CLIENT_VERSION).unwrap(), "6561");
         assert_eq!(
             installation_metadata(&format!(
                 "{SHELL}if [ -z \"$AUTHTOKEN\" ]; then\n echo '缺少 authtoken'\nfi\n"
-            ))
+            ), CLIENT_VERSION)
             .unwrap(),
             "6561"
         );
-        assert_eq!(installation_metadata(POWERSHELL).unwrap(), "6561");
+        assert_eq!(installation_metadata(POWERSHELL, CLIENT_VERSION).unwrap(), "6561");
         assert_eq!(
             installation_metadata(
-                "\u{feff}export NATAPP_VERSION = '3.0.5' # version\n$KEY = '6561'; # download"
+                "\u{feff}export NATAPP_VERSION = '3.0.6' # version\n$KEY = '6561'; # download",
+                CLIENT_VERSION,
             )
             .unwrap(),
             "6561"
         );
+        assert!(installation_metadata("NATAPP_VERSION=\"3.0.7\"\nKEY=\"6561\"", CLIENT_VERSION).is_err());
     }
     #[test]
     fn official_http_200_token_error_is_actionable() {
         let response =
             "#!/bin/sh\necho '[natapp] 错误：authtoken 输入错误（请在官网隧道列表复制）'\nexit 1\n";
-        let error = installation_metadata(response).unwrap_err();
+        let error = installation_metadata(response, CLIENT_VERSION).unwrap_err();
         assert!(error.contains("官网拒绝"));
         assert!(!error.contains("格式已变化"));
         for invalid in [
@@ -1608,7 +1886,7 @@ mod tests {
         {
             let _flag = InstallationFlag::begin(inner.clone()).unwrap();
             assert!(inner.lock().unwrap().installing);
-            assert!(installation_metadata("echo 'authtoken 输入错误'").is_err());
+            assert!(installation_metadata("echo 'authtoken 输入错误'", CLIENT_VERSION).is_err());
         }
         assert!(!inner.lock().unwrap().installing);
         {
@@ -1625,19 +1903,39 @@ mod tests {
             assert!(literal(bad, "KEY").is_err());
         }
     }
-    #[cfg(not(windows))]
     #[tokio::test]
-    async fn installer_downloads_valid_client_and_restores_state() {
+    async fn anonymous_downloads_and_authenticated_downloads_use_expected_urls() {
+        check_install_download(None).await;
+        check_install_download(Some("0000000000000000")).await;
+    }
+    async fn check_install_download(token: Option<&str>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
-        let binary = vec![0xcf, 0xfa, 0xed, 0xfe, 0, 1, 2, 3];
-        let expected = binary.clone();
-        let script = b"#!/bin/sh\nNATAPP_VERSION=\"3.0.5\"\nKEY=\"6561\"\n".to_vec();
+        let expected = if cfg!(windows) {
+            windows_fixture(0x8664, 0x020b)
+        } else {
+            vec![0xcf, 0xfa, 0xed, 0xfe, 0, 1, 2, 3]
+        };
+        let package = if cfg!(windows) {
+            zip_fixture("natapp.exe", &expected)
+        } else {
+            expected.clone()
+        };
+        let package_size = package.len() as u64;
+        let mut responses = vec![];
+        if token.is_some() {
+            responses.push(("403 Forbidden", vec![]));
+            responses.push((
+                "200 OK",
+                b"#!/bin/sh\nNATAPP_VERSION=\"3.0.12\"\nKEY=\"6561\"\n".to_vec(),
+            ));
+        }
+        responses.push(("200 OK", package.clone()));
         let server = tokio::spawn(async move {
-            for body in [script, binary] {
+            for (status, body) in responses {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut buf = [0u8; 4096];
                 let size = stream.read(&mut buf).await.unwrap();
@@ -1646,7 +1944,7 @@ mod tests {
                     .unwrap()
                     .push(String::from_utf8_lossy(&buf[..size]).to_string());
                 let header = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     body.len()
                 );
                 stream.write_all(header.as_bytes()).await.unwrap();
@@ -1655,6 +1953,7 @@ mod tests {
         });
         let temp = tempfile::tempdir().unwrap();
         let dir = temp.path().canonicalize().unwrap();
+        install_package(&dir, &package, CLIENT_VERSION).unwrap();
         let progress = Arc::new(Mutex::new(Inner::default()));
         {
             let _flag = InstallationFlag::begin(progress.clone()).unwrap();
@@ -1665,11 +1964,15 @@ mod tests {
                 .unwrap();
             install_from_sources(
                 &dir,
-                "0000000000000000",
+                || {
+                    // 匿名成功时，即使本机凭据损坏也不会执行读取。
+                    token.map(str::to_owned).map(Some).ok_or("测试凭据损坏".into())
+                },
                 &progress,
                 &client,
                 &format!("http://{addr}/get.sh"),
                 &format!("http://{addr}/natapp"),
+                "3.0.12",
             )
             .await
             .unwrap();
@@ -1678,15 +1981,28 @@ mod tests {
         server.await.unwrap();
         assert!(verified(&dir).unwrap());
         assert_eq!(fs::read(dir.join(executable())).unwrap(), expected);
-        assert_eq!(read_version(&dir), "3.0.5");
-        assert_eq!(progress.lock().unwrap().downloaded_bytes, 8);
+        assert_eq!(read_version(&dir), "3.0.12");
+        assert_eq!(progress.lock().unwrap().downloaded_bytes, package_size);
         assert!(!progress.lock().unwrap().installing);
         let requests = requests.lock().unwrap();
-        assert!(requests[0].starts_with("GET /get.sh?authtoken=0000000000000000 "));
-        assert!(requests[1].starts_with("GET /natapp?key=6561&authtoken=0000000000000000 "));
-        assert!(!fs::read_to_string(dir.join("client.sha256"))
-            .unwrap()
-            .contains("0000000000000000"));
+        assert!(requests[0].starts_with("GET /natapp "));
+        if let Some(token) = token {
+            assert_eq!(requests.len(), 3);
+            assert!(requests[1].starts_with(&format!("GET /get.sh?authtoken={token} ")));
+            assert!(requests[2].starts_with(&format!("GET /natapp?key=6561&authtoken={token} ")));
+        } else {
+            assert_eq!(requests.len(), 1);
+        }
+        assert_eq!(
+            fs::read_to_string(dir.join("client.sha256")).unwrap(),
+            hex::encode(Sha256::digest(&expected))
+        );
+        let source = dir.join("fixture-package.zip");
+        fs::write(&source, package).unwrap();
+        install_local_package(&dir, &source).unwrap();
+        assert!(verified(&dir).unwrap());
+        assert_eq!(fs::read(dir.join(executable())).unwrap(), expected);
+        assert!(read_version(&dir).is_empty());
     }
     #[test]
     fn configs_persist_without_exposing_ciphertext() {

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowLeft,
@@ -9,6 +10,7 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  FolderOpen,
   KeyRound,
   Network,
   Plus,
@@ -82,22 +84,22 @@ export default function Tools({
             <>
               <a
                 className="tool-website"
-                href="https://natapp.cn/"
+                href="https://natapp.cn/download"
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(event) => {
                   if (!native) return;
                   event.preventDefault();
-                  void openUrl("https://natapp.cn/").catch((error) =>
+                  void openUrl("https://natapp.cn/download").catch((error) =>
                     notify(`打开官网失败：${errorText(error)}`),
                   );
                 }}
               >
-                官网：https://natapp.cn/
+                NATAPP 官网下载
                 <ExternalLink size={13} aria-hidden="true" />
               </a>
               <p className="natapp-setup-hint">
-                <strong>首次使用</strong>请先在官网注册账号，回来连接账号并同步或创建隧道，再在下方下载安装客户端。
+                连接 NATAPP 账号后可在线安装客户端和管理隧道，也可以从文件安装客户端。
               </p>
             </>
           )}
@@ -106,7 +108,7 @@ export default function Tools({
       {kind === "2fa" ? (
         <TotpTool notify={notify} />
       ) : kind === "natapp" ? (
-        <NatappTool info={info} notify={notify} />
+        <NatappTool key={info.workspaceId} info={info} notify={notify} />
       ) : kind === "exchange" ? (
         <ExchangeRateTool key={`${info.workspaceId}:${info.dataRoot}`} info={info} notify={notify} />
       ) : kind === "prompts" ? (
@@ -517,6 +519,17 @@ function NatappDates({ details }: { details: NatappDetails }) {
   );
 }
 
+const natappVersion = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+
+function compareNatappVersions(latest: string, installed: string) {
+  const currentParts = installed.split(".").map(BigInt);
+  const parts = latest.split(".").map(BigInt);
+  for (const [index, part] of parts.entries()) {
+    if (part !== currentParts[index]) return part > currentParts[index] ? 1 : -1;
+  }
+  return 0;
+}
+
 function NatappTool({
   info,
   notify,
@@ -529,6 +542,11 @@ function NatappTool({
   const [readError, setReadError] = useState("");
   const [busy, setBusy] = useState(native ? "entry" : "");
   const [configured, setConfigured] = useState(false);
+  const [clientRelease, setClientRelease] = useState<{
+    checking: boolean;
+    version?: string;
+    error?: string;
+  }>({ checking: false });
   const [accountForm, setAccountForm] = useState<{ account: string; password: string; agreed: boolean } | null>(null);
   const [freeForm, setFreeForm] = useState<({ name: string; protocol: NatappFreeTunnelInput["protocol"] } & TargetDraft) | null>(null);
   const [form, setForm] = useState<{
@@ -549,11 +567,31 @@ function NatappTool({
   const readRequest = useRef(0);
   const operationGeneration = useRef(0);
   const operationBusy = useRef(false);
+  const releaseRequest = useRef(0);
   const logBox = useRef<HTMLPreElement>(null);
   const logGeneration = useRef(0);
   const logRequest = useRef(0);
   const editingId = form?.tunnel?.id;
   const editingRevision = form?.tunnel?.revision;
+  const clientInstalled = state?.installed === true;
+  const checkClientRelease = useCallback(async () => {
+    const request = ++releaseRequest.current;
+    setClientRelease({ checking: true });
+    try {
+      const version = await api.natappClientRelease();
+      if (!natappVersion.test(version)) throw new Error("官网返回的版本格式无效");
+      if (request === releaseRequest.current) setClientRelease({ checking: false, version });
+    } catch (error) {
+      if (request === releaseRequest.current) {
+        setClientRelease({ checking: false, error: errorText(error) });
+      }
+    }
+  }, []);
+  useEffect(() => {
+    if (!native || !clientInstalled) return;
+    void checkClientRelease();
+    return () => { releaseRequest.current++; };
+  }, [clientInstalled, checkClientRelease]);
   useEffect(() => {
     setEditTarget(null);
     setTargetError("");
@@ -644,7 +682,7 @@ function NatappTool({
       reading.current = false;
       if (mounted.current) {
         setError(errorText(error));
-        if (key === "install") {
+        if (key === "install" || key === "update" || key === "install-file") {
           setState((current) =>
             current
               ? {
@@ -799,44 +837,85 @@ function NatappTool({
   const percent = state?.totalBytes
     ? Math.min(100, (state.downloadedBytes / state.totalBytes) * 100)
     : undefined;
+  const installedVersion = state?.version && natappVersion.test(state.version)
+    ? state.version
+    : undefined;
+  const latestVersion = clientRelease.version;
+  const versionOrder = installedVersion && latestVersion
+    ? compareNatappVersions(latestVersion, installedVersion)
+    : undefined;
+  const canUpdate = latestVersion && (!installedVersion || versionOrder === 1);
+  const tunnelActive = state?.tunnels.some(({ status }) => status === "running" || status === "starting");
+  const installingOnline = busy === "install" || busy === "update";
+  const fileInstallLabel = clientInstalled ? "从文件更新" : "从文件安装";
+  const clientBusy = Boolean(busy) || state?.installing;
+  const installDisabled = !state || clientBusy || tunnelActive;
+  let versionStatus = latestVersion ? `官网版本 ${latestVersion}` : "";
+  if (versionOrder === 1) versionStatus = `发现新版 ${latestVersion}`;
+  if (versionOrder === 0) versionStatus = "已是最新版本";
+  if (clientRelease.error) versionStatus = `检查更新失败 · ${clientRelease.error}`;
+  if (clientRelease.checking) versionStatus = "正在检查更新…";
   return (
     <>
       <div className="tool-panel natapp-install">
-        <div>
+        <div className="natapp-client-details">
           <h2>
-            {state?.installed
+            {clientInstalled
               ? "客户端已安装"
               : state?.installing
                 ? "正在安装客户端"
                 : "安装 NATAPP 客户端"}
           </h2>
           <p className="tool-hint">
-            {state
-              ? `${state.platform}${state.version ? ` · ${state.version}` : ""}`
-              : "正在检测平台…"}
+            {state?.platform || "正在检测平台…"}
+            {clientInstalled && ` · ${installedVersion ?? "版本未知"}`}
           </p>
-          <p className="tool-data-path" title={state?.dataDir || info.dataRoot}>
-            {state?.dataDir || info.dataRoot}
-          </p>
+          {state && (
+            <p className="tool-data-path" title={state.dataDir}>
+              {state.dataDir}
+            </p>
+          )}
+          {clientInstalled && versionStatus && (
+            <p className={versionOrder === 1 ? "natapp-release-status available" : "natapp-release-status"} role="status">
+              {versionStatus}
+            </p>
+          )}
         </div>
         <div className="tool-actions">
           <button
-            disabled={Boolean(busy) || state?.installing}
-            onClick={() => void refresh()}
-            title="刷新安装状态"
+            disabled={clientBusy || clientRelease.checking}
+            onClick={() => void (clientInstalled ? checkClientRelease() : refresh())}
           >
             <RefreshCw size={15} />
-            刷新
+            {clientInstalled ? "检查更新" : "刷新"}
           </button>
-          {!state?.installed && (
+          {state && (
+            <button
+              disabled={installDisabled}
+              title={clientInstalled ? "选择安装包，覆盖当前客户端" : undefined}
+              onClick={() => {
+                void run("install-file", async () => {
+                  const path = await open({
+                    title: "选择从 NATAPP 官网获取的安装包",
+                    filters: state.platform.startsWith("Windows")
+                      ? [{ name: "NATAPP ZIP 安装包", extensions: ["zip"] }]
+                      : undefined,
+                  });
+                  if (!mounted.current || typeof path !== "string") return;
+                  const result = await api.natappInstall(path);
+                  if (mounted.current) notify(clientInstalled ? "客户端更新完成" : "客户端安装完成");
+                  return result;
+                });
+              }}
+            >
+              <FolderOpen size={15} />
+              {busy === "install-file" ? `正在${fileInstallLabel}…` : fileInstallLabel}
+            </button>
+          )}
+          {!clientInstalled && (
             <button
               className="primary"
-              disabled={
-                !state ||
-                !state.tunnels.some((tunnel) => tunnel.hasAuthToken) ||
-                Boolean(busy) ||
-                state.installing
-              }
+              disabled={installDisabled || !configured}
               onClick={() =>
                 void run("install", () => api.natappInstall(), "客户端安装完成")
               }
@@ -847,10 +926,26 @@ function NatappTool({
                 : "下载并安装"}
             </button>
           )}
+          {clientInstalled && (canUpdate || busy === "update") && (
+            <button
+              className="primary"
+              disabled={installDisabled || !configured}
+              onClick={() => void run("update", () => api.natappInstall(undefined, true), "客户端更新完成")}
+            >
+              <Download size={15} />
+              {busy === "update" ? "更新中…" : installedVersion ? "下载并更新" : "安装官网版"}
+            </button>
+          )}
         </div>
-        {(state?.installing || busy === "install") && (
+        {state && !configured && busy !== "entry" && (
+          <p className="natapp-install-hint">请先连接 NATAPP 账号，再在线安装或更新。</p>
+        )}
+        {tunnelActive && (
+          <p className="natapp-install-hint">请先停止运行中的隧道，再更新或覆盖安装客户端。</p>
+        )}
+        {(state?.installing || installingOnline) && (
           <div className="natapp-download">
-            <progress max={100} value={percent} />
+            <progress aria-label="NATAPP 安装进度" max={100} value={percent} />
             <span>
               {formatBytes(state?.downloadedBytes || 0)}
               {state?.totalBytes ? ` / ${formatBytes(state.totalBytes)}` : ""}
@@ -928,11 +1023,6 @@ function NatappTool({
               </button>
             </div>
           </div>
-          {!state.installed && (
-            <p className="tool-hint">
-              先同步、创建或手动添加隧道，再安装客户端。
-            </p>
-          )}
           {state.tunnels.length === 0 ? (
             <div className="tool-empty">
               <Network size={30} />

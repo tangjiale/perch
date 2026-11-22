@@ -201,8 +201,26 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 10px 18px;
   flex-wrap: wrap;
+}
+.natapp-client-details {
+  flex: 1 1 230px;
+  min-width: 0;
+}
+.natapp-release-status,
+.natapp-install-hint {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.natapp-release-status.available {
+  color: var(--command);
+  font-weight: 600;
+}
+.natapp-install-hint {
+  flex-basis: 100%;
 }
 .natapp-download {
   display: flex;

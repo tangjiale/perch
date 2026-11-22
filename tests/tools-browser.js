@@ -2,10 +2,11 @@
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 const origin = process.argv[2] || "http://127.0.0.1:1421";
+const scenario = process.argv[3]?.replace(/^--/, "") || "all";
 const run = (...args) =>
   execFileSync(
     "npx",
-    ["--yes", "agent-browser", "--session", "tools-test", ...args],
+    ["--yes", "agent-browser", "--session", `tools-test-${scenario}`, ...args],
     { encoding: "utf8", timeout: 60000 },
   );
 const ev = (code) =>
@@ -15,6 +16,10 @@ const click = (text) =>
   ev(
     `(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()===${JSON.stringify(text)});if(!b)throw Error('button missing');b.click();return true})()`,
   );
+const disabled = (text) =>
+  ev(`[...document.querySelectorAll('.natapp-install button')].find(b=>b.textContent.trim()===${JSON.stringify(text)})?.disabled ?? null`);
+const waitForPanel = (text) =>
+  run("wait", "--fn", `document.querySelector('.natapp-install')?.textContent.includes(${JSON.stringify(text)})`);
 try {
   if (process.argv.includes("--addresses")) {
     run("open", `${origin}/tests/tools.html?page=/tools/natapp`);
@@ -80,13 +85,16 @@ try {
     console.log("NATAPP 映射地址与图标颜色 8 项针对性验收通过");
   } else if (process.argv.includes("--install-failure")) {
     run("open", `${origin}/tests/tools.html?page=/tools/natapp`);
-    wait();
+    waitForPanel("请先连接 NATAPP 账号");
+    assert.equal(disabled("下载并安装"), true, "未绑定时禁用在线安装");
+    assert.equal(disabled("从文件安装"), false, "未绑定时仍可从文件安装");
+    assert.equal(ev(`window.__calls.some(c=>c.name==='natapp_client_release')`), false);
+    run("open", `${origin}/tests/tools.html?page=/tools/natapp&bound=1`);
+    run("wait", "--fn", "document.body.textContent.includes('还没有隧道')");
+    run("wait", "--fn", "document.querySelector('.natapp-install button.primary')?.disabled === false");
+    assert.equal(disabled("下载并安装"), false, "绑定账号但没有隧道也可以下载");
     ev(
-      `(() => { window.__state.tunnels=[{id:'failure-test',name:'模拟隧道',revision:1,hasAuthToken:true,status:'stopped'}];[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='刷新').click();return true; })()`,
-    );
-    wait();
-    ev(
-      `(() => { const original=window.__TAURI_INTERNALS__.invoke;let failing=true;window.__TAURI_INTERNALS__.invoke=async(name,args)=>{if(name==='natapp_install'&&failing){window.__state.installing=true;return new Promise((resolve,reject)=>window.__rejectInstall=()=>{failing=false;window.__state.installing=false;reject('官方安装信息格式已变化');});}if(name==='natapp_state'&&window.__state.installing){const old=structuredClone(window.__state);return new Promise(resolve=>window.__resolveOldInstalling=()=>resolve(old));}return original(name,args);};return true;})()`,
+      `(() => { const original=window.__TAURI_INTERNALS__.invoke;let failing=true;window.__TAURI_INTERNALS__.invoke=async(name,args)=>{if(name==='natapp_install'&&failing){window.__state.installing=true;return new Promise((resolve,reject)=>window.__rejectInstall=()=>{failing=false;window.__state.installing=false;reject('NATAPP 官网要求登录后下载（HTTP 403）。请打开「NATAPP 官网下载」登录并获取安装包，再选择「从文件安装」或「从文件更新」。');});}if(name==='natapp_state'&&window.__state.installing){const old=structuredClone(window.__state);return new Promise(resolve=>window.__resolveOldInstalling=()=>resolve(old));}return original(name,args);};return true;})()`,
     );
     click("下载并安装");
     run("wait", "1700");
@@ -119,8 +127,8 @@ try {
     run("wait", "1700");
     assert.match(
       ev(`document.querySelector('[role=alert]').textContent`),
-      /官方安装信息格式已变化/,
-      "轮询保留错误提示",
+      /NATAPP 官网要求登录后下载（HTTP 403）。.*「从文件安装」/,
+      "轮询保留官网登录与文件安装提示",
     );
     click("下载并安装");
     wait();
@@ -129,8 +137,80 @@ try {
       /客户端已安装/,
       "失败后可重新安装成功",
     );
-    console.log("NATAPP 安装失败恢复 6 项针对性验收通过");
+    assert.equal(
+      ev(`window.__calls.findLast(c=>c.name==='natapp_install').args?.update === undefined`),
+      true,
+      "初装不传更新标记",
+    );
+    run("open", `${origin}/tests/tools.html?page=/tools/natapp`);
+    run("wait", "--fn", "document.body.textContent.includes('还没有隧道')");
+    ev(`window.__packagePath='/mock/natapp.zip'`);
+    click("从文件安装");
+    run("wait", "--fn", "document.body.textContent.includes('客户端已安装')");
+    assert.equal(
+      ev(`window.__calls.findLast(c=>c.name==='natapp_install').args.packagePath`),
+      "/mock/natapp.zip",
+    );
+    assert.equal(
+      ev(`window.__calls.some(c=>['natapp_save','natapp_sync_tunnels'].includes(c.name))`),
+      false,
+      "从文件安装无需添加或同步隧道",
+    );
+    console.log("NATAPP 无隧道安装、失败恢复与本地文件安装验收通过");
     process.exitCode = 0;
+  } else if (process.argv.includes("--client-update")) {
+    const page = `${origin}/tests/tools.html?page=/tools/natapp`;
+    run("open", `${page}&bound=1&installed=3.0.9`);
+    waitForPanel("发现新版 3.0.10");
+    assert.equal(disabled("下载并更新"), false);
+    assert.equal(ev(`window.__calls.some(c=>c.name==='natapp_install')`), false, "自动检查不安装");
+    const checks = ev(`window.__calls.filter(c=>c.name==='natapp_client_release').length`);
+    click("检查更新");
+    waitForPanel("发现新版 3.0.10");
+    assert.equal(ev(`window.__calls.filter(c=>c.name==='natapp_client_release').length`), checks + 1);
+    click("下载并更新");
+    waitForPanel("已是最新版本");
+    assert.equal(ev(`window.__calls.findLast(c=>c.name==='natapp_install').args.update`), true);
+    assert.equal(disabled("下载并更新"), null);
+
+    run("open", `${page}&bound=1&installed=3.1.2&latest=3.0.99`);
+    waitForPanel("官网版本 3.0.99");
+    assert.equal(disabled("下载并更新"), null, "官网版本更低时不提供降级");
+    ev(`window.__releaseError='模拟检查失败'`);
+    click("检查更新");
+    waitForPanel("检查更新失败 · 模拟检查失败");
+    assert.equal(disabled("从文件更新"), false, "版本检查失败时仍可手动更新");
+    ev(`(delete window.__releaseError, true)`);
+    click("检查更新");
+    waitForPanel("官网版本 3.0.99");
+
+    run("open", `${page}&bound=1&installed=&active=1`);
+    waitForPanel("版本未知");
+    waitForPanel("官网版本 3.0.10");
+    waitForPanel("请先停止运行中的隧道");
+    assert.equal(disabled("安装官网版"), true);
+    assert.equal(disabled("从文件更新"), true);
+    click("停止");
+    run("wait", "--fn", "document.querySelector('.natapp-install button.primary')?.disabled === false");
+    click("安装官网版");
+    waitForPanel("已是最新版本");
+    assert.equal(ev(`window.__calls.findLast(c=>c.name==='natapp_install').args.update`), true);
+
+    run("open", `${page}&installed=3.0.9&windows=1`);
+    waitForPanel("请先连接 NATAPP 账号");
+    waitForPanel("发现新版 3.0.10");
+    assert.equal(disabled("下载并更新"), true);
+    assert.equal(disabled("从文件更新"), false);
+    ev(`window.__packagePath='/mock/natapp.zip'`);
+    click("从文件更新");
+    waitForPanel("版本未知");
+    assert.equal(ev(`window.__notice`), "客户端更新完成");
+    assert.equal(disabled("安装官网版"), true);
+    assert.deepEqual(ev(`window.__calls.findLast(c=>c.name==='natapp_install').args`), {
+      packagePath: "/mock/natapp.zip",
+    });
+    assert.deepEqual(ev(`window.__calls.findLast(c=>c.name==='plugin:dialog|open').args.options.filters[0].extensions`), ["zip"]);
+    console.log("NATAPP 版本检查、在线更新和无账号覆盖安装验收通过");
   } else {
     run("open", `${origin}/tests/tools.html`);
     wait();
@@ -180,10 +260,13 @@ try {
       ev(`document.querySelector('[role=alert]').textContent`),
       /Base32/,
     );
-    run("open", `${origin}/tests/tools.html?page=/tools/natapp`);
+    run("open", `${origin}/tests/tools.html?page=/tools/natapp&bound=1`);
     wait();
-    assert.equal(ev(`document.querySelector('button.primary').disabled`), true);
-    click("添加隧道");
+    assert.equal(
+      ev(`document.querySelector('.natapp-install button.primary').disabled`),
+      false,
+    );
+    click("手动添加");
     wait();
     run("fill", "dialog input:not([type=password])", "开发隧道");
     run("fill", "dialog input[type=password]", "0123456789abcdef");

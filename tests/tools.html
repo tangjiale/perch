@@ -9,26 +9,42 @@
     <div id="root" style="height: 100vh"></div>
     <script>
       // 仅模拟本地 IPC，不下载、不启动隧道，不读取真实凭据。
-      globalThis.isTauri = !new URLSearchParams(location.search).has("preview");
+      const params = new URLSearchParams(location.search);
+      globalThis.isTauri = !params.has("preview");
       window.__calls = [];
       window.__notice = "";
+      window.__clientRelease = params.get("latest") || "3.0.10";
       window.__state = {
-        installed: false,
+        installed: params.has("installed"),
         installing: false,
-        platform: "macOS ARM64",
-        version: "",
+        platform: params.has("windows") ? "Windows 64位" : "macOS ARM64",
+        version: params.get("installed") || "",
         dataDir: "/mock/perch/tools/natapp",
         downloadedBytes: 0,
-        tunnels: [],
+        tunnels: params.has("active") ? [{
+          id: "active",
+          name: "运行中的隧道",
+          revision: 1,
+          hasAuthToken: true,
+          status: "running",
+        }] : [],
       };
       window.__TAURI_INTERNALS__ = {
         invoke: async (name, args) => {
           window.__calls.push({ name, args });
           if (window.__fail) throw "模拟操作失败";
           if (name === "natapp_state") return structuredClone(window.__state);
+          if (name === "natapp_account_configured") return params.has("bound");
+          if (name === "natapp_sync_tunnels") return structuredClone(window.__state);
+          if (name === "natapp_client_release") {
+            if (window.__releaseError) throw window.__releaseError;
+            return window.__clientRelease;
+          }
+          if (name === "plugin:dialog|open") return window.__packagePath || null;
           if (name === "natapp_install") {
             window.__state.installed = true;
-            return;
+            window.__state.version = args.packagePath ? "" : window.__clientRelease;
+            return structuredClone(window.__state);
           }
           if (name === "natapp_save") {
             const value = args.value;

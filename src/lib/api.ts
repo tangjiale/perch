@@ -179,11 +179,13 @@ export const api = {
   natappConfigureTarget: (workspaceId: string, value: NatappConfigureTargetInput) =>
     command<NatappState>("natapp_configure_target", { workspaceId, value }),
   natappState: () => command<NatappState>("natapp_state"),
+  natappClientRelease: () => command<string>("natapp_client_release"),
   natappRevealToken: (workspaceId: string, id: string, revision: number) =>
     command<string>("natapp_reveal_token", { workspaceId, id, revision }),
   natappCopyToken: (workspaceId: string, id: string, revision: number) =>
     command<void>("natapp_copy_token", { workspaceId, id, revision }),
-  natappInstall: () => command<NatappState>("natapp_install"),
+  natappInstall: (packagePath?: string, update?: boolean) =>
+    command<NatappState>("natapp_install", { packagePath, update }),
   natappSave: (value: NatappSaveInput) => command<NatappState>("natapp_save", { value }),
   natappDelete: (id: string, revision: number) => command<NatappState>("natapp_delete", { id, revision }),
   natappStart: (id: string) => command<NatappState>("natapp_start", { id }),

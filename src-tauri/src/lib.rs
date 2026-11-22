@@ -263,6 +263,7 @@ pub fn run() {
             natapp::portal::natapp_read_target,
             natapp::portal::natapp_configure_target,
             natapp::natapp_state,
+            natapp::natapp_client_release,
             natapp::natapp_reveal_token,
             natapp::natapp_copy_token,
             natapp::natapp_install,
