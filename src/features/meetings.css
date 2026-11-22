@@ -746,3 +746,7 @@
   line-height: 1.8;
   margin: 8px 0 0;
 }
+.meeting-realtime-line strong {
+  color: var(--command);
+  margin-inline-end: 0.75em;
+}

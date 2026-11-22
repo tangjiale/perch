@@ -1,6 +1,7 @@
 //! 本机流式识别只读取已写入 SQLite 的会议音频。推理在阻塞线程上运行。
 use crate::{meeting_speech, meetings, storage::Store, AppState};
 use rusqlite::{params, OptionalExtension};
+use serde::Serialize;
 use serde_json::{json, Value};
 use sherpa_onnx::{OnlineRecognizer, OnlineStream};
 use std::{
@@ -14,6 +15,9 @@ use std::{
 };
 use tauri::{ipc::Channel, AppHandle, State};
 use tokio::sync::{mpsc, oneshot, Notify};
+
+mod speakers;
+use speakers::{speaker_at, speaker_key, Turn, Word, Worker};
 
 const MODEL_ID: &str = "local";
 const SAMPLE_RATE: i32 = 16_000;
@@ -44,17 +48,18 @@ struct Session {
     finished: Notify,
 }
 
-#[derive(Clone)]
 struct Segment {
     start_ms: i64,
     end_ms: i64,
     text: String,
+    words: Vec<Word>,
 }
 
 #[derive(Default)]
 struct Transcript {
     segments: Vec<Segment>,
     partial: Option<Segment>,
+    turns: Vec<Turn>,
     processed: i64,
     error: Option<String>,
     ended: bool,
@@ -121,18 +126,101 @@ impl Drop for SessionCleanup {
     }
 }
 
-fn emit(
-    channel: &Channel<Value>,
-    workspace: &str,
-    meeting: &str,
-    session: &str,
-    kind: &str,
-    content: &str,
-) {
-    let mut event =
-        json!({"sessionId":session,"workspaceId":workspace,"meetingId":meeting,"type":kind});
-    event[if kind == "delta" { "text" } else { "message" }] = json!(content);
-    let _ = channel.send(event);
+#[derive(Clone)]
+struct Events {
+    channel: Channel<Value>,
+    workspace: String,
+    meeting: String,
+    session: String,
+}
+
+impl Events {
+    fn event(&self, kind: &str) -> Value {
+        json!({"sessionId":self.session,"workspaceId":self.workspace,"meetingId":self.meeting,"type":kind})
+    }
+
+    fn send(&self, kind: &str, message: &str) {
+        let mut event = self.event(kind);
+        event["message"] = json!(message);
+        let _ = self.channel.send(event);
+    }
+
+    fn preview(&self, current: &Transcript) {
+        let mut event = self.event("delta");
+        let segments = current.segments.iter().chain(current.partial.iter());
+        event["text"] = json!(segments
+            .clone()
+            .map(|part| part.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"));
+        if !current.turns.is_empty() {
+            event["lines"] = json!(segments
+                .flat_map(|part| part.split(&current.turns))
+                .collect::<Vec<_>>());
+        }
+        let _ = self.channel.send(event);
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Line<'a> {
+    text: &'a str,
+    speaker: Option<String>,
+    start_ms: i64,
+    end_ms: i64,
+}
+
+impl Segment {
+    fn split(&self, turns: &[Turn]) -> Vec<Line<'_>> {
+        let mut lines = Vec::new();
+        let mut speaker = None;
+        let mut byte = 0;
+        let mut start_ms = self.start_ms;
+        for (index, word) in self.words.iter().enumerate() {
+            let next = speaker_at(turns, word.ms);
+            if index == 0 {
+                speaker = next;
+                if speaker.is_some() {
+                    start_ms = word.ms;
+                }
+            } else if speaker != next && word.ms > start_ms {
+                lines.push(Line {
+                    text: &self.text[byte..word.byte],
+                    speaker: speaker.map(speaker_key),
+                    start_ms,
+                    end_ms: word.ms,
+                });
+                start_ms = word.ms;
+                byte = word.byte;
+                speaker = next;
+            }
+        }
+        lines.push(Line {
+            text: &self.text[byte..],
+            speaker: speaker.map(speaker_key),
+            start_ms,
+            end_ms: self.end_ms,
+        });
+        lines
+    }
+}
+
+fn last_speaker_id(meeting: &Value) -> u32 {
+    meeting["segments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|segment| segment["speaker"].as_str())
+        .chain(
+            meeting["speakerNames"]
+                .as_object()
+                .into_iter()
+                .flat_map(|names| names.keys().map(String::as_str)),
+        )
+        .filter_map(|key| key.strip_prefix("local-speaker:")?.parse().ok())
+        .max()
+        .unwrap_or(0)
 }
 
 #[tauri::command]
@@ -154,10 +242,11 @@ pub async fn meeting_realtime_start(
     let path = meeting_speech::model_path(&app)?;
     let (tx, rx) = mpsc::channel(2);
     let session_key = key(&workspace_id, &id);
-    let session = {
+    let (session, speaker_setup) = {
         // 持有 Store 时登记，防止会议编辑、删除和工作空间迁移越过检查。
         let store = state.store.lock().map_err(|e| e.to_string())?;
         meetings::context(&store, &workspace_id, &store.generation)?;
+        let diarization = meeting_speech::live_speakers_enabled(&store)?;
         let conn = store.conn.lock().map_err(|e| e.to_string())?;
         let value = meetings::read(&conn, &id)?;
         let sequence = conn
@@ -183,7 +272,15 @@ pub async fn meeting_realtime_start(
             return Err("请先结束当前实时转录".into());
         }
         all.insert(session_key.clone(), session.clone());
-        session
+        (
+            session,
+            diarization.then(|| {
+                (
+                    meeting_speech::speaker_model_path(&app),
+                    last_speaker_id(&value),
+                )
+            }),
+        )
     };
     let mut cleanup = SessionCleanup {
         key: session_key,
@@ -192,10 +289,13 @@ pub async fn meeting_realtime_start(
     };
     let (ready, startup) = oneshot::channel();
     tokio::task::spawn_blocking(move || {
-        let progress = |kind: &str, content: &str| {
-            emit(&on_event, &workspace_id, &id, &session.id, kind, content)
+        let events = Events {
+            channel: on_event,
+            workspace: workspace_id,
+            meeting: id,
+            session: session.id.clone(),
         };
-        run(&path, &session, rx, ready, progress);
+        run(&path, session, rx, ready, events, speaker_setup);
     });
     tokio::time::timeout(Duration::from_secs(45), startup)
         .await
@@ -212,6 +312,7 @@ struct Decoder {
     segment_start_ms: i64,
     text_bytes: usize,
     last_partial: String,
+    speakers: Option<Worker>,
 }
 
 impl Decoder {
@@ -223,15 +324,11 @@ impl Decoder {
             segment_start_ms: 0,
             text_bytes: 0,
             last_partial: String::new(),
+            speakers: None,
         }
     }
 
-    fn feed(
-        &mut self,
-        pcm: &[u8],
-        session: &Session,
-        progress: &impl Fn(&str, &str),
-    ) -> Result<(), String> {
+    fn feed(&mut self, pcm: &[u8], session: &Session, events: &Events) -> Result<(), String> {
         if pcm.is_empty() || !pcm.len().is_multiple_of(PCM_BYTES_PER_MS) {
             return Err("实时音频采样格式无效".into());
         }
@@ -247,24 +344,26 @@ impl Decoder {
                 .collect();
             self.stream.accept_waveform(SAMPLE_RATE, &samples);
             self.elapsed_ms += (frame.len() / PCM_BYTES_PER_MS) as i64;
-            self.decode(session, false, progress)?;
+            if let Some(speakers) = &mut self.speakers {
+                speakers.feed(&samples, self.elapsed_ms);
+            }
+            self.decode(session, false, events)?;
         }
         Ok(())
     }
 
-    fn finish(&mut self, session: &Session, progress: &impl Fn(&str, &str)) -> Result<(), String> {
+    fn finish(&mut self, session: &Session, events: &Events) -> Result<(), String> {
         // 末尾补静音满足模型向前看的窗口，时间戳仍以实际录音长度为准。
         self.stream.accept_waveform(SAMPLE_RATE, &[0.0; 8_000]);
         self.stream.input_finished();
-        self.decode(session, true, progress)
+        self.decode(session, true, events)?;
+        if let Some(speakers) = self.speakers.take() {
+            speakers.finish(self.elapsed_ms);
+        }
+        Ok(())
     }
 
-    fn decode(
-        &mut self,
-        session: &Session,
-        finish: bool,
-        progress: &impl Fn(&str, &str),
-    ) -> Result<(), String> {
+    fn decode(&mut self, session: &Session, finish: bool, events: &Events) -> Result<(), String> {
         let mut decoded = false;
         while self.recognizer.is_ready(&self.stream) {
             if session.cancelled.load(Ordering::Acquire) {
@@ -292,6 +391,9 @@ impl Decoder {
                 start_ms: self.segment_start_ms,
                 end_ms: self.elapsed_ms,
                 text: text.into(),
+                words: self.speakers.as_ref().map_or_else(Vec::new, |_| {
+                    speakers::word_times(text, &result, self.elapsed_ms)
+                }),
             });
             if endpoint {
                 if let Some(segment) = current.partial.take() {
@@ -300,15 +402,7 @@ impl Decoder {
                 }
             }
             if changed {
-                let preview = current
-                    .segments
-                    .iter()
-                    .chain(current.partial.iter())
-                    .map(|segment| segment.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                drop(current);
-                progress("delta", &preview);
+                events.preview(&current);
             }
         }
         if endpoint {
@@ -326,10 +420,11 @@ impl Decoder {
 
 fn run(
     path: &Path,
-    session: &Session,
+    session: Arc<Session>,
     mut rx: mpsc::Receiver<Command>,
     ready: oneshot::Sender<Result<(), String>>,
-    progress: impl Fn(&str, &str),
+    events: Events,
+    speaker_setup: Option<(Result<PathBuf, String>, u32)>,
 ) {
     let _model_guard = match meeting_speech::model_read_lock(path) {
         Ok(guard) => guard,
@@ -349,6 +444,19 @@ fn run(
     if session.cancelled.load(Ordering::Acquire) || ready.send(Ok(())).is_err() {
         return;
     }
+    if let Some((path, last_id)) = speaker_setup {
+        match path {
+            Ok(path) => {
+                decoder.speakers = Some(Worker::start(
+                    path,
+                    session.clone(),
+                    events.clone(),
+                    last_id,
+                ))
+            }
+            Err(error) => events.send("speakerError", &error),
+        }
+    }
     let result = (|| {
         let mut expected = session.first_sequence;
         while let Some(command) = rx.blocking_recv() {
@@ -361,7 +469,7 @@ fn run(
                         let _ = ack.send(Err("实时音频片段顺序无效，请停止录音后重新转录".into()));
                         continue;
                     }
-                    let result = decoder.feed(&pcm, session, &progress);
+                    let result = decoder.feed(&pcm, &session, &events);
                     if result.is_ok() {
                         expected += 1;
                         session
@@ -373,7 +481,7 @@ fn run(
                     let _ = ack.send(result.clone());
                     result?;
                 }
-                Command::Stop => return decoder.finish(session, &progress),
+                Command::Stop => return decoder.finish(&session, &events),
             }
         }
         Ok(())
@@ -385,7 +493,7 @@ fn run(
     session.finished.notify_one();
     if let Ok(current) = session.result.lock() {
         if let Some(error) = &current.error {
-            progress("error", error);
+            events.send("error", error);
         }
     }
 }
@@ -493,16 +601,23 @@ fn commit_result(
     let mut value = meetings::read(&tx, id)?;
     let revision = value["revision"].as_i64().ok_or("会议版本无效")?;
     let current = session.result.lock().map_err(|_| "实时转录状态不可用")?;
-    let segments = current.segments.iter().chain(current.partial.iter());
+    let segments = current
+        .segments
+        .iter()
+        .chain(current.partial.iter())
+        .flat_map(|segment| segment.split(&current.turns));
     let mut changed = false;
     for (index, segment) in segments.enumerate() {
         let segment_id = format!("realtime:{}:{index}", session.id);
-        let entry = json!({
+        let mut entry = json!({
             "id":segment_id,
             "startMs":session.offset + segment.start_ms,
             "endMs":session.offset + segment.end_ms,
-            "text":segment.text,
+            "text":segment.text.trim(),
         });
+        if let Some(speaker) = segment.speaker {
+            entry["speaker"] = json!(speaker);
+        }
         meetings::insert_segment(&tx, id, &entry, Some(&segment_id))?;
         changed = true;
     }

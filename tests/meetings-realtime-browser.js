@@ -48,10 +48,20 @@
   const audioIndex = window.__calls.findIndex((call) => call.name === "meeting_append_audio");
   const pushIndex = window.__calls.findIndex((call) => call.name === "meeting_realtime_push");
   assert(audioIndex >= 0 && pushIndex > audioIndex, "音频先保存再送入实时服务");
-  const emitPreview = async (text) => {
-    firstSession.onEvent.onmessage({ type: "delta", sessionId: firstSession.sessionId, workspaceId: firstSession.workspaceId, meetingId: firstSession.id, text });
+  const emitPreview = async (text, lines) => {
+    firstSession.onEvent.onmessage({ type: "delta", sessionId: firstSession.sessionId, workspaceId: firstSession.workspaceId, meetingId: firstSession.id, text, lines });
     await tick();
   };
+  await emitPreview("开始会议。 我补充一下。 继续。", [
+    {text: "开始会议。", speaker: "local-speaker:1", startMs: 0, endMs: 1200},
+    {text: "我补充一下。", speaker: "local-speaker:2", startMs: 1200, endMs: 3000},
+    {text: "继续。", speaker: "local-speaker:1", startMs: 3000, endMs: 4000},
+  ]);
+  const labels = [...document.querySelectorAll(".meeting-realtime-line strong")].map((label) => label.textContent);
+  assert(window.__micActive && labels.join(",") === "说话人 1,说话人 2,说话人 1", "录音中区分穿插发言并复用说话人编号");
+  firstSession.onEvent.onmessage({ type: "speakerError", sessionId: firstSession.sessionId, workspaceId: firstSession.workspaceId, meetingId: firstSession.id, message: "模拟说话人模型加载失败" });
+  await until(() => preview().includes("实时文字转录继续"));
+  assert(window.__micActive && window.__realtimeSessions.size > 0, "说话人模型异常不影响实时转录或录音");
   const longPreview = Array.from({ length: 100 }, (_, i) => `第${i + 1}句会议识别内容。`).join("\n");
   await emitPreview(longPreview);
   const previewText = document.querySelector(".meeting-realtime-text");

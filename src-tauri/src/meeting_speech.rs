@@ -12,7 +12,7 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sherpa_onnx::{
     OfflineSpeakerDiarization, OfflineSpeakerDiarizationConfig, OnlineRecognizer,
-    OnlineRecognizerConfig,
+    OnlineRecognizerConfig, SpeakerEmbeddingExtractor, SpeakerEmbeddingExtractorConfig,
 };
 use std::{
     fs,
@@ -78,6 +78,11 @@ fn read_preferences(store: &Store) -> Result<SpeechPreferences, String> {
         Some(raw) => serde_json::from_str(&raw).map_err(|_| "会议语音设置格式无效".into()),
         None => Ok(SpeechPreferences::default()),
     }
+}
+
+pub(crate) fn live_speakers_enabled(store: &Store) -> Result<bool, String> {
+    let preferences = read_preferences(store)?;
+    Ok(matches!(preferences.mode, SpeechMode::Local) && preferences.local_speaker_diarization)
 }
 
 #[tauri::command]
@@ -337,7 +342,7 @@ pub fn install_meeting_speaker_model(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn load_speaker_model(path: &Path) -> Result<OfflineSpeakerDiarization, String> {
+fn speaker_config(path: &Path) -> Result<OfflineSpeakerDiarizationConfig, String> {
     if matches!(
         *SPEAKER_DOWNLOAD.lock().map_err(|_| "模型下载状态不可用")?,
         Download::Running(_)
@@ -368,7 +373,29 @@ pub(crate) fn load_speaker_model(path: &Path) -> Result<OfflineSpeakerDiarizatio
     config.segmentation.num_threads = 2;
     config.embedding.model = Some(model_file(&SPEAKER_FILES[1])?);
     config.embedding.num_threads = 2;
-    OfflineSpeakerDiarization::create(&config).ok_or_else(|| "无法加载本机说话人识别模型".into())
+    Ok(config)
+}
+
+pub(crate) fn load_speaker_model(path: &Path) -> Result<OfflineSpeakerDiarization, String> {
+    OfflineSpeakerDiarization::create(&speaker_config(path)?)
+        .ok_or_else(|| "无法加载本机说话人识别模型".into())
+}
+
+pub(crate) fn load_live_speaker_models(
+    path: &Path,
+) -> Result<(OfflineSpeakerDiarization, SpeakerEmbeddingExtractor), String> {
+    let mut config = speaker_config(path)?;
+    config.segmentation.num_threads = 1;
+    config.embedding.num_threads = 1;
+    let extractor = SpeakerEmbeddingExtractor::create(&SpeakerEmbeddingExtractorConfig {
+        model: config.embedding.model.clone(),
+        num_threads: 1,
+        ..Default::default()
+    })
+    .ok_or("无法加载本机说话人特征模型")?;
+    let diarizer =
+        OfflineSpeakerDiarization::create(&config).ok_or("无法加载本机说话人识别模型")?;
+    Ok((diarizer, extractor))
 }
 
 #[tauri::command]

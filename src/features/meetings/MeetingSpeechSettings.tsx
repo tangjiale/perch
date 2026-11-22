@@ -16,6 +16,14 @@ const statusLabel: Record<MeetingSpeechStatus["state"], string> = {
   error: "安装失败",
 };
 
+function modelStatusLabel(status?: MeetingSpeechStatus) {
+  if (!status) return "正在检查模型…";
+  if (status.state === "downloading" && status.totalBytes > 0 && status.downloadedBytes >= status.totalBytes) {
+    return "正在校验并安装模型…";
+  }
+  return statusLabel[status.state];
+}
+
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`;
@@ -47,16 +55,19 @@ function ModelDownloadProgress({ label, downloadedBytes, totalBytes }: {
   downloadedBytes: number;
   totalBytes: number;
 }) {
+  const downloaded = Number.isFinite(downloadedBytes) ? Math.max(0, downloadedBytes) : 0;
+  const hasTotal = Number.isFinite(totalBytes) && totalBytes > 0;
+  const percent = hasTotal ? Math.floor(Math.min(downloaded / totalBytes, 1) * 100) : undefined;
+
   return (
     <div className="meeting-speech-progress">
-      <progress
-        aria-label={label}
-        max={totalBytes || 1}
-        value={totalBytes > 0 ? Math.min(downloadedBytes, totalBytes) : undefined}
-      />
+      <div className="meeting-speech-progress-track">
+        <progress aria-label={label} max={100} value={percent} />
+        {percent !== undefined && <span className="meeting-speech-progress-percent" aria-hidden="true">{percent}%</span>}
+      </div>
       <p>
-        已下载 {formatSize(downloadedBytes)}
-        {totalBytes > 0 && ` / ${formatSize(totalBytes)}`} · 可切换页面，下载将在后台继续。
+        已下载 {formatSize(downloaded)}
+        {hasTotal && ` / ${formatSize(totalBytes)}`} · 可切换页面，下载将在后台继续。
       </p>
     </div>
   );
@@ -183,7 +194,7 @@ function SpeakerModelDownload({ enabled }: { enabled: boolean }) {
   const ready = status?.state === "ready" && !checkingError && !loadingModel && !uninstalling;
   const canInstall = !checkingError && (status?.state === "missing" || status?.state === "error");
   const error = installError || checkingError || (status?.state === "error" && status.error);
-  let label = status ? statusLabel[status.state] : "正在检查模型…";
+  let label = modelStatusLabel(status);
   if (uninstalling) label = "正在卸载…";
   else if (installing) label = "正在启动下载…";
   else if (checkingError) label = "读取状态失败";
@@ -196,7 +207,7 @@ function SpeakerModelDownload({ enabled }: { enabled: boolean }) {
         <span className="meeting-speech-model-icon"><Users size={20} /></span>
         <div className="meeting-speech-model-info">
           <h3>说话人模型 · Pyannote + CAM++</h3>
-          <p>与 X-ASR 分开下载，用于录音结束后补标说话人。</p>
+          <p>与 X-ASR 分开下载，用于本机录音时区分说话人，也可为已有录音补标。</p>
         </div>
         {checkingError && !installing && !uninstalling && (
           <button type="button" onClick={() => setCheckVersion((value) => value + 1)}>
@@ -391,14 +402,11 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
   const runtimeError = !loadingModel && runtime !== "ready"
     ? prepareError || (runtime === "error" && (status?.runtimeError || "本机模型加载失败，请重试。"))
     : "";
-  let label = status ? statusLabel[status.state] : "正在检查模型…";
+  let label = modelStatusLabel(status);
   if (!native) label = "请在桌面应用中使用";
   else if (uninstalling) label = "正在卸载…";
   else if (installing) label = "正在启动下载…";
   else if (checkingError && !status) label = "读取状态失败";
-  else if (status?.state === "downloading" && status.totalBytes > 0 && status.downloadedBytes >= status.totalBytes) {
-    label = "正在校验并安装模型…";
-  }
   else if (status?.state === "ready") {
     if (loadingModel) label = "已下载 · 正在预加载…";
     else if (runtime === "ready") label = "已加载 · 可实时转录";
@@ -469,7 +477,7 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
               </div>
               <p id="meeting-speech-local-help">
                 {localSpeakerDiarization
-                  ? "录音时实时显示文字，停止录音后在本机区分说话人。已有录音可手动点击「识别说话人」，说话人标签可以改名。"
+                  ? "录音时实时显示文字并在本机识别说话人。较短、重叠或暂时无法确认的发言可能先显示为未标记。已有录音可手动点击「识别说话人」补标，说话人标签可以改名。"
                   : "录音时实时显示文字。"}
               </p>
               <p>模型下载后可离线使用，模型文件不随工作空间备份。</p>

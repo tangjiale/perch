@@ -42,7 +42,9 @@ export async function command<T>(
 }
 export interface MeetingRealtimeEvent {
   sessionId: string; workspaceId: string; meetingId: string;
-  type: "delta" | "error"; text?: string; message?: string;
+  type: "delta" | "error" | "speakerError";
+  text?: string; message?: string;
+  lines?: { text: string; speaker: string | null; startMs: number; endMs: number }[];
 }
 export interface MeetingSpeechStatus {
   state: "missing" | "downloading" | "ready" | "error";

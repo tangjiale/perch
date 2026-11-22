@@ -180,6 +180,8 @@ export default function Meetings({
     [recording, setRecording] = useState(false),
     [elapsed, setElapsed] = useState(0),
     [preview, setPreview] = useState(""),
+    [previewLines, setPreviewLines] = useState<MeetingRealtimeEvent["lines"]>(),
+    [speakerError, setSpeakerError] = useState(""),
     [previewMeetingId, setPreviewMeetingId] = useState(""),
     [realtimeStatus, setRealtimeStatus] = useState(""),
     [chatId, setChatId] = useState(""),
@@ -210,7 +212,6 @@ export default function Meetings({
           id: string;
           sessionId: string;
           failed: boolean;
-          diarize: boolean;
           channel: Channel<MeetingRealtimeEvent>;
         }
       | undefined
@@ -290,7 +291,7 @@ export default function Meetings({
   useLayoutEffect(() => {
     const text = previewText.current;
     if (text && followPreview.current) text.scrollTop = text.scrollHeight;
-  }, [preview, tab, current?.id, realtimeStatus]);
+  }, [preview, previewLines, tab, current?.id, realtimeStatus]);
   const apiSpeechId = speechPreferences?.mode === "api" ? speechPreferences.modelId : "";
   const speechModel = apiSpeechId
     ? eligibleMeetingSpeechModels(data).find((model) => model.id === apiSpeechId)
@@ -396,6 +397,8 @@ export default function Meetings({
     setActiveMode(undefined);
     setBusy("");
     setPreview("");
+    setPreviewLines(undefined);
+    setSpeakerError("");
     setRealtimeStatus("");
     if (native) void loadMeetings();
     return () => {
@@ -465,8 +468,6 @@ export default function Meetings({
       setBusy("正在保存录音…");
       setRecording(false);
       let stopError: unknown;
-      let speakerFeedback = "";
-      let speakerFailure = "";
       try {
         await rec?.stop();
       } catch (e) {
@@ -482,24 +483,8 @@ export default function Meetings({
           if (mounted.current && token === epoch.current) {
             accept(saved);
             setPreview("");
+            setPreviewLines(undefined);
             setRealtimeStatus("");
-          }
-          if (
-            !stopError && active.diarize && saved.segments.some((segment) => !segment.speaker) &&
-            mounted.current && token === epoch.current
-          ) {
-            setBusy("录音已保存 · 正在识别说话人…");
-            try {
-              const result = await api.meetingDiarize(active.workspaceId, active.id, saved.revision);
-              if (mounted.current && token === epoch.current) {
-                accept(result.meeting);
-                speakerFeedback = result.assigned
-                  ? `录音已保存，已标注 ${result.assigned} 段说话人`
-                  : "录音已保存，暂无可确认的说话人标注";
-              }
-            } catch (error) {
-              speakerFailure = `录音及转录已保存，说话人识别失败，可在转录页重试。 ${String(error)}`;
-            }
           }
         } catch (e) {
           stopError = e;
@@ -521,8 +506,7 @@ export default function Meetings({
               "实时转录异常结束。请核对已保存文字，可复制下方预览留存。",
             );
           fail(`录音收尾未全部完成：${String(stopError)}`);
-        } else if (speakerFailure) fail(speakerFailure);
-        else notify(speakerFeedback || "录音已保存");
+        } else notify("录音已保存");
         setBusy("");
         setActiveMode(undefined);
         setElapsed(0);
@@ -564,6 +548,8 @@ export default function Meetings({
     );
     setError("");
     setPreview("");
+    setPreviewLines(undefined);
+    setSpeakerError("");
     setRealtimeStatus("");
     let active: typeof session.current;
     let transcriptionFailed = false;
@@ -577,7 +563,6 @@ export default function Meetings({
           id,
           sessionId: crypto.randomUUID(),
           failed: false,
-          diarize: localDiarization && speakerModelReady,
           channel,
         };
         const linked = active;
@@ -593,11 +578,14 @@ export default function Meetings({
             return;
           if (event.type === "delta") {
             setPreview(event.text || "");
+            setPreviewLines(event.lines);
             setRealtimeStatus(
               linked.failed
                 ? "实时转录已中断，以下文字尚待收尾保存"
                 : "正在实时识别",
             );
+          } else if (event.type === "speakerError") {
+            setSpeakerError(event.message || "说话人识别暂不可用");
           } else {
             linked.failed = true;
             setRealtimeStatus("实时转录已中断，录音继续保存");
@@ -1355,9 +1343,12 @@ export default function Meetings({
                     <strong>实时转录</strong>
                     <span className="meeting-realtime-hint">
                       {activeMode === "realtime"
-                        ? "识别中的文字会持续更新，结束录音后保存。"
+                        ? localDiarization && speakerModelReady
+                          ? "文字实时更新，说话人确认后会标注在对应发言前。"
+                          : "识别中的文字会持续更新，结束录音后保存。"
                         : realtimeStatus}
                     </span>
+                    {speakerError && <span className="meeting-realtime-hint" role="status">{speakerError}。实时文字转录继续。</span>}
                     {preview && (
                       <p
                         className="meeting-realtime-text"
@@ -1374,7 +1365,13 @@ export default function Meetings({
                             32;
                         }}
                       >
-                        {preview}
+                        {previewLines?.length ? previewLines.map((line, index) => (
+                          <span className="meeting-realtime-line" key={`${line.startMs}-${index}`}>
+                            <strong>{line.speaker ? segmentSpeakerLabel(`speaker:${line.speaker}`) : "未标记说话人"}</strong>
+                            {line.text.trim()}
+                            {index < previewLines.length - 1 ? "\n" : ""}
+                          </span>
+                        )) : preview}
                       </p>
                     )}
                   </section>

@@ -48,19 +48,58 @@ fn final_and_partial_segments_append_with_recording_offset() {
             start_ms: 0,
             end_ms: 950,
             text: "第一段".into(),
+            words: Vec::new(),
         });
         current.partial = Some(Segment {
             start_ms: 950,
             end_ms: 2_000,
-            text: "尾段".into(),
+            text: "甲，乙，甲。".into(),
+            words: vec![
+                Word { byte: 0, ms: 950 },
+                Word { byte: 6, ms: 1300 },
+                Word { byte: 12, ms: 1600 },
+            ],
         });
+        current.turns = vec![
+            Turn {
+                start_ms: 950,
+                end_ms: 1300,
+                speaker: 1,
+            },
+            Turn {
+                start_ms: 1300,
+                end_ms: 1600,
+                speaker: 2,
+            },
+            Turn {
+                start_ms: 1600,
+                end_ms: 2000,
+                speaker: 1,
+            },
+        ];
     }
     let meeting = commit_result(&store, &store.workspace_id, "meeting", &session).unwrap();
     let segments = meeting["segments"].as_array().unwrap();
-    assert_eq!(segments.len(), 3);
+    assert_eq!(segments.len(), 5);
     assert_eq!(segments[0]["text"], "已校对");
     assert_eq!(segments[1]["startMs"], 1_000);
-    assert_eq!(segments[2]["endMs"], 3_000);
+    assert!(segments[1].get("speaker").is_none());
+    assert_eq!(segments[2]["startMs"], 1950);
+    assert_eq!(segments[4]["endMs"], 3_000);
+    assert_eq!(
+        segments[2..]
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<String>(),
+        "甲，乙，甲。"
+    );
+    assert_eq!(
+        segments[2..]
+            .iter()
+            .filter_map(|part| part["speaker"].as_str())
+            .collect::<Vec<_>>(),
+        ["local-speaker:1", "local-speaker:2", "local-speaker:1"]
+    );
     assert_eq!(meeting["transcriptionModelId"], MODEL_ID);
     assert_eq!(meeting["revision"], 2);
     assert!(commit_result(&store, "other-workspace", "meeting", &session).is_err());

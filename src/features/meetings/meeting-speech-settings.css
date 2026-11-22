@@ -175,11 +175,25 @@
   margin-top: 6px;
   font-variant-numeric: tabular-nums;
 }
-.meeting-speech-progress > progress {
+.meeting-speech-progress-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.meeting-speech-progress-track > progress {
   display: block;
+  flex: 1;
+  min-width: 0;
   width: 100%;
   height: 8px;
   accent-color: var(--command);
+}
+.meeting-speech-progress-percent {
+  min-width: 4ch;
+  color: var(--command);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: end;
 }
 .meeting-speech-resource-notice {
   margin: 8px 0 0;
