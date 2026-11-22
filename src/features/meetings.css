@@ -543,8 +543,9 @@
   color: inherit;
 }
 .meeting-segment textarea {
+  align-self: start;
   width: 100%;
-  min-height: 65px;
+  min-height: 0;
   resize: none;
   overflow: hidden;
   line-height: 1.8;
@@ -717,36 +718,4 @@
 .meeting-route-view {
   height: 100%;
   min-height: 0;
-}
-
-.meeting-realtime {
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  border: 1px solid var(--line);
-  border-inline-start: 3px solid var(--command);
-  border-radius: 12px;
-  background: var(--surface);
-}
-.meeting-realtime strong {
-  color: var(--muted);
-  font-size: 13px;
-}
-.meeting-realtime-hint {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12px;
-}
-.meeting-realtime-text {
-  max-height: min(32vh, 280px);
-  overflow-y: auto;
-  overflow-wrap: anywhere;
-  overscroll-behavior: contain;
-  white-space: pre-wrap;
-  line-height: 1.8;
-  margin: 8px 0 0;
-}
-.meeting-realtime-line strong {
-  color: var(--command);
-  margin-inline-end: 0.75em;
 }

@@ -1,5 +1,5 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
-import type { Meeting } from "./meetings";
+import type { Meeting, MeetingSegment } from "./meetings";
 import type { MeetingSpeechPreferences } from "./meeting-speech";
 import type { PromptEntry, PromptProgress, PromptRequest, PromptResult } from "./prompt-optimizer";
 import { version } from "../../package.json";
@@ -44,7 +44,7 @@ export interface MeetingRealtimeEvent {
   sessionId: string; workspaceId: string; meetingId: string;
   type: "delta" | "error" | "speakerError";
   text?: string; message?: string;
-  lines?: { text: string; speaker: string | null; startMs: number; endMs: number }[];
+  lines?: MeetingSegment[];
 }
 export interface MeetingSpeechStatus {
   state: "missing" | "downloading" | "ready" | "error";

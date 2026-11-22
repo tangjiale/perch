@@ -17,6 +17,7 @@ const HOP_MS: i64 = 800;
 const LOOKAHEAD_MS: i64 = 600;
 const REVISION_MS: i64 = 2_400;
 const MIN_VOICE_MS: i64 = 700;
+const MIN_NEW_SPEAKER_MS: i64 = 1_200;
 const MAX_SPEAKERS: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,11 +82,10 @@ pub(super) fn speaker_key(id: u32) -> String {
     format!("local-speaker:{id}")
 }
 
-pub(super) fn speaker_at(turns: &[Turn], ms: i64) -> Option<u32> {
+pub(super) fn turn_at(turns: &[Turn], ms: i64) -> Option<&Turn> {
     turns
         .get(turns.partition_point(|turn| turn.end_ms <= ms))
         .filter(|turn| turn.start_ms <= ms)
-        .map(|turn| turn.speaker)
 }
 
 struct Window {
@@ -268,6 +268,7 @@ fn analyze_window(
                 .iter()
                 .filter(|&&(from, to, id)| id == cluster && to - from >= MIN_VOICE_MS)
                 .max_by_key(|&&(from, to, _)| to - from)?;
+            let duration_ms = to - from;
             let stream = extractor.create_stream()?;
             let (from, to) = (from as usize, to as usize);
             stream.accept_waveform(
@@ -278,7 +279,7 @@ fn analyze_window(
             if !extractor.is_ready(&stream) {
                 return None;
             }
-            roster.identify(extractor.compute(&stream)?)
+            roster.identify(extractor.compute(&stream)?, duration_ms)
         });
     }
     clean
@@ -335,7 +336,7 @@ impl Roster {
         }
     }
 
-    fn identify(&mut self, mut voice: Vec<f32>) -> Option<u32> {
+    fn identify(&mut self, mut voice: Vec<f32>, duration_ms: i64) -> Option<u32> {
         normalize(&mut voice)?;
         let mut best = (0, -1.0_f32);
         let mut next = -1.0_f32;
@@ -356,7 +357,8 @@ impl Roster {
             normalize(profile)?;
             return Some(*id);
         }
-        if best.1 > 0.40 || self.voices.len() >= MAX_SPEAKERS {
+        // 短声纹可复用已知编号，创建新编号则需要更长的稳定发言。
+        if duration_ms < MIN_NEW_SPEAKER_MS || best.1 > 0.40 || self.voices.len() >= MAX_SPEAKERS {
             return None;
         }
         self.last_id = self.last_id.checked_add(1)?;
@@ -381,11 +383,12 @@ mod tests {
     #[test]
     fn roster_reuses_speaker_on_return_and_leaves_uncertain_voices_unlabelled() {
         let mut roster = Roster::new(2);
-        assert_eq!(roster.identify(vec![1.0, 0.0, 0.0]), Some(3));
-        assert_eq!(roster.identify(vec![0.0, 1.0, 0.0]), Some(4));
-        assert_eq!(roster.identify(vec![0.92, 0.05, 0.05]), Some(3));
-        assert_eq!(roster.identify(vec![0.7, 0.7, 0.0]), None);
-        assert_eq!(roster.identify(vec![0.0, 0.0, 0.0]), None);
+        assert_eq!(roster.identify(vec![1.0, 0.0, 0.0], 800), None);
+        assert_eq!(roster.identify(vec![1.0, 0.0, 0.0], 1200), Some(3));
+        assert_eq!(roster.identify(vec![0.0, 1.0, 0.0], 1200), Some(4));
+        assert_eq!(roster.identify(vec![0.92, 0.05, 0.05], 800), Some(3));
+        assert_eq!(roster.identify(vec![0.7, 0.7, 0.0], 1200), None);
+        assert_eq!(roster.identify(vec![0.0, 0.0, 0.0], 1200), None);
         assert_eq!(
             exclusive_regions(&[(0, 1400, 0), (900, 1700, 1), (2000, 2700, 0)]),
             vec![(0, 900, 0), (1400, 1700, 1), (2000, 2700, 0)]
@@ -453,10 +456,11 @@ mod tests {
             "滚动分析 {turns:?}，总耗时 {:?}，单次最长 {max_runtime:?}",
             start.elapsed()
         );
-        let first = speaker_at(&turns, 1500).expect("录音期间应识别到第一位说话人");
-        let second = speaker_at(&turns, 3900).expect("录音期间应识别到第二位说话人");
+        let speaker_at = |ms| turn_at(&turns, ms).map(|turn| turn.speaker);
+        let first = speaker_at(1500).expect("录音期间应识别到第一位说话人");
+        let second = speaker_at(3900).expect("录音期间应识别到第二位说话人");
         assert_ne!(first, second);
-        assert_eq!(speaker_at(&turns, 6500), Some(first));
+        assert_eq!(speaker_at(6500), Some(first));
 
         let speech_path = PathBuf::from(std::env::var_os("PERCH_TEST_SPEECH_MODEL_DIR").unwrap());
         let recognizer = meeting_speech::acquire(&speech_path).unwrap();
@@ -476,16 +480,19 @@ mod tests {
             text: text.into(),
             words,
         };
-        let lines = segment.split(&turns);
+        let lines = super::super::combine_lines(segment.split(&turns));
         let mut ids = lines
             .iter()
-            .filter_map(|line| line.speaker.as_deref())
+            .filter_map(|line| line.speaker)
             .collect::<Vec<_>>();
         ids.dedup();
+        assert_eq!(ids, [first, second, first]);
         assert_eq!(
-            ids,
-            [speaker_key(first), speaker_key(second), speaker_key(first)]
+            lines
+                .iter()
+                .map(|line| line.text.as_ref())
+                .collect::<String>(),
+            text
         );
-        assert_eq!(lines.iter().map(|line| line.text).collect::<String>(), text);
     }
 }

@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sherpa_onnx::{OnlineRecognizer, OnlineStream};
 use std::{
+    borrow::Cow,
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
@@ -17,13 +18,18 @@ use tauri::{ipc::Channel, AppHandle, State};
 use tokio::sync::{mpsc, oneshot, Notify};
 
 mod speakers;
-use speakers::{speaker_at, speaker_key, Turn, Word, Worker};
+use speakers::{speaker_key, Turn, Word, Worker};
 
 const MODEL_ID: &str = "local";
 const SAMPLE_RATE: i32 = 16_000;
 const PCM_BYTES_PER_MS: usize = 32;
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
 const TRANSCRIPT_TOO_LARGE: &str = "实时转录文字超过大小限制，已收到的文字已保留";
+const MIN_SPEAKER_TURN_MS: i64 = 550;
+const SHORT_FRAGMENT_GAP_MS: i64 = 850;
+const MAX_LINE_GAP_MS: i64 = 1_600;
+const MAX_LINE_DURATION_MS: i64 = 30_000;
+const AUDIO_LOOKBACK_MS: i64 = 300;
 
 type Sessions = HashMap<(String, String), Arc<Session>>;
 static SESSIONS: OnceLock<Mutex<Sessions>> = OnceLock::new();
@@ -132,6 +138,7 @@ struct Events {
     workspace: String,
     meeting: String,
     session: String,
+    offset: i64,
 }
 
 impl Events {
@@ -147,28 +154,34 @@ impl Events {
 
     fn preview(&self, current: &Transcript) {
         let mut event = self.event("delta");
-        let segments = current.segments.iter().chain(current.partial.iter());
-        event["text"] = json!(segments
-            .clone()
-            .map(|part| part.text.as_str())
+        let entries = current.entries(&self.session, self.offset);
+        event["text"] = json!(entries
+            .iter()
+            .map(|entry| entry.text.as_str())
             .collect::<Vec<_>>()
             .join("\n"));
-        if !current.turns.is_empty() {
-            event["lines"] = json!(segments
-                .flat_map(|part| part.split(&current.turns))
-                .collect::<Vec<_>>());
-        }
+        event["lines"] = json!(entries);
         let _ = self.channel.send(event);
     }
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Line<'a> {
-    text: &'a str,
+struct TranscriptEntry {
+    id: String,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     speaker: Option<String>,
     start_ms: i64,
     end_ms: i64,
+}
+
+struct Line<'a> {
+    text: Cow<'a, str>,
+    speaker: Option<u32>,
+    start_ms: i64,
+    end_ms: i64,
+    last_word_ms: i64,
 }
 
 impl Segment {
@@ -176,34 +189,112 @@ impl Segment {
         let mut lines = Vec::new();
         let mut speaker = None;
         let mut byte = 0;
-        let mut start_ms = self.start_ms;
+        let mut start_ms = self.words.first().map_or(self.start_ms, |word| word.ms);
+        let mut last_word_ms = start_ms;
         for (index, word) in self.words.iter().enumerate() {
-            let next = speaker_at(turns, word.ms);
+            let next = speakers::turn_at(turns, word.ms)
+                .filter(|turn| turn.end_ms - turn.start_ms >= MIN_SPEAKER_TURN_MS)
+                .map(|turn| turn.speaker);
             if index == 0 {
                 speaker = next;
-                if speaker.is_some() {
-                    start_ms = word.ms;
-                }
             } else if speaker != next && word.ms > start_ms {
                 lines.push(Line {
-                    text: &self.text[byte..word.byte],
-                    speaker: speaker.map(speaker_key),
+                    text: Cow::Borrowed(&self.text[byte..word.byte]),
+                    speaker,
                     start_ms,
                     end_ms: word.ms,
+                    last_word_ms,
                 });
                 start_ms = word.ms;
                 byte = word.byte;
                 speaker = next;
             }
+            last_word_ms = word.ms;
         }
         lines.push(Line {
-            text: &self.text[byte..],
-            speaker: speaker.map(speaker_key),
+            text: Cow::Borrowed(&self.text[byte..]),
+            speaker,
             start_ms,
             end_ms: self.end_ms,
+            last_word_ms: self.words.last().map_or(self.end_ms, |word| word.ms),
         });
         lines
     }
+}
+
+impl Transcript {
+    fn entries(&self, session: &str, offset: i64) -> Vec<TranscriptEntry> {
+        let lines = self
+            .segments
+            .iter()
+            .chain(self.partial.iter())
+            .flat_map(|segment| segment.split(&self.turns))
+            .collect();
+        combine_lines(lines)
+            .into_iter()
+            .enumerate()
+            .map(|(index, line)| TranscriptEntry {
+                id: format!("realtime:{session}:{index}"),
+                text: line.text.trim().to_owned(),
+                speaker: line.speaker.map(speaker_key),
+                start_ms: offset + line.start_ms,
+                end_ms: offset + line.end_ms,
+            })
+            .collect()
+    }
+}
+
+fn combine_lines(mut lines: Vec<Line<'_>>) -> Vec<Line<'_>> {
+    let speakers: Vec<_> = lines.iter().map(|line| line.speaker).collect();
+    for index in 0..lines.len() {
+        let line = &lines[index];
+        if line.speaker.is_some()
+            || line.last_word_ms - line.start_ms > SHORT_FRAGMENT_GAP_MS
+            || line
+                .text
+                .chars()
+                .filter(|ch| ch.is_alphanumeric())
+                .take(3)
+                .count()
+                > 2
+        {
+            continue;
+        }
+        // 说话人边缘的一两个字可能没有落在模型区间内。邻近的两人不同则保留未标记。
+        let before = index
+            .checked_sub(1)
+            .filter(|&before| line.start_ms - lines[before].last_word_ms <= SHORT_FRAGMENT_GAP_MS)
+            .and_then(|before| speakers[before]);
+        let after = lines
+            .get(index + 1)
+            .filter(|after| after.start_ms - line.last_word_ms <= SHORT_FRAGMENT_GAP_MS)
+            .and_then(|_| speakers[index + 1]);
+        if before.is_none() || after.is_none() || before == after {
+            lines[index].speaker = before.or(after);
+        }
+    }
+    let mut combined: Vec<Line<'_>> = Vec::new();
+    for line in lines {
+        let Some(previous) = combined.last_mut().filter(|previous| {
+            previous.speaker == line.speaker
+                && line.start_ms - previous.last_word_ms <= MAX_LINE_GAP_MS
+                && line.end_ms - previous.start_ms <= MAX_LINE_DURATION_MS
+        }) else {
+            combined.push(line);
+            continue;
+        };
+        let text = previous.text.to_mut();
+        if text
+            .ends_with(|ch: char| ch.is_ascii_alphanumeric() || matches!(ch, '.' | ',' | '?' | '!'))
+            && line.text.starts_with(|ch: char| ch.is_ascii_alphanumeric())
+        {
+            text.push(' ');
+        }
+        text.push_str(&line.text);
+        previous.end_ms = previous.end_ms.max(line.end_ms);
+        previous.last_word_ms = previous.last_word_ms.max(line.last_word_ms);
+    }
+    combined
 }
 
 fn last_speaker_id(meeting: &Value) -> u32 {
@@ -294,6 +385,7 @@ pub async fn meeting_realtime_start(
             workspace: workspace_id,
             meeting: id,
             session: session.id.clone(),
+            offset: session.offset,
         };
         run(&path, session, rx, ready, events, speaker_setup);
     });
@@ -310,6 +402,7 @@ struct Decoder {
     recognizer: Arc<OnlineRecognizer>,
     elapsed_ms: i64,
     segment_start_ms: i64,
+    last_audible_ms: Option<i64>,
     text_bytes: usize,
     last_partial: String,
     speakers: Option<Worker>,
@@ -322,6 +415,7 @@ impl Decoder {
             recognizer,
             elapsed_ms: 0,
             segment_start_ms: 0,
+            last_audible_ms: None,
             text_bytes: 0,
             last_partial: String::new(),
             speakers: None,
@@ -344,6 +438,9 @@ impl Decoder {
                 .collect();
             self.stream.accept_waveform(SAMPLE_RATE, &samples);
             self.elapsed_ms += (frame.len() / PCM_BYTES_PER_MS) as i64;
+            if has_audible_signal(&samples) {
+                self.last_audible_ms = Some(self.elapsed_ms);
+            }
             if let Some(speakers) = &mut self.speakers {
                 speakers.feed(&samples, self.elapsed_ms);
             }
@@ -380,7 +477,7 @@ impl Decoder {
             .recognizer
             .get_result(&self.stream)
             .ok_or("本机实时转录结果无法读取")?;
-        let text = result.text.trim();
+        let text = audible_transcript(&result.text, self.segment_start_ms, self.last_audible_ms);
         if self.text_bytes + text.len() > MAX_TEXT_BYTES {
             return Err(TRANSCRIPT_TOO_LARGE.into());
         }
@@ -415,6 +512,25 @@ impl Decoder {
             self.last_partial = text.into();
         }
         Ok(())
+    }
+}
+
+fn has_audible_signal(samples: &[f32]) -> bool {
+    // 阈值仅排除近乎静音的底噪。突出的短音节保留给识别器判断。
+    const MIN_PEAK: f32 = 0.004;
+    const MIN_MEAN_SQUARE: f32 = 0.000_001;
+    !samples.is_empty()
+        && (samples.iter().any(|sample| sample.abs() >= MIN_PEAK)
+            || samples.iter().map(|sample| sample * sample).sum::<f32>()
+                >= MIN_MEAN_SQUARE * samples.len() as f32)
+}
+
+fn audible_transcript(text: &str, start_ms: i64, last_audible_ms: Option<i64>) -> &str {
+    // 解码器可能在音频已送入后才报告端点，给边界附近的真实语音留一点余量。
+    if last_audible_ms.is_some_and(|end| end >= start_ms.saturating_sub(AUDIO_LOOKBACK_MS)) {
+        text.trim()
+    } else {
+        ""
     }
 }
 
@@ -601,28 +717,12 @@ fn commit_result(
     let mut value = meetings::read(&tx, id)?;
     let revision = value["revision"].as_i64().ok_or("会议版本无效")?;
     let current = session.result.lock().map_err(|_| "实时转录状态不可用")?;
-    let segments = current
-        .segments
-        .iter()
-        .chain(current.partial.iter())
-        .flat_map(|segment| segment.split(&current.turns));
-    let mut changed = false;
-    for (index, segment) in segments.enumerate() {
-        let segment_id = format!("realtime:{}:{index}", session.id);
-        let mut entry = json!({
-            "id":segment_id,
-            "startMs":session.offset + segment.start_ms,
-            "endMs":session.offset + segment.end_ms,
-            "text":segment.text.trim(),
-        });
-        if let Some(speaker) = segment.speaker {
-            entry["speaker"] = json!(speaker);
-        }
-        meetings::insert_segment(&tx, id, &entry, Some(&segment_id))?;
-        changed = true;
+    let entries = current.entries(&session.id, session.offset);
+    for entry in &entries {
+        meetings::insert_segment(&tx, id, &json!(entry), Some(&entry.id))?;
     }
     drop(current);
-    if changed {
+    if !entries.is_empty() {
         value["transcriptionModelId"] = json!(MODEL_ID);
         meetings::stale_analysis(&mut value);
         meetings::write_metadata(&tx, &mut value, revision)?;

@@ -31,7 +31,7 @@ fn final_and_partial_segments_append_with_recording_offset() {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO meeting_audio_chunks (meeting_id,chunk_id,sequence,duration_ms,pcm) VALUES ('meeting','audio',0,3000,zeroblob(96000))",
+            "INSERT INTO meeting_audio_chunks (meeting_id,chunk_id,sequence,duration_ms,pcm) VALUES ('meeting','audio',0,5000,zeroblob(160000))",
             [],
         ).unwrap();
         meetings::insert_segment(
@@ -42,7 +42,7 @@ fn final_and_partial_segments_append_with_recording_offset() {
         )
         .unwrap();
     }
-    {
+    let live_entries = {
         let mut current = session.result.lock().unwrap();
         current.segments.push(Segment {
             start_ms: 0,
@@ -52,32 +52,33 @@ fn final_and_partial_segments_append_with_recording_offset() {
         });
         current.partial = Some(Segment {
             start_ms: 950,
-            end_ms: 2_000,
+            end_ms: 4_000,
             text: "甲，乙，甲。".into(),
             words: vec![
                 Word { byte: 0, ms: 950 },
-                Word { byte: 6, ms: 1300 },
-                Word { byte: 12, ms: 1600 },
+                Word { byte: 6, ms: 1900 },
+                Word { byte: 12, ms: 2900 },
             ],
         });
         current.turns = vec![
             Turn {
                 start_ms: 950,
-                end_ms: 1300,
+                end_ms: 1900,
                 speaker: 1,
             },
             Turn {
-                start_ms: 1300,
-                end_ms: 1600,
+                start_ms: 1900,
+                end_ms: 2900,
                 speaker: 2,
             },
             Turn {
-                start_ms: 1600,
-                end_ms: 2000,
+                start_ms: 2900,
+                end_ms: 4000,
                 speaker: 1,
             },
         ];
-    }
+        json!(current.entries(&session.id, session.offset))
+    };
     let meeting = commit_result(&store, &store.workspace_id, "meeting", &session).unwrap();
     let segments = meeting["segments"].as_array().unwrap();
     assert_eq!(segments.len(), 5);
@@ -85,7 +86,8 @@ fn final_and_partial_segments_append_with_recording_offset() {
     assert_eq!(segments[1]["startMs"], 1_000);
     assert!(segments[1].get("speaker").is_none());
     assert_eq!(segments[2]["startMs"], 1950);
-    assert_eq!(segments[4]["endMs"], 3_000);
+    assert_eq!(segments[4]["endMs"], 5_000);
+    assert_eq!(&segments[1..], live_entries.as_array().unwrap().as_slice());
     assert_eq!(
         segments[2..]
             .iter()
@@ -103,6 +105,124 @@ fn final_and_partial_segments_append_with_recording_offset() {
     assert_eq!(meeting["transcriptionModelId"], MODEL_ID);
     assert_eq!(meeting["revision"], 2);
     assert!(commit_result(&store, "other-workspace", "meeting", &session).is_err());
+}
+
+#[test]
+fn combines_short_edges_and_pauses_but_keeps_confirmed_speaker_changes() {
+    let current = Transcript {
+        segments: vec![
+            Segment {
+                start_ms: 0,
+                end_ms: 2400,
+                text: "嗯，今天要做什么呢？".into(),
+                words: vec![
+                    Word { byte: 0, ms: 100 },
+                    Word { byte: 6, ms: 350 },
+                    Word { byte: 12, ms: 700 },
+                    Word { byte: 21, ms: 1400 },
+                    Word { byte: 24, ms: 1750 },
+                ],
+            },
+            Segment {
+                start_ms: 2400,
+                end_ms: 4400,
+                text: "先过一下计划。".into(),
+                words: vec![Word { byte: 0, ms: 2660 }],
+            },
+            Segment {
+                start_ms: 4400,
+                end_ms: 5700,
+                text: "我来补充。".into(),
+                words: vec![Word { byte: 0, ms: 4500 }],
+            },
+        ],
+        partial: Some(Segment {
+            start_ms: 5700,
+            end_ms: 7200,
+            text: "接着说下一项。".into(),
+            words: vec![Word { byte: 0, ms: 6000 }],
+        }),
+        turns: vec![
+            Turn {
+                start_ms: 300,
+                end_ms: 1600,
+                speaker: 1,
+            },
+            Turn {
+                start_ms: 1680,
+                end_ms: 1850,
+                speaker: 3,
+            },
+            Turn {
+                start_ms: 2550,
+                end_ms: 4250,
+                speaker: 1,
+            },
+            Turn {
+                start_ms: 4400,
+                end_ms: 5500,
+                speaker: 2,
+            },
+            Turn {
+                start_ms: 5900,
+                end_ms: 7100,
+                speaker: 1,
+            },
+        ],
+        ..Transcript::default()
+    };
+    let entries = current.entries("live", 8000);
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].text, "嗯，今天要做什么呢？先过一下计划。");
+    assert_eq!(entries[0].start_ms, 8100);
+    assert_eq!(entries[0].end_ms, 12400);
+    assert_eq!(entries[2].id, "realtime:live:2");
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.speaker.as_deref())
+            .collect::<Vec<_>>(),
+        [
+            Some("local-speaker:1"),
+            Some("local-speaker:2"),
+            Some("local-speaker:1")
+        ]
+    );
+}
+
+#[test]
+fn leaves_a_short_word_between_different_speakers_unassigned() {
+    let part = |text, speaker, at| Line {
+        text: Cow::Borrowed(text),
+        speaker,
+        start_ms: at,
+        end_ms: at + 200,
+        last_word_ms: at + 100,
+    };
+    let lines = combine_lines(vec![
+        part("先看第一项。", Some(1), 0),
+        part("好。", None, 300),
+        part("我来介绍。", Some(2), 600),
+    ]);
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[1].speaker, None);
+    assert_eq!(lines[1].text, "好。");
+}
+
+#[test]
+fn isolated_near_silence_cannot_create_transcript_rows() {
+    assert!(!has_audible_signal(&[]));
+    assert!(!has_audible_signal(&[0.0; 1600]));
+    assert!(!has_audible_signal(&[0.0002; 1600]));
+    assert_eq!(audible_transcript("明", 30_000, None), "");
+    assert_eq!(audible_transcript("come in.", 41_000, Some(20_000)), "");
+
+    let mut short_syllable = [0.0; 1600];
+    short_syllable[780..820].fill(0.012);
+    assert!(has_audible_signal(&short_syllable));
+    assert!(has_audible_signal(&[0.002; 1600]));
+    assert_eq!(audible_transcript("好。", 41_000, Some(41_090)), "好。");
+    assert_eq!(audible_transcript("嗯。", 41_000, Some(40_830)), "嗯。");
 }
 
 #[test]

@@ -42,6 +42,7 @@ import {
   type Meeting,
   type MeetingAction,
   type MeetingContext,
+  type MeetingSegment,
   type MindMapNode,
   speakerLabel,
 } from "../lib/meetings";
@@ -49,6 +50,12 @@ import { MeetingRecorder } from "../lib/meeting-recorder";
 import "./meetings.css";
 
 type RecordingMode = "realtime" | "chunks" | "record";
+
+interface PendingTranscript {
+  meetingId: string;
+  sessionId: string;
+  segments: MeetingSegment[];
+}
 
 const speechStatusLabels: Record<MeetingSpeechStatus["state"], string> = {
   ready: "X-ASR 160 ms（中英文）已就绪",
@@ -179,10 +186,8 @@ export default function Meetings({
     [dirty, setDirty] = useState(false),
     [recording, setRecording] = useState(false),
     [elapsed, setElapsed] = useState(0),
-    [preview, setPreview] = useState(""),
-    [previewLines, setPreviewLines] = useState<MeetingRealtimeEvent["lines"]>(),
+    [pendingTranscripts, setPendingTranscripts] = useState<PendingTranscript[]>([]),
     [speakerError, setSpeakerError] = useState(""),
-    [previewMeetingId, setPreviewMeetingId] = useState(""),
     [realtimeStatus, setRealtimeStatus] = useState(""),
     [chatId, setChatId] = useState(""),
     [deleting, setDeleting] = useState(false),
@@ -192,8 +197,6 @@ export default function Meetings({
     >([]),
     [audioUrl, setAudioUrl] = useState("");
   const recorder = useRef<MeetingRecorder | undefined>(undefined),
-    previewText = useRef<HTMLParagraphElement>(null),
-    followPreview = useRef(true),
     mounted = useRef(true),
     currentRef = useRef(current),
     started = useRef(0),
@@ -288,10 +291,6 @@ export default function Meetings({
     setMarkerRetry(false);
     markerRequest.current = undefined;
   }, [current?.id]);
-  useLayoutEffect(() => {
-    const text = previewText.current;
-    if (text && followPreview.current) text.scrollTop = text.scrollHeight;
-  }, [preview, previewLines, tab, current?.id, realtimeStatus]);
   const apiSpeechId = speechPreferences?.mode === "api" ? speechPreferences.modelId : "";
   const speechModel = apiSpeechId
     ? eligibleMeetingSpeechModels(data).find((model) => model.id === apiSpeechId)
@@ -396,8 +395,7 @@ export default function Meetings({
     setRecording(false);
     setActiveMode(undefined);
     setBusy("");
-    setPreview("");
-    setPreviewLines(undefined);
+    setPendingTranscripts([]);
     setSpeakerError("");
     setRealtimeStatus("");
     if (native) void loadMeetings();
@@ -474,39 +472,42 @@ export default function Meetings({
         stopError = e;
       }
       if (active) {
+        let saved: Meeting | undefined;
+        let finalized = false;
         try {
-          const saved = await api.meetingRealtimeStop(
+          saved = await api.meetingRealtimeStop(
             active.workspaceId,
             active.id,
             active.sessionId,
           );
-          if (mounted.current && token === epoch.current) {
-            accept(saved);
-            setPreview("");
-            setPreviewLines(undefined);
-            setRealtimeStatus("");
-          }
+          finalized = true;
         } catch (e) {
           stopError = e;
           try {
-            const saved = (await api.meetingList(active.workspaceId)).find(
+            saved = (await api.meetingList(active.workspaceId)).find(
               (m) => m.id === active.id,
             );
-            if (saved && mounted.current && token === epoch.current)
-              accept(saved);
           } catch {
-            /* 保留预览，避免读取失败掩盖收尾错误。 */
+            /* 保留未确认的转录，避免读取失败掩盖收尾错误。 */
           }
+        }
+        if (saved && mounted.current && token === epoch.current) {
+          const savedIds = new Set(saved.segments.map((segment) => segment.id));
+          accept(saved);
+          setPendingTranscripts((all) => all.flatMap((transcript) => {
+            if (transcript.meetingId !== active.id) return [transcript];
+            if (finalized && transcript.sessionId === active.sessionId) return [];
+            const segments = transcript.segments.filter((segment) => !savedIds.has(segment.id));
+            return segments.length ? [{ ...transcript, segments }] : [];
+          }));
         }
       }
       if (mounted.current && token === epoch.current) {
         if (stopError) {
-          if (active)
-            setRealtimeStatus(
-              "实时转录异常结束。请核对已保存文字，可复制下方预览留存。",
-            );
           fail(`录音收尾未全部完成：${String(stopError)}`);
         } else notify("录音已保存");
+        setRealtimeStatus("");
+        setSpeakerError("");
         setBusy("");
         setActiveMode(undefined);
         setElapsed(0);
@@ -538,8 +539,6 @@ export default function Meetings({
       inputDeviceId = speechPreferences?.inputDeviceId,
       token = epoch.current;
     const duration = current.durationMs;
-    setPreviewMeetingId(id);
-    followPreview.current = true;
     setActiveMode(method);
     setBusy(
       method === "realtime" && speechStatus?.runtime !== "ready"
@@ -547,8 +546,6 @@ export default function Meetings({
         : "正在打开麦克风…",
     );
     setError("");
-    setPreview("");
-    setPreviewLines(undefined);
     setSpeakerError("");
     setRealtimeStatus("");
     let active: typeof session.current;
@@ -577,11 +574,21 @@ export default function Meetings({
           )
             return;
           if (event.type === "delta") {
-            setPreview(event.text || "");
-            setPreviewLines(event.lines);
+            const text = event.text?.trim();
+            // 原生事件为当前会话的完整片段快照，允许原地修改和合并已有片段。
+            const segments = event.lines?.length ? event.lines : text ? [{
+              id: `realtime:${linked.sessionId}:0`,
+              startMs: duration,
+              endMs: Math.max(duration, currentRef.current?.durationMs ?? duration),
+              text,
+            }] : [];
+            setPendingTranscripts((all) => [
+              ...all.filter((transcript) => transcript.sessionId !== linked.sessionId),
+              ...(segments.length ? [{ meetingId: id, sessionId: linked.sessionId, segments }] : []),
+            ]);
             setRealtimeStatus(
               linked.failed
-                ? "实时转录已中断，以下文字尚待收尾保存"
+                ? "实时转录已中断，片段将在收尾时保存"
                 : "正在实时识别",
             );
           } else if (event.type === "speakerError") {
@@ -698,9 +705,15 @@ export default function Meetings({
             : `本机实时转录启动失败，可在会议语音设置中查看状态，或切换为仅录音。${String(e)}`,
         );
       }
-      if (active)
+      const failedSession = active;
+      if (failedSession)
         await api
-          .meetingRealtimeStop(workspaceId, id, active.sessionId)
+          .meetingRealtimeStop(workspaceId, id, failedSession.sessionId)
+          .then((saved) => {
+            if (!valid()) return;
+            accept(saved);
+            setPendingTranscripts((all) => all.filter((transcript) => transcript.sessionId !== failedSession.sessionId));
+          })
           .catch(() => undefined);
       if (session.current === active) session.current = undefined;
       recorder.current = undefined;
@@ -940,8 +953,15 @@ export default function Meetings({
       .toLowerCase()
       .includes(search.toLowerCase()),
   );
+  const savedSegments = current?.segments ?? [];
+  const savedSegmentIds = new Set(savedSegments.map((segment) => segment.id));
+  const pendingSegments = pendingTranscripts
+    .filter((transcript) => transcript.meetingId === current?.id)
+    .flatMap((transcript) => transcript.segments)
+    .filter((segment) => !savedSegmentIds.has(segment.id));
+  const transcriptSegments = [...savedSegments, ...pendingSegments];
   const speakerCounts = new Map<string, number>();
-  for (const segment of current?.segments ?? []) {
+  for (const segment of transcriptSegments) {
     const key = segment.speaker ? `speaker:${segment.speaker}` : "unmarked";
     speakerCounts.set(key, (speakerCounts.get(key) ?? 0) + 1);
   }
@@ -954,8 +974,9 @@ export default function Meetings({
     key === "unmarked"
       ? "未标记说话人"
       : current?.speakerNames[key.slice(8)] ||
-        speakerLabel(key.slice(8), current?.segments ?? []);
-  const newestSegments = [...(current?.segments ?? [])]
+        speakerLabel(key.slice(8), transcriptSegments);
+  const transcriptQuery = transcriptSearch.trim().toLocaleLowerCase();
+  const newestSegments = transcriptSegments
     .filter(
       (segment) =>
         (speakerFilter === "all" ||
@@ -963,7 +984,7 @@ export default function Meetings({
             speakerFilter) &&
         segment.text
           .toLocaleLowerCase()
-          .includes(transcriptSearch.trim().toLocaleLowerCase()),
+          .includes(transcriptQuery),
     )
     .sort((a, b) => b.startMs - a.startMs);
   const pendingActions =
@@ -1180,6 +1201,9 @@ export default function Meetings({
               {localDiarization && !speakerModelReady && !locked && (
                 <span className="meeting-hint">说话人模型未就绪，仍可实时转录</span>
               )}
+              {activeMode === "realtime" && speakerError && (
+                <span className="meeting-hint" role="status">{speakerError}。实时文字转录继续。</span>
+              )}
               {!recording && !!current.audioChunks && (
                 <span className="meeting-record-count">已保存 {current.audioChunks} 个音频片段</span>
               )}
@@ -1261,7 +1285,7 @@ export default function Meetings({
                   <Icon size={16} />
                   {label}
                   {key === "transcript" && (
-                    <span>{current.segments.length}</span>
+                    <span>{transcriptSegments.length}</span>
                   )}
                   {key === "actions" && <span>{pendingActions}</span>}
                 </button>
@@ -1336,46 +1360,6 @@ export default function Meetings({
                   </button>
                 </div>
               )}
-              {tab === "transcript" &&
-                previewMeetingId === current.id &&
-                (preview || activeMode === "realtime" || realtimeStatus) && (
-                  <section className="meeting-realtime" aria-label="本机实时转录">
-                    <strong>实时转录</strong>
-                    <span className="meeting-realtime-hint">
-                      {activeMode === "realtime"
-                        ? localDiarization && speakerModelReady
-                          ? "文字实时更新，说话人确认后会标注在对应发言前。"
-                          : "识别中的文字会持续更新，结束录音后保存。"
-                        : realtimeStatus}
-                    </span>
-                    {speakerError && <span className="meeting-realtime-hint" role="status">{speakerError}。实时文字转录继续。</span>}
-                    {preview && (
-                      <p
-                        className="meeting-realtime-text"
-                        ref={previewText}
-                        tabIndex={0}
-                        aria-label="实时转录文字"
-                        onScroll={(event) => {
-                          const text = event.currentTarget;
-                          // 阅读旧文时保留位置，回到底部后恢复跟随新文字。
-                          followPreview.current =
-                            text.scrollHeight -
-                              text.scrollTop -
-                              text.clientHeight <
-                            32;
-                        }}
-                      >
-                        {previewLines?.length ? previewLines.map((line, index) => (
-                          <span className="meeting-realtime-line" key={`${line.startMs}-${index}`}>
-                            <strong>{line.speaker ? segmentSpeakerLabel(`speaker:${line.speaker}`) : "未标记说话人"}</strong>
-                            {line.text.trim()}
-                            {index < previewLines.length - 1 ? "\n" : ""}
-                          </span>
-                        )) : preview}
-                      </p>
-                    )}
-                  </section>
-                )}
               {tab !== "transcript" && current.analysis?.stale && (
                 <p className="meeting-notice" role="status">
                   会议资料、转录或录音已更新，请重新生成。当前显示与导出的是旧版本内容。
@@ -1436,7 +1420,7 @@ export default function Meetings({
                       </ul>
                     </section>
                   )}
-                  {current.segments.length > 0 && (
+                  {transcriptSegments.length > 0 && (
                     <>
                       <div className="meeting-transcript-tools">
                         <label className="meeting-search">
@@ -1457,7 +1441,7 @@ export default function Meetings({
                           options={[
                             {
                               value: "all",
-                              label: `全部说话人 · ${current.segments.length} 段`,
+                              label: `全部说话人 · ${transcriptSegments.length} 段`,
                             },
                             ...[...speakerCounts].map(([value, count]) => ({
                               value,
@@ -1466,12 +1450,19 @@ export default function Meetings({
                           ]}
                         />
                         <span className="meeting-hint">
-                          {newestSegments.length} / {current.segments.length} 段
+                          {newestSegments.length} / {transcriptSegments.length} 段
                         </span>
                       </div>
-                      <p className="meeting-hint">
-                        点击时间可从该片段回听；修改文本或说话人名称后保存。只有语音服务返回了人声编号，才能按说话人筛选。
-                      </p>
+                      {activeMode !== "realtime" && (
+                        <p className="meeting-hint">
+                          点击时间可从已保存的片段回听，修改文本或说话人名称后请保存。
+                        </p>
+                      )}
+                      {!activeMode && pendingSegments.length > 0 && (
+                        <p className="meeting-notice" role="status">
+                          {pendingSegments.length} 段转录尚未确认保存，可选中文字复制留存。
+                        </p>
+                      )}
                       {!newestSegments.length && (
                         <p className="meeting-empty-small">
                           没有符合条件的转录。请调整搜索或说话人筛选。
@@ -1479,9 +1470,7 @@ export default function Meetings({
                       )}
                     </>
                   )}
-                  {!current.segments.length &&
-                    activeMode !== "realtime" &&
-                    !(previewMeetingId === current.id && preview) && (
+                  {!transcriptSegments.length && activeMode !== "realtime" && (
                       <div className="meeting-empty">
                         <AudioLines size={30} />
                         <h3>
@@ -1502,56 +1491,58 @@ export default function Meetings({
                         </p>
                       </div>
                     )}
-                  {newestSegments.map((s, index) => (
-                    <div className="meeting-segment" key={s.id}>
-                      <div>
-                        <button
-                          className="meeting-segment-play"
-                          aria-label={`从 ${meetingTime(s.startMs)} 回听`}
-                          title="从这个转录片段开始回听"
-                          disabled={locked || !current.audioChunks}
-                          onClick={() => void playSegment(s.startMs)}
-                        >
-                          <Play size={12} />
-                          <time>{meetingTime(s.startMs)}</time>
-                        </button>
-                        {s.speaker ? (
-                          <input
-                            aria-label={`说话人 ${s.speaker} 的名称`}
-                            disabled={locked}
-                            value={
-                              current.speakerNames[s.speaker] ||
-                              speakerLabel(s.speaker, current.segments)
-                            }
-                            onChange={(e) =>
-                              edit({
-                                speakerNames: {
-                                  ...current.speakerNames,
-                                  [s.speaker!]: e.target.value,
-                                },
-                              })
-                            }
-                          />
-                        ) : (
-                          <span>未标记说话人</span>
-                        )}
+                  {newestSegments.map((s, index) => {
+                    const pending = !savedSegmentIds.has(s.id);
+                    return (
+                      <div className="meeting-segment" key={s.id}>
+                        <div>
+                          <button
+                            className="meeting-segment-play"
+                            aria-label={`从 ${meetingTime(s.startMs)} 回听`}
+                            title="从这个转录片段开始回听"
+                            disabled={locked || pending || !current.audioChunks}
+                            onClick={() => void playSegment(s.startMs)}
+                          >
+                            <Play size={12} />
+                            <time>{meetingTime(s.startMs)}</time>
+                          </button>
+                          {s.speaker ? (
+                            <input
+                              aria-label={`说话人 ${s.speaker} 的名称`}
+                              disabled={locked || pending}
+                              value={segmentSpeakerLabel(`speaker:${s.speaker}`)}
+                              onChange={(e) =>
+                                edit({
+                                  speakerNames: {
+                                    ...current.speakerNames,
+                                    [s.speaker!]: e.target.value,
+                                  },
+                                })
+                              }
+                            />
+                          ) : (
+                            <span>未标记说话人</span>
+                          )}
+                        </div>
+                        <TranscriptInput
+                          aria-label={`第 ${index + 1} 段转录`}
+                          rows={1}
+                          readOnly={pending}
+                          disabled={locked && !pending}
+                          value={s.text}
+                          onChange={pending ? undefined : (e) =>
+                            edit({
+                              segments: current.segments.map((x) =>
+                                x.id === s.id
+                                  ? { ...x, text: e.target.value }
+                                  : x,
+                              ),
+                            })
+                          }
+                        />
                       </div>
-                      <TranscriptInput
-                        aria-label={`第 ${index + 1} 段转录`}
-                        disabled={locked}
-                        value={s.text}
-                        onChange={(e) =>
-                          edit({
-                            segments: current.segments.map((x) =>
-                              x.id === s.id
-                                ? { ...x, text: e.target.value }
-                                : x,
-                            ),
-                          })
-                        }
-                      />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </>
               ) : tab === "minutes" ? (
                 current.analysis ? (
@@ -1729,6 +1720,7 @@ export default function Meetings({
                     setMeetings((all) =>
                       all.filter((m) => m.id !== current.id),
                     );
+                    setPendingTranscripts((all) => all.filter((transcript) => transcript.meetingId !== current.id));
                     setCurrent(undefined);
                     setDeleting(false);
                   })

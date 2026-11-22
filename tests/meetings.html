@@ -219,7 +219,7 @@
           if (name === "meeting_realtime_start") {
             if (window.__realtimeStartFail) throw window.__realtimeStartFail;
             const meeting = window.__meetings.find((m) => m.id === args.id);
-            window.__realtimeSessions.set(args.sessionId, { ...args, text: "", startMs: meeting.durationMs, chunks: 0 });
+            window.__realtimeSessions.set(args.sessionId, { ...args, lines: [], startMs: meeting.durationMs, chunks: 0 });
             window.__lastRealtimeSession = args.sessionId;
             return;
           }
@@ -231,15 +231,21 @@
               throw session.failure;
             }
             session.chunks++;
-            window.__emitRealtime(`${session.text}实时识别第${session.chunks}句。`, args.sessionId);
+            const meeting = window.__meetings.find((m) => m.id === args.id);
+            const previous = session.lines.at(-1) ?? { id: `realtime:${args.sessionId}:0`, startMs: session.startMs, text: "" };
+            const next = { ...previous, endMs: meeting.durationMs, text: `${previous.text}实时识别第${session.chunks}句。` };
+            window.__emitRealtime([...session.lines.slice(0, -1), next], args.sessionId);
             return;
           }
           if (name === "meeting_realtime_stop") {
             const session = window.__realtimeSessions.get(args.sessionId);
             if (!session) throw "实时转录会话不存在";
             const meeting = window.__meetings.find((m) => m.id === args.id);
-            if (session.text) {
-              meeting.segments.push({ id: `realtime-${args.sessionId}`, startMs: session.startMs, endMs: meeting.durationMs, text: session.text });
+            const lines = session.failure && window.__realtimeUncommittedCount
+              ? session.lines.slice(0, -window.__realtimeUncommittedCount)
+              : session.lines;
+            if (lines.length) {
+              meeting.segments.push(...lines);
               meeting.transcriptionModelId = session.modelId;
               meeting.revision++;
             }
@@ -262,11 +268,12 @@
       window.__callbacks = {};
       window.__audioChunks = new Map();
       window.__realtimeSessions = new Map();
-      window.__emitRealtime = (text, sessionId = window.__lastRealtimeSession, extra = {}) => {
+      window.__emitRealtime = (lines, sessionId = window.__lastRealtimeSession) => {
         const session = window.__realtimeSessions.get(sessionId);
         if (!session) return;
-        session.text = text;
-        session.onEvent.onmessage({ sessionId, workspaceId: session.workspaceId, meetingId: session.id, type: "delta", text, ...extra });
+        session.lines = lines;
+        const text = lines.map((line) => line.text).join("\n");
+        session.onEvent.onmessage({ sessionId, workspaceId: session.workspaceId, meetingId: session.id, type: "delta", text, lines });
       };
       // 隔离媒体设备，不访问真实麦克风；由浏览器验收脚本显式推送样本。
       window.__micOpenCount = 0;
