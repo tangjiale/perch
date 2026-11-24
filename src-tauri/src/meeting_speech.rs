@@ -23,6 +23,8 @@ use std::{
 };
 use tauri::{AppHandle, Manager, State};
 
+pub(crate) mod r2t2;
+
 const PREFERENCES_KEY: &str = "meeting-speech";
 
 #[derive(Default, Deserialize, Serialize)]
@@ -32,6 +34,8 @@ pub struct SpeechPreferences {
     mode: SpeechMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     input_device_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_model_id: Option<MeetingSpeechModel>,
     #[serde(default, skip_serializing_if = "is_false")]
     local_speaker_diarization: bool,
 }
@@ -74,15 +78,25 @@ fn read_preferences(store: &Store) -> Result<SpeechPreferences, String> {
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    match raw {
-        Some(raw) => serde_json::from_str(&raw).map_err(|_| "会议语音设置格式无效".into()),
-        None => Ok(SpeechPreferences::default()),
+    let preferences: SpeechPreferences = match raw {
+        Some(raw) => serde_json::from_str(&raw).map_err(|_| "会议语音设置格式无效")?,
+        None => SpeechPreferences::default(),
+    };
+    if let Some(model) = preferences.local_model_id {
+        model.transcription()?;
     }
+    Ok(preferences)
 }
 
-pub(crate) fn live_speakers_enabled(store: &Store) -> Result<bool, String> {
+pub(crate) fn local_selection(store: &Store) -> Result<(MeetingSpeechModel, bool), String> {
     let preferences = read_preferences(store)?;
-    Ok(matches!(preferences.mode, SpeechMode::Local) && preferences.local_speaker_diarization)
+    Ok((
+        preferences
+            .local_model_id
+            .unwrap_or_default()
+            .transcription()?,
+        matches!(preferences.mode, SpeechMode::Local) && preferences.local_speaker_diarization,
+    ))
 }
 
 #[tauri::command]
@@ -96,6 +110,10 @@ pub fn save_meeting_speech_preferences(
     meetings::workspace(&store, &workspace_id)?;
     if let SpeechMode::Api { model_id } = &value.mode {
         meetings::enabled_speech_pair(&store.snapshot()?, model_id)?;
+    }
+    let model = value.local_model_id.unwrap_or_default().transcription()?;
+    if matches!(value.mode, SpeechMode::Local) {
+        model.check_supported()?;
     }
     if let Some(id) = &value.input_device_id {
         if id.len() > 1024 || id.chars().any(char::is_control) {
@@ -117,8 +135,8 @@ pub fn save_meeting_speech_preferences(
         .map_err(|e| e.to_string())?;
     drop(store);
     if matches!(value.mode, SpeechMode::Local) {
-        if let Ok(path) = model_path(&app) {
-            let _ = prepare_in_background(path);
+        if let Ok(path) = model_path(&app, model) {
+            let _ = prepare_in_background(model, path);
         }
     }
     Ok(())
@@ -132,13 +150,22 @@ pub fn prepare_meeting_speech_model(
 ) -> Result<(), String> {
     let preferences = meeting_speech_preferences(state, workspace_id)?;
     if matches!(preferences.mode, SpeechMode::Local) {
-        prepare_in_background(model_path(&app)?)?;
+        let model = preferences
+            .local_model_id
+            .unwrap_or_default()
+            .transcription()?;
+        model.check_supported()?;
+        prepare_in_background(model, model_path(&app, model)?)?;
     }
     Ok(())
 }
 
 const RELEASE: &str =
     "sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05";
+const RELEASE_480: &str =
+    "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05";
+const ZIPFORMER_ZH_RELEASE: &str = "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30";
+const ZIPFORMER_ZH_SOURCE: &str = "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30/resolve/ad658fa0201659a09ea3c176129a191c77ecae8f";
 const SPEAKER_RELEASE: &str = "pyannote3-campplus-zh-en-v1";
 const ASR_PACKAGE: ModelFile = ModelFile {
     source: Some("https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"),
@@ -175,6 +202,52 @@ const FILES: [ModelFile; 4] = [
         sha256: "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c",
     },
 ];
+const ASR_480_PACKAGE: ModelFile = ModelFile {
+    name: concat!(
+        "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05",
+        ".tar.bz2"
+    ),
+    bytes: 133_895_136,
+    sha256: "fa5f63d618e5a01526e275a358bb7772e403f84808a4769fba52cffd8160bf74",
+    ..ASR_PACKAGE
+};
+const ASR_480_FILES: [ModelFile; 4] = [
+    ModelFile {
+        sha256: "908596dcc137a73b95be908ca55e88caa1b3dbbe8027c171615f4b0609c5eb1e",
+        ..FILES[0]
+    },
+    FILES[1],
+    FILES[2],
+    FILES[3],
+];
+const ZIPFORMER_ZH_FILES: [ModelFile; 4] = [
+    ModelFile {
+        source: Some(ZIPFORMER_ZH_SOURCE),
+        name: "encoder.int8.onnx",
+        bytes: 161_141_793,
+        sha256: "5ac51e27981bb4dab01bb9be4958453ba50c3b61c063ddda0eab23fd3671aa4f",
+    },
+    ModelFile {
+        source: Some(ZIPFORMER_ZH_SOURCE),
+        name: "decoder.onnx",
+        bytes: 5_165_083,
+        sha256: "06522ad63cec0fdf6809f4e1db9bb4f7d710c34582e3b35db62ac60eccafac7e",
+    },
+    ModelFile {
+        source: Some(ZIPFORMER_ZH_SOURCE),
+        name: "joiner.int8.onnx",
+        bytes: 1_033_416,
+        sha256: "b34584dc6f561089e1d747fedebb3765f2caa72c927ef54d7ca55e5ae40a814b",
+    },
+    ModelFile {
+        source: Some(ZIPFORMER_ZH_SOURCE),
+        name: "tokens.txt",
+        bytes: 20_628,
+        sha256: "6193c7ea1c96d0d9a1e9652789b40d13a8a913b434a5451e93158f5a09fd6652",
+    },
+];
+
+#[derive(Clone, Copy)]
 struct ModelFile {
     source: Option<&'static str>,
     name: &'static str,
@@ -188,6 +261,9 @@ enum Download {
     Failed(String),
 }
 static DOWNLOAD: Mutex<Download> = Mutex::new(Download::Idle);
+static DOWNLOAD_480: Mutex<Download> = Mutex::new(Download::Idle);
+static ZIPFORMER_ZH_DOWNLOAD: Mutex<Download> = Mutex::new(Download::Idle);
+static R2T2_DOWNLOAD: Mutex<Download> = Mutex::new(Download::Idle);
 static SPEAKER_DOWNLOAD: Mutex<Download> = Mutex::new(Download::Idle);
 const SPEAKER_FILES: [ModelFile; 2] = [
     ModelFile {
@@ -211,7 +287,30 @@ enum Engine {
     Failed(String),
 }
 
-static ENGINE: Mutex<Engine> = Mutex::new(Engine::Cold);
+struct CachedEngine {
+    target: Option<(MeetingSpeechModel, PathBuf)>,
+    state: Engine,
+}
+
+impl CachedEngine {
+    fn matches(&self, model: MeetingSpeechModel, path: &Path) -> bool {
+        self.target
+            .as_ref()
+            .is_some_and(|(loaded_model, loaded_path)| {
+                *loaded_model == model && loaded_path == path
+            })
+    }
+
+    fn loading(&mut self, model: MeetingSpeechModel, path: &Path) {
+        self.target = Some((model, path.into()));
+        self.state = Engine::Loading;
+    }
+}
+
+static ENGINE: Mutex<CachedEngine> = Mutex::new(CachedEngine {
+    target: None,
+    state: Engine::Cold,
+});
 static ENGINE_CHANGED: Condvar = Condvar::new();
 
 #[derive(Serialize)]
@@ -225,12 +324,20 @@ pub struct ModelStatus {
     runtime_error: Option<String>,
     model_path: PathBuf,
     can_uninstall: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unsupported_reason: Option<&'static str>,
 }
 
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum MeetingSpeechModel {
+    #[default]
     Transcription,
+    #[serde(rename = "x-asr-480")]
+    XAsr480,
+    #[serde(rename = "zipformer-zh")]
+    ZipformerZh,
+    R2t2,
     Speaker,
 }
 
@@ -238,6 +345,9 @@ impl MeetingSpeechModel {
     fn directory(self) -> &'static str {
         match self {
             Self::Transcription => RELEASE,
+            Self::XAsr480 => RELEASE_480,
+            Self::ZipformerZh => ZIPFORMER_ZH_RELEASE,
+            Self::R2t2 => "confucius4-r2t2-q4",
             Self::Speaker => SPEAKER_RELEASE,
         }
     }
@@ -245,6 +355,9 @@ impl MeetingSpeechModel {
     fn download(self) -> &'static Mutex<Download> {
         match self {
             Self::Transcription => &DOWNLOAD,
+            Self::XAsr480 => &DOWNLOAD_480,
+            Self::ZipformerZh => &ZIPFORMER_ZH_DOWNLOAD,
+            Self::R2t2 => &R2T2_DOWNLOAD,
             Self::Speaker => &SPEAKER_DOWNLOAD,
         }
     }
@@ -252,8 +365,55 @@ impl MeetingSpeechModel {
     fn files(self) -> &'static [ModelFile] {
         match self {
             Self::Transcription => &FILES,
+            Self::XAsr480 => &ASR_480_FILES,
+            Self::ZipformerZh => &ZIPFORMER_ZH_FILES,
+            Self::R2t2 => &[],
             Self::Speaker => &SPEAKER_FILES,
         }
+    }
+
+    fn archive(self) -> Option<&'static ModelFile> {
+        match self {
+            Self::Transcription => Some(&ASR_PACKAGE),
+            Self::XAsr480 => Some(&ASR_480_PACKAGE),
+            _ => None,
+        }
+    }
+
+    fn total_bytes(self) -> u64 {
+        if self == Self::R2t2 {
+            return r2t2::total_bytes();
+        }
+        self.archive().map_or_else(
+            || self.files().iter().map(|file| file.bytes).sum(),
+            |file| file.bytes,
+        )
+    }
+
+    fn unsupported_reason(self) -> Option<&'static str> {
+        if self == Self::R2t2 {
+            return r2t2::unsupported_reason();
+        }
+        None
+    }
+
+    pub(crate) fn check_supported(self) -> Result<(), String> {
+        self.unsupported_reason()
+            .map_or(Ok(()), |reason| Err(reason.into()))
+    }
+
+    fn transcription(self) -> Result<Self, String> {
+        if self == Self::Speaker {
+            return Err("请选择本机转录模型".into());
+        }
+        Ok(self)
+    }
+
+    fn installed(self, path: &Path) -> bool {
+        if self == Self::R2t2 {
+            return r2t2::is_installed(path);
+        }
+        has_files(path, self.files())
     }
 }
 
@@ -300,8 +460,8 @@ fn resolved_model_path(app: &AppHandle, model: MeetingSpeechModel) -> Result<Pat
     Ok(path)
 }
 
-pub(crate) fn model_path(app: &AppHandle) -> Result<PathBuf, String> {
-    resolved_model_path(app, MeetingSpeechModel::Transcription)
+pub(crate) fn model_path(app: &AppHandle, model: MeetingSpeechModel) -> Result<PathBuf, String> {
+    resolved_model_path(app, model.transcription()?)
 }
 
 pub(crate) fn speaker_model_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -399,32 +559,40 @@ pub(crate) fn load_live_speaker_models(
 }
 
 #[tauri::command]
-pub fn meeting_speech_status(app: AppHandle) -> Result<ModelStatus, String> {
-    model_status(model_path(&app)?, MeetingSpeechModel::Transcription)
+pub fn meeting_speech_status(
+    app: AppHandle,
+    model: Option<MeetingSpeechModel>,
+) -> Result<ModelStatus, String> {
+    let model = model.unwrap_or_default().transcription()?;
+    model_status(model_path(&app, model)?, model)
 }
 
 fn model_status(path: PathBuf, model: MeetingSpeechModel) -> Result<ModelStatus, String> {
     let download = model.download().lock().map_err(|_| "模型下载状态不可用")?;
-    let total = match model {
-        MeetingSpeechModel::Transcription => ASR_PACKAGE.bytes,
-        MeetingSpeechModel::Speaker => SPEAKER_FILES.iter().map(|file| file.bytes).sum(),
-    };
+    let total = model.total_bytes();
+    let unsupported_reason = model.unsupported_reason();
     let (state, downloaded_bytes, error) = match &*download {
         Download::Running(bytes) => ("downloading", *bytes, None),
         Download::Failed(error) => ("error", 0, Some(error.clone())),
-        Download::Idle if has_files(&path, model.files()) => ("ready", total, None),
+        Download::Idle if unsupported_reason.is_none() && model.installed(&path) => {
+            ("ready", total, None)
+        }
         Download::Idle => ("missing", 0, None),
     };
-    let (runtime, runtime_error) = match model {
-        MeetingSpeechModel::Transcription if state == "ready" => {
-            match &*ENGINE.lock().map_err(|_| "语音引擎状态不可用")? {
+    let (runtime, runtime_error) = if state == "ready" && model != MeetingSpeechModel::Speaker {
+        let engine = ENGINE.lock().map_err(|_| "语音引擎状态不可用")?;
+        if engine.matches(model, &path) {
+            match &engine.state {
                 Engine::Cold => ("cold", None),
                 Engine::Loading => ("loading", None),
                 Engine::Ready(_) => ("ready", None),
                 Engine::Failed(error) => ("error", Some(error.clone())),
             }
+        } else {
+            ("cold", None)
         }
-        _ => ("cold", None),
+    } else {
+        ("cold", None)
     };
     let can_uninstall = state != "downloading" && runtime != "loading" && has_cached_data(&path)?;
     Ok(ModelStatus {
@@ -436,6 +604,7 @@ fn model_status(path: PathBuf, model: MeetingSpeechModel) -> Result<ModelStatus,
         runtime_error,
         model_path: path,
         can_uninstall,
+        unsupported_reason,
     })
 }
 
@@ -474,13 +643,15 @@ fn uninstall_model(path: &Path, legacy: &Path, model: MeetingSpeechModel) -> Res
     }
     let legacy_exists = check_cache_directory(legacy)?;
     let installed = check_cache_directory(path)?;
-    if matches!(model, MeetingSpeechModel::Transcription) {
-        let mut engine = ENGINE.lock().map_err(|_| "语音引擎状态不可用")?;
-        if matches!(*engine, Engine::Loading) {
+    let mut engine = ENGINE.lock().map_err(|_| "语音引擎状态不可用")?;
+    if engine.matches(model, path) {
+        if matches!(engine.state, Engine::Loading) {
             return Err("模型正在加载，请等待加载完成后再卸载".into());
         }
-        *engine = Engine::Cold;
+        engine.target = None;
+        engine.state = Engine::Cold;
     }
+    drop(engine);
     if legacy_exists {
         fs::remove_dir_all(legacy).map_err(uninstall_error)?;
     }
@@ -496,19 +667,31 @@ fn uninstall_error(error: io::Error) -> String {
 }
 
 #[tauri::command]
-pub fn install_meeting_speech_model(app: AppHandle) -> Result<(), String> {
-    let path = model_path(&app)?;
+pub fn install_meeting_speech_model(
+    app: AppHandle,
+    model: Option<MeetingSpeechModel>,
+) -> Result<(), String> {
+    let model = model.unwrap_or_default().transcription()?;
+    model.check_supported()?;
+    let path = model_path(&app, model)?;
+    let status = model.download();
     {
-        let mut download = DOWNLOAD.lock().map_err(|_| "模型下载状态不可用")?;
+        let mut download = status.lock().map_err(|_| "模型下载状态不可用")?;
         if matches!(*download, Download::Running(_)) {
             return Ok(());
         }
         *download = Download::Running(0);
     }
     tauri::async_runtime::spawn(async move {
-        let result = install_stream_model(&path).await;
+        let result = if let Some(archive) = model.archive() {
+            install_stream_model(&path, model, archive).await
+        } else if model == MeetingSpeechModel::R2t2 {
+            r2t2::install(&path, status).await
+        } else {
+            install(&path, model.files(), status).await
+        };
         let installed = result.is_ok();
-        if let Ok(mut download) = DOWNLOAD.lock() {
+        if let Ok(mut download) = status.lock() {
             *download = match result {
                 Ok(()) => Download::Idle,
                 Err(error) => Download::Failed(error),
@@ -517,12 +700,14 @@ pub fn install_meeting_speech_model(app: AppHandle) -> Result<(), String> {
         if installed
             && app.try_state::<AppState>().is_some_and(|state| {
                 state.store.lock().is_ok_and(|store| {
-                    read_preferences(&store)
-                        .is_ok_and(|value| matches!(value.mode, SpeechMode::Local))
+                    read_preferences(&store).is_ok_and(|value| {
+                        matches!(value.mode, SpeechMode::Local)
+                            && value.local_model_id.unwrap_or_default() == model
+                    })
                 })
             })
         {
-            let _ = prepare_in_background(path);
+            let _ = prepare_in_background(model, path);
         }
     });
     Ok(())
@@ -570,25 +755,30 @@ async fn model_installer(path: &Path) -> Result<(fs::File, reqwest::Client), Str
     Ok((lock, client))
 }
 
-async fn install_stream_model(path: &Path) -> Result<(), String> {
+async fn install_stream_model(
+    path: &Path,
+    model: MeetingSpeechModel,
+    package_file: &'static ModelFile,
+) -> Result<(), String> {
     let (_lock, client) = model_installer(path).await?;
-    let archive = path.join(ASR_PACKAGE.name);
+    let archive = path.join(package_file.name);
+    let status = model.download();
     let verified = tokio::task::spawn_blocking({
         let archive = archive.clone();
-        move || verify(&archive, &ASR_PACKAGE)
+        move || verify(&archive, package_file)
     })
     .await
     .map_err(|_| "无法校验语音模型包")?;
     if !verified {
-        download_file(&client, path, &archive, &ASR_PACKAGE, |bytes| {
-            report_progress(&DOWNLOAD, bytes);
+        download_file(&client, path, &archive, package_file, |bytes| {
+            report_progress(status, bytes);
         })
         .await?;
     }
-    report_progress(&DOWNLOAD, ASR_PACKAGE.bytes);
+    report_progress(status, package_file.bytes);
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        unpack_stream_model(&archive, &path)?;
+        unpack_stream_model(&archive, &path, model)?;
         let _ = fs::remove_file(archive);
         Ok(())
     })
@@ -596,7 +786,11 @@ async fn install_stream_model(path: &Path) -> Result<(), String> {
     .map_err(|_| "语音模型解压任务异常退出")?
 }
 
-fn unpack_stream_model(archive: &Path, path: &Path) -> Result<(), String> {
+fn unpack_stream_model(
+    archive: &Path,
+    path: &Path,
+    model: MeetingSpeechModel,
+) -> Result<(), String> {
     let staging = tempfile::tempdir_in(path).map_err(write_error)?;
     let input = fs::File::open(archive).map_err(write_error)?;
     let mut package = tar::Archive::new(bzip2::read::BzDecoder::new(input));
@@ -604,9 +798,10 @@ fn unpack_stream_model(archive: &Path, path: &Path) -> Result<(), String> {
     for entry in package.entries().map_err(|_| "语音模型包无法读取")? {
         let mut entry = entry.map_err(|_| "语音模型包内容损坏")?;
         let member = entry.path().map_err(|_| "语音模型包路径无效")?;
-        let Some(file) = FILES
+        let Some(file) = model
+            .files()
             .iter()
-            .find(|file| member == Path::new(RELEASE).join(file.name))
+            .find(|file| member == Path::new(model.directory()).join(file.name))
         else {
             continue;
         };
@@ -624,10 +819,10 @@ fn unpack_stream_model(archive: &Path, path: &Path) -> Result<(), String> {
             return Err("语音模型文件未通过完整性校验".into());
         }
     }
-    if extracted.len() != FILES.len() {
+    if extracted.len() != model.files().len() {
         return Err("语音模型包缺少必需的文件".into());
     }
-    for file in &FILES {
+    for file in model.files() {
         fs::rename(staging.path().join(file.name), path.join(file.name)).map_err(write_error)?;
     }
     Ok(())
@@ -805,57 +1000,66 @@ fn verify(path: &Path, file: &ModelFile) -> bool {
     hex::encode(digest.finish()) == file.sha256
 }
 
-fn prepare_in_background(path: PathBuf) -> Result<(), String> {
+fn prepare_in_background(model: MeetingSpeechModel, path: PathBuf) -> Result<(), String> {
+    if model == MeetingSpeechModel::R2t2 {
+        return Ok(());
+    }
     if !matches!(
-        *DOWNLOAD.lock().map_err(|_| "模型下载状态不可用")?,
+        *model.download().lock().map_err(|_| "模型下载状态不可用")?,
         Download::Idle
-    ) || !has_files(&path, &FILES)
+    ) || !model.installed(&path)
     {
         return Ok(());
     }
     {
         let mut engine = ENGINE.lock().map_err(|_| "语音引擎状态不可用")?;
-        if matches!(*engine, Engine::Ready(_) | Engine::Loading) {
+        if matches!(engine.state, Engine::Loading)
+            || (engine.matches(model, &path) && matches!(engine.state, Engine::Ready(_)))
+        {
             return Ok(());
         }
-        *engine = Engine::Loading;
+        engine.loading(model, &path);
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = finish_loading(&path);
+        let _ = finish_loading(model, &path);
     });
     Ok(())
 }
 
 /// 录音和预热共用一次加载。等待发生在解码的阻塞线程，不阻塞 UI 或 SQLite。
-pub(crate) fn acquire(path: &Path) -> Result<Arc<OnlineRecognizer>, String> {
-    if !has_files(path, &FILES) {
+pub(crate) fn acquire(
+    model: MeetingSpeechModel,
+    path: &Path,
+) -> Result<Arc<OnlineRecognizer>, String> {
+    if !model.installed(path) {
         return Err("请先在「设置 → 会议语音」下载本机转录模型".into());
     }
     let mut engine = ENGINE.lock().map_err(|_| "语音引擎状态不可用")?;
     let mut waited = false;
     loop {
-        match &*engine {
-            Engine::Ready(recognizer) => return Ok(recognizer.clone()),
+        let same_model = engine.matches(model, path);
+        match &engine.state {
+            Engine::Ready(recognizer) if same_model => return Ok(recognizer.clone()),
             Engine::Loading => {
-                waited = true;
+                waited |= same_model;
                 engine = ENGINE_CHANGED
                     .wait(engine)
                     .map_err(|_| "语音引擎状态不可用")?;
             }
-            Engine::Failed(error) if waited => return Err(error.clone()),
-            Engine::Cold | Engine::Failed(_) => {
-                *engine = Engine::Loading;
+            Engine::Failed(error) if same_model && waited => return Err(error.clone()),
+            _ => {
+                engine.loading(model, path);
                 drop(engine);
-                return finish_loading(path);
+                return finish_loading(model, path);
             }
         }
     }
 }
 
-fn finish_loading(path: &Path) -> Result<Arc<OnlineRecognizer>, String> {
-    let result = load(path).map(Arc::new);
+fn finish_loading(model: MeetingSpeechModel, path: &Path) -> Result<Arc<OnlineRecognizer>, String> {
+    let result = load(model, path).map(Arc::new);
     let mut engine = ENGINE.lock().map_err(|_| "语音引擎状态不可用")?;
-    *engine = match &result {
+    engine.state = match &result {
         Ok(recognizer) => Engine::Ready(recognizer.clone()),
         Err(error) => Engine::Failed(error.clone()),
     };
@@ -863,20 +1067,24 @@ fn finish_loading(path: &Path) -> Result<Arc<OnlineRecognizer>, String> {
     result
 }
 
-fn load(path: &Path) -> Result<OnlineRecognizer, String> {
+fn load(model: MeetingSpeechModel, path: &Path) -> Result<OnlineRecognizer, String> {
     let _guard = model_read_lock(path)?;
     {
-        let download = DOWNLOAD.lock().map_err(|_| "模型下载状态不可用")?;
+        let download = model.download().lock().map_err(|_| "模型下载状态不可用")?;
         if matches!(*download, Download::Running(_)) {
             return Err("本机语音模型正在下载，请完成后再开始实时转录".into());
         }
     }
-    if !has_files(path, &FILES) {
+    let files = model.files();
+    let [encoder, decoder, joiner, tokens] = files else {
+        return Err("本机流式转录模型格式无效".into());
+    };
+    if !has_files(path, files) {
         return Err("请先在「设置 → 会议语音」下载本机转录模型".into());
     }
-    if !FILES.iter().all(|file| verify(&path.join(file.name), file)) {
+    if !files.iter().all(|file| verify(&path.join(file.name), file)) {
         let error = "本机语音模型文件校验失败，请在会议语音设置中重新下载".to_string();
-        if let Ok(mut download) = DOWNLOAD.lock() {
+        if let Ok(mut download) = model.download().lock() {
             if matches!(*download, Download::Idle) {
                 *download = Download::Failed(error.clone());
             }
@@ -889,13 +1097,15 @@ fn load(path: &Path) -> Result<OnlineRecognizer, String> {
         rule1_min_trailing_silence: 2.4,
         rule2_min_trailing_silence: 1.2,
         rule3_min_utterance_length: 20.0,
-        decoding_method: Some("greedy_search".into()),
+        // 4 路束搜索减少背景人声下的漏字，同时保留 160 ms 模型的流式输入。
+        decoding_method: Some("modified_beam_search".into()),
+        max_active_paths: 4,
         ..Default::default()
     };
-    config.model_config.transducer.encoder = file_path(&FILES[0]);
-    config.model_config.transducer.decoder = file_path(&FILES[1]);
-    config.model_config.transducer.joiner = file_path(&FILES[2]);
-    config.model_config.tokens = file_path(&FILES[3]);
+    config.model_config.transducer.encoder = file_path(encoder);
+    config.model_config.transducer.decoder = file_path(decoder);
+    config.model_config.transducer.joiner = file_path(joiner);
+    config.model_config.tokens = file_path(tokens);
     if config.model_config.tokens.is_none() {
         return Err("本机模型目录不是有效的 UTF-8 路径".into());
     }
@@ -983,7 +1193,61 @@ mod tests {
 
         let expected = serde_json::json!({"mode": "local", "inputDeviceId": "fixture-mic"});
         let saved: SpeechPreferences = serde_json::from_value(expected.clone()).unwrap();
+        assert_eq!(
+            saved.local_model_id.unwrap_or_default(),
+            MeetingSpeechModel::Transcription
+        );
         assert_eq!(serde_json::to_value(saved).unwrap(), expected);
+
+        for id in ["transcription", "x-asr-480", "zipformer-zh", "r2t2"] {
+            let expected = serde_json::json!({
+                "mode": "local", "localModelId": id, "localSpeakerDiarization": true
+            });
+            let saved: SpeechPreferences = serde_json::from_value(expected.clone()).unwrap();
+            assert!(saved.local_model_id.unwrap().transcription().is_ok());
+            assert_eq!(serde_json::to_value(saved).unwrap(), expected);
+        }
+        assert!(MeetingSpeechModel::Speaker.transcription().is_err());
+    }
+
+    #[test]
+    #[ignore = "使用三个已校验的本机模型，验证切换时重新加载并保留录音中识别"]
+    fn switching_native_recognizers_uses_the_selected_model() {
+        let wave = sherpa_onnx::Wave::read(&std::env::var("PERCH_TEST_PUBLIC_SPEECH_WAV").unwrap())
+            .unwrap();
+        assert_eq!(wave.sample_rate(), 16_000);
+        let mut previous = None;
+        for (model, variable) in [
+            (
+                MeetingSpeechModel::Transcription,
+                "PERCH_TEST_SPEECH_MODEL_DIR",
+            ),
+            (MeetingSpeechModel::XAsr480, "PERCH_TEST_SPEECH_480_DIR"),
+            (
+                MeetingSpeechModel::ZipformerZh,
+                "PERCH_TEST_SPEECH_ZIPFORMER_DIR",
+            ),
+        ] {
+            let path = PathBuf::from(std::env::var_os(variable).unwrap());
+            let recognizer = acquire(model, &path).unwrap();
+            assert!(ENGINE.lock().unwrap().matches(model, &path));
+            if let Some(previous) = previous {
+                assert!(!Arc::ptr_eq(&previous, &recognizer));
+            }
+            let stream = recognizer.create_stream();
+            let mut live = false;
+            for chunk in wave.samples().chunks(2_560) {
+                stream.accept_waveform(16_000, chunk);
+                while recognizer.is_ready(&stream) {
+                    recognizer.decode(&stream);
+                }
+                live |= recognizer
+                    .get_result(&stream)
+                    .is_some_and(|result| !result.text.is_empty());
+            }
+            assert!(live, "{model:?} 在录音结束前应产生文字");
+            previous = Some(recognizer);
+        }
     }
 
     #[test]
@@ -991,12 +1255,13 @@ mod tests {
     fn prewarm_and_reuse_installed_recognizer() {
         let path = PathBuf::from(std::env::var_os("PERCH_TEST_SPEECH_MODEL_DIR").unwrap());
         let started = std::time::Instant::now();
-        prepare_in_background(path.clone()).unwrap();
-        let warmed = acquire(&path).unwrap();
-        assert!(matches!(*ENGINE.lock().unwrap(), Engine::Ready(_)));
+        let model = MeetingSpeechModel::Transcription;
+        prepare_in_background(model, path.clone()).unwrap();
+        let warmed = acquire(model, &path).unwrap();
+        assert!(matches!(ENGINE.lock().unwrap().state, Engine::Ready(_)));
         let cold_elapsed = started.elapsed();
         let started = std::time::Instant::now();
-        let next = acquire(&path).unwrap();
+        let next = acquire(model, &path).unwrap();
         assert!(Arc::ptr_eq(&warmed, &next));
         eprintln!(
             "首次校验和加载 {cold_elapsed:?}，复用识别器 {:?}",
@@ -1020,9 +1285,12 @@ mod tests {
             fs::create_dir(&path).unwrap();
             fs::copy(archive, path.join(ASR_PACKAGE.name)).unwrap();
         }
-        install_stream_model(&path).await.unwrap();
+        let model = MeetingSpeechModel::Transcription;
+        install_stream_model(&path, model, &ASR_PACKAGE)
+            .await
+            .unwrap();
         *DOWNLOAD.lock().unwrap() = Download::Idle;
-        let recognizer = load(&path).unwrap();
+        let recognizer = load(model, &path).unwrap();
         let source = "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/98590b7ed6443e77b714204da2757d75e1a642f4/test_wavs/1.wav";
         let audio = reqwest::get(source)
             .await

@@ -109,6 +109,9 @@ impl Worker {
         let runtime = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {
             if let Err(error) = run(path, &session, &events, last_id, rx, runtime) {
+                if let Ok(mut current) = session.result.lock() {
+                    current.speaker_settled_ms = None;
+                }
                 events.send("speakerError", &error);
             }
             let _ = done.send(());
@@ -178,7 +181,10 @@ fn run(
             break;
         }
         let changed = update_turns(&mut current.turns, turns, &window, &mut confirmed_ms);
-        if changed && (!current.segments.is_empty() || current.partial.is_some()) {
+        let settled = (!window.final_window).then_some(confirmed_ms);
+        let advanced = current.speaker_settled_ms != settled;
+        current.speaker_settled_ms = settled;
+        if (changed || advanced) && (!current.segments.is_empty() || current.partial.is_some()) {
             events.preview(&current);
         }
         if window.final_window {
@@ -463,7 +469,11 @@ mod tests {
         assert_eq!(speaker_at(6500), Some(first));
 
         let speech_path = PathBuf::from(std::env::var_os("PERCH_TEST_SPEECH_MODEL_DIR").unwrap());
-        let recognizer = meeting_speech::acquire(&speech_path).unwrap();
+        let recognizer = meeting_speech::acquire(
+            super::super::MeetingSpeechModel::Transcription,
+            &speech_path,
+        )
+        .unwrap();
         let stream = recognizer.create_stream();
         for frame in samples.chunks(160 * SAMPLES_PER_MS) {
             stream.accept_waveform(SAMPLE_RATE, frame);
@@ -480,7 +490,7 @@ mod tests {
             text: text.into(),
             words,
         };
-        let lines = super::super::combine_lines(segment.split(&turns));
+        let lines = super::super::combine_lines(segment.split(&turns, false));
         let mut ids = lines
             .iter()
             .filter_map(|line| line.speaker)

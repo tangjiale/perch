@@ -1,5 +1,10 @@
 //! 本机流式识别只读取已写入 SQLite 的会议音频。推理在阻塞线程上运行。
-use crate::{meeting_speech, meetings, storage::Store, AppState};
+use crate::{
+    meeting_speech::{self, r2t2, MeetingSpeechModel},
+    meetings,
+    storage::Store,
+    AppState,
+};
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -44,6 +49,7 @@ fn key(workspace: &str, id: &str) -> (String, String) {
 
 struct Session {
     id: String,
+    model: MeetingSpeechModel,
     generation: PathBuf,
     offset: i64,
     first_sequence: i64,
@@ -66,6 +72,8 @@ struct Transcript {
     segments: Vec<Segment>,
     partial: Option<Segment>,
     turns: Vec<Turn>,
+    coarse_timing: bool,
+    speaker_settled_ms: Option<i64>,
     processed: i64,
     error: Option<String>,
     ended: bool,
@@ -154,7 +162,7 @@ impl Events {
 
     fn preview(&self, current: &Transcript) {
         let mut event = self.event("delta");
-        let entries = current.entries(&self.session, self.offset);
+        let entries = current.live_entries(&self.session, self.offset);
         event["text"] = json!(entries
             .iter()
             .map(|entry| entry.text.as_str())
@@ -185,9 +193,29 @@ struct Line<'a> {
 }
 
 impl Segment {
-    fn split(&self, turns: &[Turn]) -> Vec<Line<'_>> {
+    fn split(&self, turns: &[Turn], coarse_timing: bool) -> Vec<Line<'_>> {
         let mut lines = Vec::new();
         let mut speaker = None;
+        if coarse_timing && self.words.is_empty() && self.end_ms > self.start_ms {
+            // 有道仅返回增量文字。整段能确认由一人主导时才标记，不虚构逐字时间。
+            let duration = self.end_ms - self.start_ms;
+            let first = turns.partition_point(|turn| turn.end_ms <= self.start_ms);
+            let mut overlapping = turns[first..]
+                .iter()
+                .take_while(|turn| turn.start_ms < self.end_ms)
+                .filter(|turn| {
+                    turn.end_ms.min(self.end_ms) - turn.start_ms.max(self.start_ms) >= 150
+                });
+            if let Some(turn) = overlapping.next() {
+                let overlap = turn.end_ms.min(self.end_ms) - turn.start_ms.max(self.start_ms);
+                if overlap >= MIN_SPEAKER_TURN_MS
+                    && overlap * 5 >= duration * 4
+                    && overlapping.all(|other| other.speaker == turn.speaker)
+                {
+                    speaker = Some(turn.speaker);
+                }
+            }
+        }
         let mut byte = 0;
         let mut start_ms = self.words.first().map_or(self.start_ms, |word| word.ms);
         let mut last_word_ms = start_ms;
@@ -223,14 +251,48 @@ impl Segment {
 }
 
 impl Transcript {
-    fn entries(&self, session: &str, offset: i64) -> Vec<TranscriptEntry> {
+    fn lines(&self) -> Vec<Line<'_>> {
         let lines = self
             .segments
             .iter()
             .chain(self.partial.iter())
-            .flat_map(|segment| segment.split(&self.turns))
+            .flat_map(|segment| segment.split(&self.turns, self.coarse_timing))
             .collect();
         combine_lines(lines)
+    }
+
+    fn live_entries(&self, session: &str, offset: i64) -> Vec<TranscriptEntry> {
+        let mut lines = self.lines();
+        if let Some(settled_ms) = self.speaker_settled_ms {
+            // 还可能合并短词或修正说话人的部分只更新同一行，确认边界后再分段。
+            let lookahead = MAX_LINE_GAP_MS.max(SHORT_FRAGMENT_GAP_MS + MIN_SPEAKER_TURN_MS);
+            let cutoff = settled_ms - lookahead;
+            let count = lines
+                .iter()
+                .take_while(|line| line.end_ms <= cutoff)
+                .count();
+            let mut draft = lines.drain(count..);
+            let active = draft.next().map(|mut first| {
+                if first.start_ms > cutoff {
+                    first.speaker = None;
+                }
+                for line in draft.by_ref() {
+                    first.append(line);
+                }
+                first
+            });
+            drop(draft);
+            lines.extend(active);
+        }
+        Self::render(lines, session, offset)
+    }
+
+    fn entries(&self, session: &str, offset: i64) -> Vec<TranscriptEntry> {
+        Self::render(self.lines(), session, offset)
+    }
+
+    fn render(lines: Vec<Line<'_>>, session: &str, offset: i64) -> Vec<TranscriptEntry> {
+        lines
             .into_iter()
             .enumerate()
             .map(|(index, line)| TranscriptEntry {
@@ -241,6 +303,21 @@ impl Transcript {
                 end_ms: offset + line.end_ms,
             })
             .collect()
+    }
+}
+
+impl Line<'_> {
+    fn append(&mut self, line: Line<'_>) {
+        let text = self.text.to_mut();
+        if text
+            .ends_with(|ch: char| ch.is_ascii_alphanumeric() || matches!(ch, '.' | ',' | '?' | '!'))
+            && line.text.starts_with(|ch: char| ch.is_ascii_alphanumeric())
+        {
+            text.push(' ');
+        }
+        text.push_str(&line.text);
+        self.end_ms = self.end_ms.max(line.end_ms);
+        self.last_word_ms = self.last_word_ms.max(line.last_word_ms);
     }
 }
 
@@ -283,16 +360,7 @@ fn combine_lines(mut lines: Vec<Line<'_>>) -> Vec<Line<'_>> {
             combined.push(line);
             continue;
         };
-        let text = previous.text.to_mut();
-        if text
-            .ends_with(|ch: char| ch.is_ascii_alphanumeric() || matches!(ch, '.' | ',' | '?' | '!'))
-            && line.text.starts_with(|ch: char| ch.is_ascii_alphanumeric())
-        {
-            text.push(' ');
-        }
-        text.push_str(&line.text);
-        previous.end_ms = previous.end_ms.max(line.end_ms);
-        previous.last_word_ms = previous.last_word_ms.max(line.last_word_ms);
+        previous.append(line);
     }
     combined
 }
@@ -330,14 +398,15 @@ pub async fn meeting_realtime_start(
     if session_id.is_empty() || session_id.len() > 120 || session_id.chars().any(char::is_control) {
         return Err("实时会话标识无效".into());
     }
-    let path = meeting_speech::model_path(&app)?;
     let (tx, rx) = mpsc::channel(2);
     let session_key = key(&workspace_id, &id);
-    let (session, speaker_setup) = {
+    let (session, path, speaker_setup) = {
         // 持有 Store 时登记，防止会议编辑、删除和工作空间迁移越过检查。
         let store = state.store.lock().map_err(|e| e.to_string())?;
         meetings::context(&store, &workspace_id, &store.generation)?;
-        let diarization = meeting_speech::live_speakers_enabled(&store)?;
+        let (model, diarization) = meeting_speech::local_selection(&store)?;
+        model.check_supported()?;
+        let path = meeting_speech::model_path(&app, model)?;
         let conn = store.conn.lock().map_err(|e| e.to_string())?;
         let value = meetings::read(&conn, &id)?;
         let sequence = conn
@@ -349,11 +418,15 @@ pub async fn meeting_realtime_start(
             .map_err(|e| e.to_string())?;
         let session = Arc::new(Session {
             id: session_id,
+            model,
             generation: store.generation.clone(),
             offset: value["durationMs"].as_i64().ok_or("录音时长无效")?,
             first_sequence: sequence,
             tx,
-            result: Mutex::new(Transcript::default()),
+            result: Mutex::new(Transcript {
+                coarse_timing: model == MeetingSpeechModel::R2t2,
+                ..Transcript::default()
+            }),
             stopping: AtomicBool::new(false),
             cancelled: AtomicBool::new(false),
             finished: Notify::new(),
@@ -365,6 +438,7 @@ pub async fn meeting_realtime_start(
         all.insert(session_key.clone(), session.clone());
         (
             session,
+            path,
             diarization.then(|| {
                 (
                     meeting_speech::speaker_model_path(&app),
@@ -397,9 +471,29 @@ pub async fn meeting_realtime_start(
     Ok(())
 }
 
+enum RecognitionEngine {
+    Sherpa {
+        stream: OnlineStream,
+        recognizer: Arc<OnlineRecognizer>,
+    },
+    R2t2(r2t2::Stream),
+}
+
+impl RecognitionEngine {
+    fn start(model: MeetingSpeechModel, path: &Path) -> Result<Self, String> {
+        if model == MeetingSpeechModel::R2t2 {
+            return r2t2::Stream::start(path).map(Self::R2t2);
+        }
+        let recognizer = meeting_speech::acquire(model, path)?;
+        Ok(Self::Sherpa {
+            stream: recognizer.create_stream(),
+            recognizer,
+        })
+    }
+}
+
 struct Decoder {
-    stream: OnlineStream,
-    recognizer: Arc<OnlineRecognizer>,
+    engine: RecognitionEngine,
     elapsed_ms: i64,
     segment_start_ms: i64,
     last_audible_ms: Option<i64>,
@@ -409,10 +503,9 @@ struct Decoder {
 }
 
 impl Decoder {
-    fn new(recognizer: Arc<OnlineRecognizer>) -> Self {
+    fn new(engine: RecognitionEngine) -> Self {
         Self {
-            stream: recognizer.create_stream(),
-            recognizer,
+            engine,
             elapsed_ms: 0,
             segment_start_ms: 0,
             last_audible_ms: None,
@@ -436,46 +529,79 @@ impl Decoder {
                 .iter()
                 .map(|&sample| f32::from(i16::from_le_bytes(sample)) / 32768.0)
                 .collect();
-            self.stream.accept_waveform(SAMPLE_RATE, &samples);
+            let frame_start_ms = self.elapsed_ms;
             self.elapsed_ms += (frame.len() / PCM_BYTES_PER_MS) as i64;
             if has_audible_signal(&samples) {
+                if self.last_audible_ms.is_none()
+                    && matches!(self.engine, RecognitionEngine::R2t2(_))
+                {
+                    self.segment_start_ms = frame_start_ms;
+                }
                 self.last_audible_ms = Some(self.elapsed_ms);
             }
             if let Some(speakers) = &mut self.speakers {
                 speakers.feed(&samples, self.elapsed_ms);
             }
-            self.decode(session, false, events)?;
+            match &mut self.engine {
+                RecognitionEngine::Sherpa { stream, .. } => {
+                    stream.accept_waveform(SAMPLE_RATE, &samples);
+                    self.decode_sherpa(session, false, events)?;
+                }
+                RecognitionEngine::R2t2(stream) => {
+                    let result = stream.feed_pcm(frame);
+                    let delta = stream.take_delta();
+                    self.append_r2t2(&delta, false, session, events)?;
+                    result?;
+                }
+            }
         }
         Ok(())
     }
 
     fn finish(&mut self, session: &Session, events: &Events) -> Result<(), String> {
-        // 末尾补静音满足模型向前看的窗口，时间戳仍以实际录音长度为准。
-        self.stream.accept_waveform(SAMPLE_RATE, &[0.0; 8_000]);
-        self.stream.input_finished();
-        self.decode(session, true, events)?;
+        let result = match &mut self.engine {
+            RecognitionEngine::Sherpa { stream, .. } => {
+                // 末尾补静音满足模型向前看的窗口，时间戳仍以实际录音长度为准。
+                stream.accept_waveform(SAMPLE_RATE, &[0.0; 8_000]);
+                stream.input_finished();
+                self.decode_sherpa(session, true, events)
+            }
+            RecognitionEngine::R2t2(stream) => {
+                let result = stream.finish();
+                let delta = stream.take_delta();
+                self.append_r2t2(&delta, true, session, events)?;
+                result
+            }
+        };
         if let Some(speakers) = self.speakers.take() {
             speakers.finish(self.elapsed_ms);
         }
-        Ok(())
+        result
     }
 
-    fn decode(&mut self, session: &Session, finish: bool, events: &Events) -> Result<(), String> {
+    fn decode_sherpa(
+        &mut self,
+        session: &Session,
+        finish: bool,
+        events: &Events,
+    ) -> Result<(), String> {
+        let RecognitionEngine::Sherpa { stream, recognizer } = &self.engine else {
+            return Err("本机实时转录引擎不匹配".into());
+        };
         let mut decoded = false;
-        while self.recognizer.is_ready(&self.stream) {
+        while recognizer.is_ready(stream) {
             if session.cancelled.load(Ordering::Acquire) {
                 return Err("实时转录已取消".into());
             }
-            self.recognizer.decode(&self.stream);
+            recognizer.decode(stream);
             decoded = true;
         }
         if !decoded && !finish {
             return Ok(());
         }
-        let endpoint = finish || self.recognizer.is_endpoint(&self.stream);
-        let result = self
-            .recognizer
-            .get_result(&self.stream)
+        let endpoint = finish || recognizer.is_endpoint(stream);
+        let result = recognizer
+            .get_result(stream)
             .ok_or("本机实时转录结果无法读取")?;
         let text = audible_transcript(&result.text, self.segment_start_ms, self.last_audible_ms);
         if self.text_bytes + text.len() > MAX_TEXT_BYTES {
@@ -504,12 +630,62 @@ impl Decoder {
         }
         if endpoint {
             if !finish {
-                self.recognizer.reset(&self.stream);
+                recognizer.reset(stream);
             }
             self.segment_start_ms = self.elapsed_ms;
             self.last_partial.clear();
         } else if changed {
             self.last_partial = text.into();
+        }
+        Ok(())
+    }
+
+    fn append_r2t2(
+        &mut self,
+        delta: &str,
+        finish: bool,
+        session: &Session,
+        events: &Events,
+    ) -> Result<(), String> {
+        if session.cancelled.load(Ordering::Acquire) {
+            return Err("实时转录已取消".into());
+        }
+        let audible = audible_transcript(delta, self.segment_start_ms, self.last_audible_ms);
+        let end_ms = self.last_audible_ms.unwrap_or(self.elapsed_ms);
+        let endpoint = finish
+            || self.elapsed_ms - end_ms >= 1_200
+            || self.elapsed_ms - self.segment_start_ms >= MAX_LINE_DURATION_MS
+            || audible.ends_with(['。', '！', '？', '!', '?']);
+        if audible.is_empty() && !endpoint {
+            return Ok(());
+        }
+        let mut current = session.result.lock().map_err(|_| "实时转录状态不可用")?;
+        if !audible.is_empty() {
+            let segment = current.partial.get_or_insert_with(|| Segment {
+                start_ms: self.segment_start_ms,
+                end_ms: self.segment_start_ms,
+                text: String::new(),
+                words: Vec::new(),
+            });
+            if self.text_bytes + segment.text.len() + delta.len() > MAX_TEXT_BYTES {
+                return Err(TRANSCRIPT_TOO_LARGE.into());
+            }
+            let delta = if segment.text.is_empty() {
+                delta.trim_start()
+            } else {
+                delta
+            };
+            segment.text.push_str(delta);
+            segment.end_ms = end_ms.max(segment.start_ms + 1).min(self.elapsed_ms);
+        }
+        if let Some(mut segment) = endpoint.then(|| current.partial.take()).flatten() {
+            segment.text.truncate(segment.text.trim_end().len());
+            self.text_bytes += segment.text.len() + 1;
+            self.segment_start_ms = segment.end_ms;
+            current.segments.push(segment);
+        }
+        if !audible.is_empty() {
+            events.preview(&current);
         }
         Ok(())
     }
@@ -549,20 +725,23 @@ fn run(
             return;
         }
     };
-    let recognizer = match meeting_speech::acquire(path) {
-        Ok(recognizer) => recognizer,
+    let engine = match RecognitionEngine::start(session.model, path) {
+        Ok(engine) => engine,
         Err(error) => {
             let _ = ready.send(Err(error));
             return;
         }
     };
-    let mut decoder = Decoder::new(recognizer);
+    let mut decoder = Decoder::new(engine);
     if session.cancelled.load(Ordering::Acquire) || ready.send(Ok(())).is_err() {
         return;
     }
     if let Some((path, last_id)) = speaker_setup {
         match path {
             Ok(path) => {
+                if let Ok(mut current) = session.result.lock() {
+                    current.speaker_settled_ms = Some(0);
+                }
                 decoder.speakers = Some(Worker::start(
                     path,
                     session.clone(),
@@ -723,7 +902,11 @@ fn commit_result(
     }
     drop(current);
     if !entries.is_empty() {
-        value["transcriptionModelId"] = json!(MODEL_ID);
+        value["transcriptionModelId"] = if session.model == MeetingSpeechModel::Transcription {
+            json!(MODEL_ID)
+        } else {
+            json!(session.model)
+        };
         meetings::stale_analysis(&mut value);
         meetings::write_metadata(&tx, &mut value, revision)?;
     }

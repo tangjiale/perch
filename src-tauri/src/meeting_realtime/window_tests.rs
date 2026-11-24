@@ -2,6 +2,7 @@ use super::*;
 
 fn session(generation: PathBuf, tx: mpsc::Sender<Command>) -> Session {
     Session {
+        model: MeetingSpeechModel::Transcription,
         id: "run".into(),
         generation,
         offset: 1_000,
@@ -207,6 +208,149 @@ fn leaves_a_short_word_between_different_speakers_unassigned() {
     assert_eq!(lines.len(), 3);
     assert_eq!(lines[1].speaker, None);
     assert_eq!(lines[1].text, "好。");
+}
+
+#[test]
+fn live_rows_only_split_after_the_speaker_boundary_settles() {
+    let mut transcript = Transcript {
+        partial: Some(Segment {
+            start_ms: 0,
+            end_ms: 5_000,
+            text: "先说第一项，我来补充一下。".into(),
+            words: vec![
+                Word { byte: 0, ms: 100 },
+                Word {
+                    byte: 18,
+                    ms: 1_900,
+                },
+                Word {
+                    byte: 30,
+                    ms: 3_800,
+                },
+            ],
+        }),
+        turns: vec![
+            Turn {
+                start_ms: 0,
+                end_ms: 1_800,
+                speaker: 1,
+            },
+            Turn {
+                start_ms: 1_800,
+                end_ms: 5_000,
+                speaker: 2,
+            },
+        ],
+        speaker_settled_ms: Some(1_000),
+        ..Transcript::default()
+    };
+    let initial = transcript.live_entries("test", 0);
+    assert_eq!(initial.len(), 1);
+    assert_eq!(initial[0].text, "先说第一项，我来补充一下。");
+    assert_eq!(initial[0].speaker, None);
+
+    transcript.turns[1].speaker = 1;
+    assert_eq!(json!(transcript.live_entries("test", 0)), json!(initial));
+    transcript.turns[1].speaker = 2;
+    transcript.speaker_settled_ms = Some(3_500);
+    let settled = transcript.live_entries("test", 0);
+    assert_eq!(settled.len(), 2);
+    assert_eq!(settled[0].id, initial[0].id);
+    assert_eq!(settled[0].text, "先说第一项，");
+    assert_eq!(settled[1].speaker.as_deref(), Some("local-speaker:2"));
+
+    transcript.turns[1].end_ms = 3_600;
+    transcript.turns.push(Turn {
+        start_ms: 3_600,
+        end_ms: 5_000,
+        speaker: 3,
+    });
+    assert_eq!(transcript.entries("test", 0).len(), 3);
+    assert_eq!(json!(transcript.live_entries("test", 0)), json!(settled));
+}
+
+#[test]
+fn coarse_timing_labels_only_an_unambiguous_speaker_interval() {
+    let segment = Segment {
+        start_ms: 1_000,
+        end_ms: 3_000,
+        text: "今天讨论项目进度。".into(),
+        words: Vec::new(),
+    };
+    let speaker_one = Turn {
+        start_ms: 1_100,
+        end_ms: 2_900,
+        speaker: 1,
+    };
+    assert_eq!(segment.split(&[speaker_one], true)[0].speaker, Some(1));
+    assert_eq!(segment.split(&[speaker_one], false)[0].speaker, None);
+    let alternating = [
+        Turn {
+            end_ms: 2_000,
+            ..speaker_one
+        },
+        Turn {
+            start_ms: 2_000,
+            end_ms: 3_000,
+            speaker: 2,
+        },
+    ];
+    assert_eq!(segment.split(&alternating, true)[0].speaker, None);
+}
+
+#[test]
+#[ignore = "需要有道模型和运行包，使用公开音频按录音节奏回放"]
+fn r2t2_emits_live_lines_and_preserves_text_when_stopped() {
+    let path = PathBuf::from(std::env::var_os("PERCH_TEST_R2T2_DIR").unwrap());
+    let _guard = meeting_speech::model_read_lock(&path).unwrap();
+    let wave =
+        sherpa_onnx::Wave::read(&std::env::var("PERCH_TEST_PUBLIC_SPEECH_WAV").unwrap()).unwrap();
+    assert_eq!(wave.sample_rate(), SAMPLE_RATE);
+    let (tx, _) = mpsc::channel(2);
+    let mut session = session(PathBuf::new(), tx);
+    session.model = MeetingSpeechModel::R2t2;
+    session.result.lock().unwrap().coarse_timing = true;
+    let events = Events {
+        channel: Channel::new(|_| Ok(())),
+        workspace: "fixture".into(),
+        meeting: "meeting".into(),
+        session: session.id.clone(),
+        offset: session.offset,
+    };
+    let engine = RecognitionEngine::start(session.model, &path).unwrap();
+    let mut decoder = Decoder::new(engine);
+    let mut first_preview = None;
+    for chunk in wave.samples()[..(8 * SAMPLE_RATE as usize)].chunks(2_560) {
+        let pcm = chunk
+            .iter()
+            .flat_map(|sample| ((sample * 32_768.0) as i16).to_le_bytes())
+            .collect::<Vec<_>>();
+        decoder.feed(&pcm, &session, &events).unwrap();
+        std::thread::sleep(Duration::from_millis(160));
+        let current = session.result.lock().unwrap();
+        if current.partial.is_some() || !current.segments.is_empty() {
+            first_preview.get_or_insert(decoder.elapsed_ms);
+        }
+    }
+    let first_preview = first_preview.expect("结束录音前应产生转录行");
+    let snapshot = |current: &Transcript| {
+        current
+            .entries(&session.id, session.offset)
+            .into_iter()
+            .flat_map(|entry| {
+                entry
+                    .text
+                    .chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<String>()
+    };
+    let live = snapshot(&session.result.lock().unwrap());
+    decoder.finish(&session, &events).unwrap();
+    let final_text = snapshot(&session.result.lock().unwrap());
+    assert!(!live.is_empty() && final_text.starts_with(&live));
+    eprintln!("有道公开中文回放首字对应已送入音频 {first_preview} ms");
 }
 
 #[test]
