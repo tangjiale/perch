@@ -13,6 +13,13 @@ static RUNS: OnceLock<Mutex<HashMap<String, CancellationToken>>> = OnceLock::new
 fn runs() -> &'static Mutex<HashMap<String, CancellationToken>> {
     RUNS.get_or_init(Default::default)
 }
+pub(crate) fn ensure_idle() -> Result<(), String> {
+    if runs().lock().map_err(|e| e.to_string())?.is_empty() {
+        Ok(())
+    } else {
+        Err("提示词正在优化生成，请先停止或等待完成后再切换工作空间".into())
+    }
+}
 
 // 取消可能先于异步生成 IPC 被调度。仅保留短期且有容量上限的取消意图。
 static EARLY_CANCELS: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();

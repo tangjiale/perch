@@ -739,6 +739,11 @@ impl Store {
             if active > 0 {
                 return Err("请先停止生成，再删除会话".into());
             }
+            tx.execute(
+                "DELETE FROM entity_history WHERE entity_type='messages' AND entity_id IN (SELECT id FROM messages WHERE conversation_id=?1)",
+                [id],
+            )
+            .map_err(|e| e.to_string())?;
             tx.execute("DELETE FROM messages WHERE conversation_id=?1", [id])
                 .map_err(|e| e.to_string())?;
         }
@@ -751,6 +756,11 @@ impl Store {
         if changed == 0 {
             return Err("记录已修改或删除，请刷新重试".into());
         }
+        tx.execute(
+            "DELETE FROM entity_history WHERE entity_type=?1 AND entity_id=?2",
+            params![table, id],
+        )
+        .map_err(|e| e.to_string())?;
         if matches!(table, "tasks" | "bugs") {
             let kind = if table == "tasks" { "task" } else { "bug" };
             tx.execute("UPDATE assignment_notifications SET read_at=?1 WHERE kind=?2 AND entity_id=?3 AND read_at IS NULL", params![chrono::Utc::now().timestamp_millis(),kind,id]).map_err(|e|e.to_string())?;
@@ -1195,22 +1205,91 @@ impl Store {
             _lock: lock,
         };
         store.install_agent_presets_once()?;
-        let snapshot = store.snapshot()?;
-        let interrupted = snapshot["messages"]
-            .as_array()
-            .ok_or("消息数据无效")?
-            .iter()
-            .filter(|m| ["streaming", "pending"].contains(&text(m, "status")))
-            .map(|m| {
-                let mut value = m.clone();
+        let interrupted = {
+            let conn = store.conn.lock().map_err(|e| e.to_string())?;
+            let mut stmt = conn
+                .prepare("SELECT data FROM messages WHERE status IN ('streaming','pending') ORDER BY rowid")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            let mut list = Vec::new();
+            for row in rows {
+                let mut value: Value =
+                    serde_json::from_str(&row.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
                 value["status"] = json!("interrupted");
-                ("message", value)
-            })
-            .collect::<Vec<_>>();
+                list.push(("message", value));
+            }
+            list
+        };
         if !interrupted.is_empty() {
             store.save_batch(interrupted, vec![], false)?;
         }
         Ok(store)
+    }
+
+    pub(crate) fn entity(&self, kind: &str, id: &str) -> Result<Value, String> {
+        let table = entity_table(kind)?;
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let raw: String = conn
+            .query_row(&format!("SELECT data FROM {table} WHERE id=?1"), [id], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "配置不存在".to_string())?;
+        decode_entity(&self.workspace_id, table, id, &raw)
+    }
+
+    /// 托盘摘要仅查询未完成任务与是否有任务，避免每 30 秒全表反序列化与解密。
+    pub(crate) fn tray_tasks_snapshot(&self) -> Result<(Vec<Value>, bool), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let has_any: bool = conn
+            .query_row("SELECT EXISTS(SELECT 1 FROM tasks)", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if !has_any {
+            return Ok((Vec::new(), false));
+        }
+        let mut stmt = conn
+            .prepare("SELECT data FROM tasks WHERE status!='done' ORDER BY rowid")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        let mut tasks = Vec::new();
+        for row in rows {
+            tasks.push(
+                serde_json::from_str(&row.map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        Ok((tasks, true))
+    }
+
+    /// 流式回复中间落库仅原地刷新当前 streaming 消息正文，不递增版本或膨胀历史表。
+    pub(crate) fn flush_streaming_message(&self, id: &str, content: &str) -> Result<(), String> {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let raw: Option<String> = tx
+            .query_row(
+                "SELECT data FROM messages WHERE id=?1 AND status='streaming'",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(raw) = raw {
+            let mut value: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+            value["content"] = json!(content);
+            value["updatedAt"] = json!(chrono::Utc::now().timestamp_millis());
+            tx.execute(
+                "UPDATE messages SET content=?1,data=?2 WHERE id=?3 AND status='streaming'",
+                params![content, value.to_string(), id],
+            )
+            .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     pub fn snapshot(&self) -> Result<Value, String> {
@@ -1629,6 +1708,13 @@ impl Store {
             params![table, id, revision, stored_data, now],
         )
         .map_err(|e| e.to_string())?;
+        if revision > 50 {
+            tx.execute(
+                "DELETE FROM entity_history WHERE entity_type=?1 AND entity_id=?2 AND revision<=?3",
+                params![table, id, revision - 50],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         Ok(value)
     }
 
@@ -3139,5 +3225,60 @@ mod tests {
                 json!({"name":"可关闭项目","status":"closed","source":"local"})
             )
             .is_ok());
+    }
+
+    #[test]
+    fn delete_purges_entity_history_and_streaming_flush_avoids_history_bloat() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::open_at(root.path().to_path_buf()).unwrap();
+        let agent = store.snapshot().unwrap()["agents"][0].clone();
+        let conversation = store
+            .save(
+                "conversation",
+                json!({"title":"测试会话","agentId":agent["id"]}),
+            )
+            .unwrap();
+        let cid = text(&conversation, "id").to_owned();
+        let msg = store
+            .save(
+                "message",
+                json!({"conversationId":cid,"role":"assistant","content":"","status":"streaming"}),
+            )
+            .unwrap();
+        let mid = text(&msg, "id").to_owned();
+        for chunk in ["你", "你好", "你好，世界"] {
+            store.flush_streaming_message(&mid, chunk).unwrap();
+        }
+        assert_eq!(store.entity("message", &mid).unwrap()["content"], "你好，世界");
+        assert_eq!(store.entity("message", &mid).unwrap()["revision"], 1);
+        let history_before_finalize: i64 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM entity_history WHERE entity_type='messages' AND entity_id=?1",
+                [&mid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(history_before_finalize, 1);
+
+        let mut completed = store.entity("message", &mid).unwrap();
+        completed["status"] = json!("completed");
+        store.save("message", completed).unwrap();
+        store
+            .delete("conversation", &cid, conversation["revision"].as_i64())
+            .unwrap();
+        let remaining_history: i64 = store
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM entity_history WHERE entity_id IN (?1, ?2)",
+                params![cid, mid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_history, 0);
     }
 }

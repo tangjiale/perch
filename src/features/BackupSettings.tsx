@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DateTime } from "luxon";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -187,7 +188,8 @@ export default function BackupSettings({ info, onRestored, notify }: {
     setMessage("已确认备份上传成功，可以还原。");
   }
   async function exportLocal() {
-    const destination = await save({ defaultPath: `perch-${new Date().toISOString().slice(0, 10)}.zip`, filters: [{ name: "栖点备份", extensions: ["zip"] }] });
+    const today = DateTime.local().toISODate() || new Date().toISOString().slice(0, 10);
+    const destination = await save({ defaultPath: `perch-${today}.zip`, filters: [{ name: "栖点备份", extensions: ["zip"] }] });
     if (!destination) return;
     await command("data_backup", { destination });
     if (mounted.current) setMessage("完整备份已导出");

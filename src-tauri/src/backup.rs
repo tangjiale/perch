@@ -1090,18 +1090,26 @@ pub async fn backup_restore(app: AppHandle, id: String) -> Result<Value, String>
     client.download(&record.key, &archive).await?;
     let parent = c.root.parent().ok_or("工作空间目录无效")?;
     let target = parent.join(format!("perch-restored-{}", uuid::Uuid::now_v7()));
-    let manager = app.state::<crate::natapp::NatappManager>();
-    let _tools = manager.maintenance_guard()?;
-    crate::integrations::ensure_idle()?;
-    crate::mail::ensure_idle()?;
-    let state = app.state::<AppState>();
-    let mut store = state.store.lock().map_err(|_| "工作空间不可用")?;
-    check(&store, &c)?;
-    let next = Store::restore_to(&archive, &target)?;
-    check(&store, &c)?;
-    next.activate_default_bootstrap()?;
-    *store = next;
-    let info = store.info();
+    let worker_app = app.clone();
+    let worker_context = c.clone();
+    let archive_path = archive.clone();
+    let info = tokio::task::spawn_blocking(move || {
+        let manager = worker_app.state::<crate::natapp::NatappManager>();
+        let _tools = manager.maintenance_guard()?;
+        crate::ensure_background_idle()?;
+        let state = worker_app.state::<AppState>();
+        let mut store = state.store.lock().map_err(|_| "工作空间不可用")?;
+        crate::ensure_background_idle()?;
+        check(&store, &worker_context)?;
+        let next = Store::restore_to(&archive_path, &target)?;
+        check(&store, &worker_context)?;
+        let _ = crate::natapp::close_console(&worker_app);
+        next.activate_default_bootstrap()?;
+        *store = next;
+        Ok::<Value, String>(store.info())
+    })
+    .await
+    .map_err(|_| "备份恢复任务异常中断，请重试")??;
     let _ = app.emit("backup-updated", ());
     Ok(info)
 }

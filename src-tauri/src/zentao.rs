@@ -27,6 +27,18 @@ async fn checked_zentao(response: reqwest::Response) -> Result<reqwest::Response
     }
 }
 static SYNCING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+pub(crate) fn ensure_idle() -> Result<(), String> {
+    if SYNCING
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|e| e.to_string())?
+        .is_empty()
+    {
+        Ok(())
+    } else {
+        Err("禅道正在同步，请等待当前同步完成后再切换工作空间".into())
+    }
+}
 struct SyncGuard(String);
 impl SyncGuard {
     fn acquire(workspace: &str, connection: &str) -> Result<Self, String> {

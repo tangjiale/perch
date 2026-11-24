@@ -250,25 +250,43 @@ fn save(store: &Store, workspace_id: &str, mut value: Value) -> Result<Value, St
     Ok(result)
 }
 #[tauri::command]
-pub fn meeting_list(state: State<AppState>, workspace_id: String) -> Result<Vec<Value>, String> {
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    workspace(&store, &workspace_id)?;
+pub async fn meeting_list(
+    app: tauri::AppHandle,
+    workspace_id: String,
+) -> Result<Vec<Value>, String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        list_meetings(&store, &workspace_id)
+    })
+    .await
+    .map_err(|_| "读取会议列表任务异常中断".to_string())?
+}
+
+fn list_meetings(store: &Store, workspace_id: &str) -> Result<Vec<Value>, String> {
+    workspace(store, workspace_id)?;
     let conn = store.conn.lock().map_err(|e| e.to_string())?;
     let mut statement = conn
-        .prepare("SELECT id FROM meetings ORDER BY json_extract(data,'$.updatedAt') DESC LIMIT 501")
+        .prepare("SELECT id, length(CAST(data AS BLOB)) FROM meetings ORDER BY json_extract(data,'$.updatedAt') DESC LIMIT 501")
         .map_err(db)?;
-    let ids = statement
-        .query_map([], |r| r.get::<_, String>(0))
+    let rows = statement
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?)))
         .map_err(db)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(db)?;
-    let mut values = Vec::new();
-    let mut size = 0;
-    for id in ids {
-        let value = read(&conn, &id)?;
-        size += value.to_string().len();
-        if size > 20 * 1024 * 1024 {
-            return Err("会议文本超过列表容量限制，请先清理历史会议".into());
+    let mut values = Vec::with_capacity(rows.len());
+    let mut raw_bytes = 0usize;
+    for (index, (id, meta_len)) in rows.into_iter().enumerate() {
+        let mut value = read(&conn, &id)?;
+        let seg_bytes: usize = value["segments"]
+            .as_array()
+            .map(|segs| segs.iter().map(|s| text(s, "text").len() + 64).sum())
+            .unwrap_or(0);
+        raw_bytes = raw_bytes.saturating_add(meta_len).saturating_add(seg_bytes);
+        // 超出异常体积阈值时仅裁剪旧会议片段，保证列表始终可打开并清理历史会议。
+        if index > 0 && raw_bytes > 24 * 1024 * 1024 {
+            value["segments"] = json!([]);
         }
         values.push(value);
     }

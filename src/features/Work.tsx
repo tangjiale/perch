@@ -67,6 +67,14 @@ import {
   type Application,
 } from "../lib/types";
 
+function safeAppHost(url: string): string {
+  try {
+    return new URL(url).hostname || url;
+  } catch {
+    return url;
+  }
+}
+
 function OverviewApp({
   app,
   category,
@@ -107,7 +115,7 @@ function OverviewApp({
         {app.description?.trim() && (
           <span className="overview-app-description">{app.description}</span>
         )}
-        <small>{new URL(app.url).hostname}</small>
+        <small>{safeAppHost(app.url)}</small>
       </span>
       <ArrowUpRight
         size={14}

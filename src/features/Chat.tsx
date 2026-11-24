@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Channel } from "@tauri-apps/api/core";
 import {
@@ -21,8 +21,7 @@ import {
   ImagePlus,
   X,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import SafeMarkdown from "../components/SafeMarkdown";
 import GlassSelect from "../components/GlassSelect";
 import Modal from "../components/Modal";
 import { api, command } from "../lib/api";
@@ -34,34 +33,21 @@ import type {
 } from "../lib/types";
 import ChatMessageFooter from "../components/ChatMessageFooter";
 import { newChatConversation } from "../lib/chat-conversation";
+import {
+  chatGroupsStorageKey,
+  loadChatGroups,
+  mergeConversationGroups,
+  type ChatGroup,
+} from "../lib/chat-groups";
 import { readChatImages } from "../lib/chat-images";
 import "./chat-images.css";
 
-interface ChatGroup {
-  id: string;
-  name: string;
-  collapsed?: boolean;
-}
-
-const CHAT_GROUPS_KEY = "perch-chat-groups";
-
-function loadChatGroups(): ChatGroup[] {
-  try {
-    const value = JSON.parse(localStorage.getItem(CHAT_GROUPS_KEY) || "[]");
-    return Array.isArray(value)
-      ? value.filter(
-          (item): item is ChatGroup =>
-            !!item &&
-            typeof item.id === "string" &&
-            typeof item.name === "string",
-        )
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-export default function Chat({ data, refresh, notify }: PageProps) {
+export default function Chat({
+  data,
+  refresh,
+  notify,
+  workspaceId = "",
+}: PageProps & { workspaceId?: string }) {
   const [params, setParams] = useSearchParams();
   const id = params.get("conversation") || data.conversations[0]?.id;
   const [createdConversation, setCreatedConversation] =
@@ -84,7 +70,22 @@ export default function Chat({ data, refresh, notify }: PageProps) {
   const draftModel = useRef("");
   const [modelSaving, setModelSaving] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [groups, setGroups] = useState<ChatGroup[]>(loadChatGroups);
+  const [storedGroups, setStoredGroups] = useState<ChatGroup[]>(() =>
+    loadChatGroups(workspaceId, data.conversations),
+  );
+  useEffect(() => {
+    setStoredGroups(loadChatGroups(workspaceId, data.conversations));
+  }, [workspaceId]);
+  const groups = useMemo(
+    () => mergeConversationGroups(storedGroups, data.conversations),
+    [storedGroups, data.conversations],
+  );
+  const knownGroupIds = useMemo(
+    () => new Set(groups.map((group) => group.id)),
+    [groups],
+  );
+  const isUngrouped = (conversation: Conversation) =>
+    !conversation.groupId || !knownGroupIds.has(conversation.groupId);
   const [movingConversation, setMovingConversation] = useState<string | null>(
     null,
   );
@@ -193,8 +194,15 @@ export default function Chat({ data, refresh, notify }: PageProps) {
   const canUseImages =
     currentModel?.capability === "vision" && currentModel.enabled;
   function persistGroups(next: ChatGroup[]) {
-    setGroups(next);
-    localStorage.setItem(CHAT_GROUPS_KEY, JSON.stringify(next));
+    setStoredGroups(next);
+    try {
+      localStorage.setItem(
+        chatGroupsStorageKey(workspaceId),
+        JSON.stringify(next),
+      );
+    } catch {
+      // 存储不可用时仍保留当前内存状态。
+    }
   }
   function groupFor(id?: string) {
     return groups.find((group) => group.id === id);
@@ -210,7 +218,7 @@ export default function Chat({ data, refresh, notify }: PageProps) {
     setGroupNameDraft("");
     setNewGroupOpen(false);
   }
-  function renameGroup(group: ChatGroup) {
+  async function renameGroup(group: ChatGroup) {
     const name = groupNameDraft.trim();
     if (!name || name === group.name) {
       setEditingGroupId(null);
@@ -220,36 +228,35 @@ export default function Chat({ data, refresh, notify }: PageProps) {
       notify("已有同名项目");
       return;
     }
-    persistGroups(
-      groups.map((item) => (item.id === group.id ? { ...item, name } : item)),
-    );
-    void Promise.all(
-      data.conversations
-        .filter((conversation) => conversation.groupId === group.id)
-        .map((conversation) =>
-          api.save("conversation", { ...conversation, groupName: name }),
-        ),
-    )
-      .then(() => refresh())
-      .catch((error) => notify((error as Error).message));
     setEditingGroupId(null);
     setContextGroupId(null);
     setGroupNameDraft("");
+    try {
+      for (const conversation of data.conversations.filter(
+        (item) => item.groupId === group.id,
+      )) {
+        await api.save("conversation", { ...conversation, groupName: name });
+      }
+      persistGroups(
+        groups.map((item) => (item.id === group.id ? { ...item, name } : item)),
+      );
+      await refresh();
+    } catch (error) {
+      notify((error as Error).message);
+    }
   }
   async function deleteGroup(group: ChatGroup) {
     if (!confirm(`删除项目“${group.name}”？会话将移到未归入项目`)) return;
     try {
-      await Promise.all(
-        data.conversations
-          .filter((conversation) => conversation.groupId === group.id)
-          .map((conversation) =>
-            api.save("conversation", {
-              ...conversation,
-              groupId: undefined,
-              groupName: undefined,
-            }),
-          ),
-      );
+      for (const conversation of data.conversations.filter(
+        (item) => item.groupId === group.id,
+      )) {
+        await api.save("conversation", {
+          ...conversation,
+          groupId: undefined,
+          groupName: undefined,
+        });
+      }
       persistGroups(groups.filter((item) => item.id !== group.id));
       await refresh();
     } catch (error) {
@@ -630,10 +637,10 @@ export default function Chat({ data, refresh, notify }: PageProps) {
                         setGroupNameDraft(event.target.value)
                       }
                       onKeyDown={(event) => {
-                        if (event.key === "Enter") renameGroup(group);
+                        if (event.key === "Enter") void renameGroup(group);
                         if (event.key === "Escape") setEditingGroupId(null);
                       }}
-                      onBlur={() => renameGroup(group)}
+                      onBlur={() => void renameGroup(group)}
                     />
                   ) : (
                     <button
@@ -726,20 +733,14 @@ export default function Chat({ data, refresh, notify }: PageProps) {
                 )}
                 <span>未归入项目</span>
                 <small>
-                  {
-                    sortedConversations.filter(
-                      (conversation) => !conversation.groupId,
-                    ).length
-                  }
+                  {sortedConversations.filter(isUngrouped).length}
                 </small>
               </button>
             </header>
             {!ungroupedCollapsed &&
-              (sortedConversations.filter(
-                (conversation) => !conversation.groupId,
-              ).length ? (
+              (sortedConversations.filter(isUngrouped).length ? (
                 sortedConversations
-                  .filter((conversation) => !conversation.groupId)
+                  .filter(isUngrouped)
                   .map(renderConversation)
               ) : (
                 <p className="conversation-group-empty">暂无会话</p>
@@ -826,12 +827,7 @@ export default function Chat({ data, refresh, notify }: PageProps) {
                 )}
               </div>
               <ImageGallery images={m.images || []} />
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{ img: () => null }}
-              >
-                {m.content}
-              </ReactMarkdown>
+              <SafeMarkdown onError={notify}>{m.content}</SafeMarkdown>
               {!["completed", "pending"].includes(m.status) && (
                 <small className="muted">
                   {{
@@ -863,17 +859,13 @@ export default function Chat({ data, refresh, notify }: PageProps) {
             ) && (
               <article className="message user" aria-label="你的消息">
                 <ImageGallery images={pendingImages} />
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {pendingUser}
-                </ReactMarkdown>
+                <SafeMarkdown onError={notify}>{pendingUser}</SafeMarkdown>
               </article>
             )}
           {run && (
             <article className="message assistant">
               <strong>正在生成…</strong>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {stream}
-              </ReactMarkdown>
+              <SafeMarkdown onError={notify}>{stream}</SafeMarkdown>
               {!!refs.length && (
                 <div className="citations">
                   {refs.map((c, i) => (

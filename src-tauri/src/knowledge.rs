@@ -7,7 +7,7 @@ pub fn knowledge_export(
 ) -> Result<(), String> {
     use std::io::Write;
     let store = state.store.lock().map_err(|e| e.to_string())?;
-    let doc = get(&store.snapshot()?, "documents", &document_id)?;
+    let doc = store.entity("document", &document_id)?;
     let hash = text(&doc, "sha256");
     if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("原件标识无效".into());
@@ -49,7 +49,7 @@ pub async fn knowledge_retry(
 ) -> Result<(), String> {
     let (mut doc, path) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
-        let doc = get(&store.snapshot()?, "documents", &document_id)?;
+        let doc = store.entity("document", &document_id)?;
         let hash = text(&doc, "sha256");
         if hash.len() != 64 || !hash.bytes().all(|c| c.is_ascii_hexdigit()) {
             return Err("原件指纹无效".into());

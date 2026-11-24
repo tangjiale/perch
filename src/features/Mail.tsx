@@ -36,6 +36,7 @@ import {
   type MailMessage,
   type StoredMailDraft,
 } from "../lib/mail";
+import { subscribeAppearance } from "../lib/appearance";
 import { mailHtmlDocument, mailReplyRecipients } from "../lib/mail-content";
 import MailComposer from "../components/MailComposer";
 import GlassSelect from "../components/GlassSelect";
@@ -110,10 +111,12 @@ export default function Mail({
   const [selectedId, setSelectedId] = useState("");
   const [compose, setCompose] = useState<MailDraft | null>(null);
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
   const [limit, setLimit] = useState(50);
   const [htmlView, setHtmlView] = useState(true);
   const inFlight = useRef(false);
+  const syncFlight = useRef(false);
   const pendingRead = useRef("");
   const { data: folders = [], error: foldersError } = useQuery({
     queryKey: [...mailKeys.folders, accountId],
@@ -183,7 +186,23 @@ export default function Mail({
   const visible = list.messages.filter((m) =>
     filter === "unread" ? !m.seen : filter === "starred" ? m.flagged : true,
   );
-  const theme = document.documentElement.dataset.theme === "dark";
+  const [theme, setTheme] = useState(
+    () => document.documentElement.dataset.theme === "dark",
+  );
+  useEffect(() => {
+    const syncTheme = () =>
+      setTheme(document.documentElement.dataset.theme === "dark");
+    const unsubscribe = subscribeAppearance(syncTheme);
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => {
+      unsubscribe();
+      observer.disconnect();
+    };
+  }, []);
   const htmlDocument = useMemo(
     () => mailHtmlDocument(detail?.html ?? "", theme),
     [detail?.html, theme],
@@ -213,12 +232,23 @@ export default function Mail({
       await refresh();
       return;
     }
-    await run(() =>
-      command("mail_sync", {
+    if (syncFlight.current || inFlight.current) return;
+    syncFlight.current = true;
+    setSyncing(true);
+    setError("");
+    try {
+      const result = await command("mail_sync", {
         accountId: selectedAccount,
         folder: selectedFolder === "__local_drafts__" ? null : selectedFolder,
-      }),
-    );
+      });
+      await refresh();
+      if (typeof result === "string") notify(result);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      syncFlight.current = false;
+      setSyncing(false);
+    }
   }
   function choose(id: string, path: string) {
     setAccountChoice(id);
@@ -234,7 +264,7 @@ export default function Mail({
       void sync(accountId, folder);
   }, [accountId, folder]);
   useEffect(() => {
-    if (busy || !pendingRead.current) return;
+    if (busy || syncing || !pendingRead.current) return;
     const id = pendingRead.current;
     pendingRead.current = "";
     if (id === selectedId)
@@ -245,12 +275,13 @@ export default function Mail({
           flagged: null,
         }),
       );
-  }, [busy, selectedId]);
+  }, [busy, syncing, selectedId]);
   function view(message: MailMessage) {
     setSelectedId(message.id);
     setHtmlView(true);
-    pendingRead.current = !message.seen && inFlight.current ? message.id : "";
-    if (!message.seen && !inFlight.current)
+    const occupied = inFlight.current || syncFlight.current;
+    pendingRead.current = !message.seen && occupied ? message.id : "";
+    if (!message.seen && !occupied)
       void run(() =>
         command("mail_message_flag", {
           messageId: message.id,
@@ -413,8 +444,8 @@ export default function Mail({
           ))}
         </div>
         <footer>
-          <span className={`mail-sync-indicator ${busy ? "syncing" : ""}`} />
-          {busy
+          <span className={`mail-sync-indicator ${busy || syncing ? "syncing" : ""}`} />
+          {busy || syncing
             ? "正在同步…"
             : account?.lastSync
               ? `上次同步 ${dateText(account.lastSync)}`
@@ -463,7 +494,7 @@ export default function Mail({
               </div>
               <button
                 className="icon-button"
-                disabled={busy || !account?.enabled}
+                disabled={busy || syncing || !account?.enabled}
                 title="刷新邮件"
                 onClick={() => void sync()}
               >
@@ -502,7 +533,7 @@ export default function Mail({
             {(problem || (deliveries && deliveryError)) && (
               <div className="mail-inline-error" role="alert">
                 {deliveries && deliveryError ? deliveryError.message : problem}
-                <button disabled={busy} onClick={() => void sync()}>
+                <button disabled={busy || syncing} onClick={() => void sync()}>
                   重试同步
                 </button>
               </div>

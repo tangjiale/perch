@@ -12,8 +12,7 @@ import {
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import SafeMarkdown from "./SafeMarkdown";
 import { command, native } from "../lib/api";
 import "./update-popover.css";
 
@@ -311,9 +310,7 @@ export default function UpdatePopover({ version }: { version: string }) {
               <section className="update-notes" aria-label="本次更新内容">
                 <div className="update-notes-title">本次更新内容</div>
                 <div className="update-markdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {latest.body}
-                  </ReactMarkdown>
+                  <SafeMarkdown>{latest.body}</SafeMarkdown>
                 </div>
               </section>
             )}

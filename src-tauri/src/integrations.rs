@@ -173,11 +173,17 @@ pub(crate) fn read_secret(workspace: &str, id: &str) -> Result<String, String> {
     }
 }
 pub(crate) fn http() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let built = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(120))
         .build()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let _ = CLIENT.set(built.clone());
+    Ok(built)
 }
 pub(crate) fn endpoint(base: &str, suffix: &str) -> Result<url::Url, String> {
     let mut url = url::Url::parse(base).map_err(|_| "API 地址无效")?;
@@ -273,15 +279,17 @@ pub async fn provider_test(
     provider_id: String,
     model_id: Option<String>,
 ) -> Result<String, String> {
-    let (snapshot, key) = {
+    let (provider, model, key) = {
         let s = state.store.lock().map_err(|e| e.to_string())?;
-        let snapshot = s.snapshot()?;
+        let provider = s.entity("provider", &provider_id)?;
+        let model = model_id
+            .as_deref()
+            .map(|id| s.entity("model", id))
+            .transpose()?;
         let key = s.provider_secret(&provider_id)?;
-        (snapshot, key)
+        (provider, model, key)
     };
-    let provider = get(&snapshot, "providers", &provider_id)?;
-    if let Some(id) = model_id {
-        let model = get(&snapshot, "models", &id)?;
+    if let Some(model) = model {
         if text(&model, "providerId") != provider_id {
             return Err("模型不属于当前供应商".into());
         }
@@ -640,11 +648,11 @@ async fn chat_run(
             }
             if flushed.elapsed().as_millis() > 250 {
                 assistant["content"] = json!(output);
-                assistant = state
+                state
                     .store
                     .lock()
                     .map_err(|e| e.to_string())?
-                    .save("message", assistant.clone())?;
+                    .flush_streaming_message(text(&assistant, "id"), &output)?;
                 flushed = std::time::Instant::now();
             }
         }

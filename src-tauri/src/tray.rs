@@ -142,13 +142,8 @@ fn is_overdue(task: &Value, now: DateTime<chrono::Utc>) -> bool {
     DateTime::parse_from_rfc3339(end).is_ok_and(|end| now >= end)
 }
 
-fn summary_at(snapshot: &Value, now: DateTime<chrono::Utc>) -> String {
+fn summary_from_tasks(tasks: &[Value], has_any_tasks: bool, now: DateTime<chrono::Utc>) -> String {
     let today = now.with_timezone(&Local).date_naive();
-    let empty = Vec::new();
-    let tasks = snapshot
-        .get("tasks")
-        .and_then(Value::as_array)
-        .unwrap_or(&empty);
     let mut today_count = 0;
     let mut doing = 0;
     let mut overdue = 0;
@@ -189,21 +184,31 @@ fn summary_at(snapshot: &Value, now: DateTime<chrono::Utc>) -> String {
             .collect();
         text.push_str(&format!("\n• {title}"));
     }
-    if today_count == 0 && doing == 0 && overdue == 0 && tasks.is_empty() {
+    if today_count == 0 && doing == 0 && overdue == 0 && !has_any_tasks {
         text.push_str("\n暂无任务，开始安排今天吧");
     }
     text
 }
 
+#[cfg(test)]
+fn summary_at(snapshot: &Value, now: DateTime<chrono::Utc>) -> String {
+    let empty = Vec::new();
+    let tasks = snapshot
+        .get("tasks")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    summary_from_tasks(tasks, !tasks.is_empty(), now)
+}
+
 fn refresh_summary(app: &AppHandle) {
-    let snapshot = app
+    let queried = app
         .state::<AppState>()
         .store
         .lock()
         .ok()
-        .and_then(|store| store.snapshot().ok());
-    let text = snapshot
-        .map(|snapshot| summary_at(&snapshot, chrono::Utc::now()))
+        .and_then(|store| store.tray_tasks_snapshot().ok());
+    let text = queried
+        .map(|(tasks, has_any)| summary_from_tasks(&tasks, has_any, chrono::Utc::now()))
         .unwrap_or_else(|| "栖点 · 任务摘要暂不可用".into());
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_tooltip(Some(text));

@@ -213,13 +213,11 @@ pub fn zentao_auth_preferences(
     if store.workspace_id != workspace_id {
         return Err("工作空间已切换，请重新打开连接设置".into());
     }
-    let snapshot = store.snapshot()?;
-    let connection = snapshot["connections"]
-        .as_array()
-        .and_then(|rows| rows.iter().find(|row| text(row, "id") == connection_id))
-        .ok_or("禅道连接不存在")?;
+    let connection = store
+        .entity("connection", &connection_id)
+        .map_err(|_| "禅道连接不存在".to_string())?;
     let logins = login_credential(&workspace_id, &connection_id)?;
-    login_preferences(connection, &logins)
+    login_preferences(&connection, &logins)
 }
 
 /// 仅由密码眼睛按钮调用。校对表单和实际连接，防止迁址、改账号后显示旧密码。
@@ -235,8 +233,7 @@ pub fn zentao_reveal_password(
     if store.workspace_id != workspace_id {
         return Err("工作空间已切换，请重新打开连接设置".into());
     }
-    let snapshot = store.snapshot()?;
-    let connection = get(&snapshot, "connections", &connection_id)?;
+    let connection = store.entity("connection", &connection_id)?;
     if base_url(&service_address)? != text(&connection, "baseUrl")
         || account.trim() != text(&connection, "loginAccount")
     {
@@ -303,11 +300,7 @@ impl<'a> AutoAuth<'a> {
         if store.workspace_id != self.workspace || store.generation != self.generation {
             return Err("工作空间已切换，请重新操作禅道连接".into());
         }
-        let current = get(
-            &store.snapshot()?,
-            "connections",
-            text(&self.connection, "id"),
-        )?;
+        let current = store.entity("connection", text(&self.connection, "id"))?;
         if current["revision"] != self.connection["revision"] {
             return Err("禅道连接已变化，请重新操作".into());
         }

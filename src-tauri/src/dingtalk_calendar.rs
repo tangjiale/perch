@@ -222,33 +222,50 @@ fn save_config(
     if config.enabled && password.is_none() && (changed || !old.config.has_credential) {
         return Err("请先保存 CalDAV 专用密码".into());
     }
-    // 凭据与配置无法跨系统提交，先保存旧值用于 SQLite 写入失败时恢复。
-    let secret_changed = password.is_some() || (changed && old.config.has_credential);
-    let entry = integrations::credential(&store.workspace_id, &credential_id(&config))?;
-    let previous = if secret_changed {
-        match entry.get_password() {
-            Ok(secret) => Some(secret),
-            Err(crate::credential_vault::Error::NoEntry) => None,
-            Err(_) => return Err("无法读取原 CalDAV 凭据，未修改配置".into()),
-        }
-    } else {
-        None
+    // 凭据与配置无法跨系统提交，按新旧远端身份分别备份以便 SQLite 写入失败时恢复。
+    let read_optional_secret = |entry: &crate::credential_vault::Entry| match entry.get_password() {
+        Ok(secret) => Ok(Some(secret)),
+        Err(crate::credential_vault::Error::NoEntry) => Ok(None),
+        Err(_) => Err("无法读取原 CalDAV 凭据，未修改配置".to_string()),
     };
-    if let Some(secret) = password {
-        integrations::credential(&store.workspace_id, &credential_id(&config))?
-            .set_password(&secret)
+    let restore_entry =
+        |entry: &crate::credential_vault::Entry, previous: Option<&str>| match previous {
+            Some(secret) => entry.set_password(secret).map(|_| ()),
+            None => match entry.delete_credential() {
+                Ok(()) | Err(crate::credential_vault::Error::NoEntry) => Ok(()),
+                Err(error) => Err(error),
+            },
+        };
+    let old_entry = (changed && old.config.has_credential)
+        .then(|| integrations::credential(&store.workspace_id, &credential_id(&old.config)))
+        .transpose()?;
+    let previous_old = match &old_entry {
+        Some(entry) => Some(read_optional_secret(entry)?),
+        None => None,
+    };
+    let new_entry = password
+        .is_some()
+        .then(|| integrations::credential(&store.workspace_id, &credential_id(&config)))
+        .transpose()?;
+    let previous_new = match &new_entry {
+        Some(entry) => Some(read_optional_secret(entry)?),
+        None => None,
+    };
+    if let (Some(entry), Some(secret)) = (&new_entry, &password) {
+        entry
+            .set_password(secret)
             .map_err(|_| "无法保存 CalDAV 密码到本地加密凭据库")?;
         config.has_credential = true;
-    } else if changed && old.config.has_credential {
-        match integrations::credential(&store.workspace_id, &credential_id(&config))?
-            .delete_credential()
-        {
-            Ok(()) | Err(crate::credential_vault::Error::NoEntry) => {}
-            Err(_) => return Err("无法清理旧 CalDAV 凭据".into()),
-        }
-        config.has_credential = false;
     } else {
         config.has_credential = !changed && old.config.has_credential;
+    }
+    if let Some(entry) = &old_entry {
+        if restore_entry(entry, None).is_err() {
+            if let (Some(new_entry), Some(prev)) = (&new_entry, &previous_new) {
+                let _ = restore_entry(new_entry, prev.as_deref());
+            }
+            return Err("无法清理旧 CalDAV 凭据".into());
+        }
     }
     if config.enabled && !config.has_credential {
         return Err("请先保存 CalDAV 专用密码".into());
@@ -271,19 +288,17 @@ fn save_config(
     next.config = config;
     next.last_error = None;
     if let Err(error) = write(&store, &next) {
-        if secret_changed {
-            let restored = match previous {
-                Some(secret) => entry.set_password(&secret),
-                None => entry.delete_credential(),
-            };
-            if !matches!(
-                restored,
-                Ok(()) | Err(crate::credential_vault::Error::NoEntry)
-            ) {
-                return Err(
-                    "日历配置保存失败，且无法恢复原凭据；请先停用日历同步并重新配置密码".into(),
-                );
-            }
+        let mut rollback_ok = true;
+        if let (Some(entry), Some(prev)) = (&new_entry, &previous_new) {
+            rollback_ok &= restore_entry(entry, prev.as_deref()).is_ok();
+        }
+        if let (Some(entry), Some(prev)) = (&old_entry, &previous_old) {
+            rollback_ok &= restore_entry(entry, prev.as_deref()).is_ok();
+        }
+        if !rollback_ok {
+            return Err(
+                "日历配置保存失败，且无法恢复原凭据；请先停用日历同步并重新配置密码".into(),
+            );
         }
         return Err(error);
     }
@@ -884,6 +899,12 @@ fn sync_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
+pub(crate) fn ensure_idle() -> Result<(), String> {
+    sync_lock()
+        .try_lock()
+        .map(|_| ())
+        .map_err(|_| "钉钉日历正在同步，请稍后再切换工作空间".into())
+}
 async fn sync_inner(
     state: &AppState,
     expected: Option<(String, PathBuf, u64)>,
@@ -1061,6 +1082,49 @@ mod tests {
         other = base.clone();
         other.revision += 1;
         assert_eq!(credential_id(&base), credential_id(&other));
+    }
+    #[tokio::test]
+    async fn changing_remote_identity_cleans_old_secret_without_deleting_target_secret() {
+        let _lock = SYNC_TEST_LOCK.lock().await;
+        let root = tempfile::tempdir().unwrap();
+        let state = AppState {
+            store: std::sync::Mutex::new(Store::open_at(root.path().to_path_buf()).unwrap()),
+        };
+        let workspace = state.store.lock().unwrap().workspace_id.clone();
+        let first = Config {
+            server_url: "https://first.example.test/".into(),
+            username: "alice".into(),
+            enabled: true,
+            ..Config::default()
+        };
+        let second = Config {
+            server_url: "https://second.example.test/".into(),
+            username: "bob".into(),
+            enabled: false,
+            ..Config::default()
+        };
+        integrations::credential(&workspace, &credential_id(&second))
+            .unwrap()
+            .set_password("existing-second-secret")
+            .unwrap();
+        let saved_first = save_config(&state, first.clone(), Some("first-secret".into())).unwrap();
+        assert!(saved_first.config.has_credential);
+        assert_eq!(
+            integrations::read_secret(&workspace, &credential_id(&saved_first.config)).unwrap(),
+            "first-secret"
+        );
+        let mut switch_without_password = second.clone();
+        switch_without_password.revision = saved_first.config.revision;
+        let saved_second = save_config(&state, switch_without_password, None).unwrap();
+        assert!(!saved_second.config.has_credential);
+        assert_eq!(
+            integrations::read_secret(&workspace, &credential_id(&saved_first.config)).unwrap(),
+            ""
+        );
+        assert_eq!(
+            integrations::read_secret(&workspace, &credential_id(&second)).unwrap(),
+            "existing-second-secret"
+        );
     }
     #[test]
     fn security_rejects_cross_origin_and_embedded_credentials() {

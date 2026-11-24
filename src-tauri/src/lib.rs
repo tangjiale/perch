@@ -124,47 +124,63 @@ async fn data_backup(app: tauri::AppHandle, destination: String) -> Result<(), S
     .await
     .map_err(|_| "完整备份导出异常中断，请重试")?
 }
-#[tauri::command]
-fn storage_move(
-    app: tauri::AppHandle,
-    state: State<AppState>,
-    manager: State<natapp::NatappManager>,
-    target: String,
-) -> Result<Value, String> {
-    let _backup_guard = backup::maintenance_guard()?;
-    let _tools_guard = manager.maintenance_guard()?;
+pub(crate) fn ensure_background_idle() -> Result<(), String> {
     integrations::ensure_idle()?;
+    prompt_optimizer::ensure_idle()?;
+    zentao::ensure_idle()?;
+    dingtalk_calendar::ensure_idle()?;
     mail::ensure_idle()?;
-    let mut store = state.store.lock().map_err(|e| e.to_string())?;
     meeting_realtime::ensure_all_idle()?;
-    let next = store.migrate_copy(std::path::Path::new(&target))?;
-    let _ = natapp::close_console(&app);
-    next.activate_default_bootstrap()?;
-    *store = next;
-    Ok(store.info())
+    Ok(())
 }
 #[tauri::command]
-fn data_restore(
+async fn storage_move(app: tauri::AppHandle, target: String) -> Result<Value, String> {
+    let backup_guard = backup::maintenance_guard()?;
+    let info = tauri::async_runtime::spawn_blocking(move || {
+        let _backup_guard = backup_guard;
+        let manager = app.state::<natapp::NatappManager>();
+        let _tools_guard = manager.maintenance_guard()?;
+        ensure_background_idle()?;
+        let state = app.state::<AppState>();
+        let mut store = state.store.lock().map_err(|e| e.to_string())?;
+        ensure_background_idle()?;
+        let next = store.migrate_copy(std::path::Path::new(&target))?;
+        let _ = natapp::close_console(&app);
+        next.activate_default_bootstrap()?;
+        *store = next;
+        Ok::<Value, String>(store.info())
+    })
+    .await
+    .map_err(|_| "存储目录迁移任务异常中断，请重试")??;
+    Ok(info)
+}
+#[tauri::command]
+async fn data_restore(
     app: tauri::AppHandle,
-    state: State<AppState>,
-    manager: State<natapp::NatappManager>,
     archive: String,
     target: String,
 ) -> Result<Value, String> {
-    let _backup_guard = backup::maintenance_guard()?;
-    let _tools_guard = manager.maintenance_guard()?;
-    integrations::ensure_idle()?;
-    mail::ensure_idle()?;
-    let mut store = state.store.lock().map_err(|e| e.to_string())?;
-    meeting_realtime::ensure_all_idle()?;
-    let next = storage::Store::restore_to(
-        std::path::Path::new(&archive),
-        std::path::Path::new(&target),
-    )?;
-    let _ = natapp::close_console(&app);
-    next.activate_default_bootstrap()?;
-    *store = next;
-    Ok(store.info())
+    let backup_guard = backup::maintenance_guard()?;
+    let info = tauri::async_runtime::spawn_blocking(move || {
+        let _backup_guard = backup_guard;
+        let manager = app.state::<natapp::NatappManager>();
+        let _tools_guard = manager.maintenance_guard()?;
+        ensure_background_idle()?;
+        let state = app.state::<AppState>();
+        let mut store = state.store.lock().map_err(|e| e.to_string())?;
+        ensure_background_idle()?;
+        let next = storage::Store::restore_to(
+            std::path::Path::new(&archive),
+            std::path::Path::new(&target),
+        )?;
+        let _ = natapp::close_console(&app);
+        next.activate_default_bootstrap()?;
+        *store = next;
+        Ok::<Value, String>(store.info())
+    })
+    .await
+    .map_err(|_| "备份恢复任务异常中断，请重试")??;
+    Ok(info)
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -174,6 +190,16 @@ pub fn run() {
             tauri::plugin::Builder::<tauri::Wry>::new("desktop-interaction")
                 // 在文档加载前覆盖所有 frame，不放宽邮件 iframe 的沙箱限制。
                 .js_init_script_on_all_frames(include_str!("desktop-interaction.js"))
+                .on_navigation(|webview, url| {
+                    if webview.label() != "main" {
+                        return true;
+                    }
+                    matches!(url.scheme(), "tauri" | "asset" | "about" | "blob" | "data")
+                        || matches!(
+                            url.host_str(),
+                            Some("tauri.localhost" | "asset.localhost" | "127.0.0.1" | "localhost")
+                        )
+                })
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {

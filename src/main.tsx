@@ -1,5 +1,6 @@
-import React, { useEffect, useState, lazy, Suspense } from "react";
+import React, { useEffect, useRef, useState, lazy, Suspense } from "react";
 import AssignmentNotifications from "./components/AssignmentNotifications";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { assignmentApi, assignmentKey } from "./lib/assignment-notifications";
 import TopbarClock from "./components/TopbarClock";
 import { createRoot } from "react-dom/client";
@@ -115,6 +116,13 @@ function App() {
   } = useQuery({ queryKey: ["storage"], queryFn: api.info });
   const [search, setSearch] = useState(""),
     [toast, setToast] = useState("");
+  const toastTimer = useRef<number | undefined>(undefined);
+  useEffect(
+    () => () => {
+      window.clearTimeout(toastTimer.current);
+    },
+    [],
+  );
   const [statusMessage, setStatusMessage] = useState<{
     text: string;
     workspaceId: string;
@@ -195,7 +203,8 @@ function App() {
       return;
     }
     setToast(text);
-    setTimeout(() => setToast(""), 6000);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(""), 6000);
   };
   const props = { data, refresh: refetch, notify, workspaceId: info.workspaceId };
   const statusText =
@@ -341,6 +350,7 @@ function App() {
                     : ""
             }
           >
+            <ErrorBoundary resetKey={`${info.workspaceId}:${location.pathname}`}>
             <Suspense
               fallback={
                 <div className="empty" role="status">
@@ -449,6 +459,7 @@ function App() {
                 />
               </Routes>
             </Suspense>
+            </ErrorBoundary>
           </main>
         )}
         <footer className="statusbar">

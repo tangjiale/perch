@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { DateTime } from "luxon";
 import { useLocation, useNavigate } from "react-router-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -495,7 +496,8 @@ function NatappTrafficDetails({ details }: { details: NatappDetails }) {
 
 function NatappDates({ details }: { details: NatappDetails }) {
   const date = details?.expiresOn;
-  const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  // NATAPP 服务端到期日期固定按 Asia/Shanghai 自然日结算。
+  const today = DateTime.now().setZone("Asia/Shanghai").toISODate() ?? "";
   const days = date ? Math.round((Date.parse(date) - Date.parse(today)) / 86_400_000) : null;
   const remaining = days === null ? "" : days < 0 ? "已过期" : days === 0 ? "今天到期" : `剩余 ${days} 天`;
   const trialEnd = details?.trialExpiresAt ? new Date(details.trialExpiresAt * 1000) : null;

@@ -275,26 +275,35 @@ fn validate_identifier(value: &str) -> Result<()> {
 }
 
 fn ensure_private_directory(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
+    let needs_chmod = match fs::symlink_metadata(path) {
         Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => {
             return Err(Error::InvalidStorage)
         }
-        Ok(_) => {}
+        #[cfg(unix)]
+        Ok(metadata) => {
+            use std::os::unix::fs::PermissionsExt;
+            (metadata.permissions().mode() & 0o777) != 0o700
+        }
+        #[cfg(not(unix))]
+        Ok(_) => false,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             fs::create_dir_all(path).map_err(|_| Error::StorageUnavailable)?;
             let metadata = fs::symlink_metadata(path).map_err(|_| Error::StorageUnavailable)?;
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err(Error::InvalidStorage);
             }
+            true
         }
         Err(_) => return Err(Error::StorageUnavailable),
-    }
+    };
     #[cfg(unix)]
-    {
+    if needs_chmod {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .map_err(|_| Error::StorageUnavailable)?;
     }
+    #[cfg(not(unix))]
+    let _ = needs_chmod;
     Ok(())
 }
 
