@@ -21,34 +21,31 @@ static MODEL: ModelFile = ModelFile {
     sha256: "d740d6636f2ea2f3736800c3c88a6e22ecb6c0f26c567fe22b0572ae9c2c4ec8",
 };
 
-#[cfg(any(
-    all(target_os = "macos", target_arch = "aarch64"),
-    all(target_os = "windows", target_arch = "x86_64")
-))]
+#[cfg(any(test, all(target_os = "macos", target_arch = "aarch64"), all(target_os = "windows", target_arch = "x86_64")))]
 const RELEASE_URL: Option<&str> =
     Some("https://github.com/0xShug0/audio.cpp/releases/download/v0.9.6");
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-static RUNTIME: ModelFile = ModelFile {
+#[cfg(any(test, all(target_os = "macos", target_arch = "aarch64")))]
+static MACOS_RUNTIME: ModelFile = ModelFile {
     source: RELEASE_URL,
     name: "audio-v0.9.6-bin-macos-arm64-metal.tar.gz",
     bytes: 40_423_741,
     sha256: "11848bf10d1142f18ec852051ff8dcd90c12b65b95e6f902b487bae565e3dfe0",
 };
 
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-static RUNTIME: ModelFile = ModelFile {
+#[cfg(any(test, all(target_os = "windows", target_arch = "x86_64")))]
+static WINDOWS_RUNTIME: ModelFile = ModelFile {
     source: RELEASE_URL,
     name: "audio-v0.9.6-bin-windows-x64-cpu-portable.zip",
     bytes: 35_202_438,
-    sha256: "5d2e7fe24dbec0f8267db00ab2c6dd24799d916cb7beef3168eb66a53a4077",
+    sha256: "5d2e7fe24dbec0f8267db00ab2c6ccdd24799d916cb7beef3168eb66a53a4077",
 };
 
 fn runtime() -> Option<(&'static ModelFile, &'static str)> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    return Some((&RUNTIME, "metal"));
+    return Some((&MACOS_RUNTIME, "metal"));
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    return Some((&RUNTIME, "cpu"));
+    return Some((&WINDOWS_RUNTIME, "cpu"));
     #[cfg(not(any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "windows", target_arch = "x86_64")
@@ -626,6 +623,25 @@ fn find_executable(directory: &Path, depth: usize) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locked_asset_sha256_digests_are_valid_64_char_hex() {
+        for file in [&MODEL, &MACOS_RUNTIME, &WINDOWS_RUNTIME] {
+            assert_eq!(
+                file.sha256.len(),
+                64,
+                "{} 的 SHA-256 长度必须为 64 位十六进制",
+                file.name
+            );
+            assert!(
+                file.sha256
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+                "{} 的 SHA-256 包含无效字符",
+                file.name
+            );
+        }
+    }
 
     #[test]
     fn stdout_deltas_keep_spaces_and_final_output_only_supplies_tail() {
