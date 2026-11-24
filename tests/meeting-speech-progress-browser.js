@@ -12,7 +12,8 @@
     if (!condition) throw new Error(label);
     checks.push(label);
   };
-  const transcription = () => document.querySelector('progress[aria-label="会议语音模型下载进度"]');
+  const transcription = () => document.querySelector('progress[aria-label="X-ASR 160 ms 下载进度"]');
+  const r2t2 = () => document.querySelector('progress[aria-label="有道 Confucius4-R2T2 下载进度"]');
   const speaker = () => document.querySelector('progress[aria-label="说话人模型下载进度"]');
   const card = (progress) => progress.closest(".meeting-speech-model");
   const percent = (progress) => card(progress).querySelector(".meeting-speech-progress-percent")?.textContent;
@@ -23,11 +24,16 @@
   await until(() => document.querySelector(".meeting-speech-link"), "等待会议语音设置入口");
   setDownload(window.__speechModel, 768 * 1024, 1024 ** 2);
   setDownload(window.__speakerModel, 256 * 1024, 1024 ** 2);
+  window.__speechModels.r2t2.unsupportedReason = undefined;
+  setDownload(window.__speechModels.r2t2, 512 * 1024 ** 2, 1280 * 1024 ** 2);
   document.querySelector(".meeting-speech-link").click();
-  await until(() => transcription() && speaker(), "等待两张模型卡显示下载进度");
+  await until(() => transcription() && speaker() && r2t2(), "等待三张模型卡显示下载进度");
   assert(percent(transcription()) === "75%" && transcription().value === 75, "X-ASR 显示 75% 下载进度");
   assert(percent(speaker()) === "25%" && speaker().value === 25, "说话人模型独立显示 25% 下载进度");
   assert(card(transcription()).textContent.includes("已下载 768.0 KiB / 1.0 MiB"), "保留已下载大小和总大小");
+  assert(percent(r2t2()) === "40%" && card(r2t2()).textContent.includes("已下载 512.0 MiB / 1.25 GiB")
+    && card(r2t2()).textContent.includes("模型权重约 1.19 GB，另需下载运行包"),
+    "R2T2 按实际总下载量计算进度，单独说明权重和运行包");
 
   setDownload(window.__speechModel, -1, 1024 ** 2);
   setDownload(window.__speakerModel, 256 * 1024, 0);

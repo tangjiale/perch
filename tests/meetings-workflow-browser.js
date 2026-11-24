@@ -249,6 +249,42 @@
 
   document.querySelector(".meeting-speech-link").click();
   await until(() => document.getElementById("meeting-speech-mode"));
+  const modelCard = (id) => document.querySelector(`.meeting-speech-model[data-model="${id}"]`);
+  const cardOrder = () => [...document.querySelectorAll(".meeting-speech-model[data-model]")]
+    .map((card) => card.dataset.model).join(",");
+  const selectedModel = () => document.querySelector(".meeting-speech-model:has(.meeting-speech-saved)")?.dataset.model;
+  const localModelField = () => document.getElementById("meeting-speech-local-model");
+  const localModelOption = (name) => [...document.querySelectorAll('[role="option"]')]
+    .find((item) => item.textContent.includes(name));
+  const closeModelOptions = async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await until(() => !localModelOption("X-ASR 480 ms"));
+  };
+  const speakerToggle = () => document.querySelector(".meeting-speech-speaker-toggle input");
+  const recommended = modelCard("r2t2").querySelector("h3");
+  assert(modelCard("x-asr-480") && modelCard("zipformer-zh") &&
+    recommended.textContent.includes("有道 Confucius4-R2T2") &&
+    recommended.querySelector(".meeting-speech-recommended")?.textContent === "推荐",
+    "四款模型分别展示，推荐标签位于有道 Confucius4-R2T2 标题旁");
+  assert(localModelField().textContent.includes("X-ASR 160 ms") && selectedModel() === "transcription" &&
+    !window.__meetingSpeechPreferences.localModelId && calls("save_meeting_speech_preferences").length === 0,
+    "打开旧设置时仍使用 X-ASR 160 ms，推荐标签不写入偏好");
+  const r2t2Download = () => field("下载 有道 Confucius4-R2T2");
+  await until(() => r2t2Download()?.disabled === true);
+  r2t2Download().click();
+  assert(modelCard("r2t2").textContent.includes("模拟设备缺少 Vulkan 支持") &&
+    calls("install_meeting_speech_model").length === 0, "不支持的设备显示原因并禁用 R2T2 下载");
+  assert(cardOrder() === "r2t2,transcription,x-asr-480,zipformer-zh",
+    "推荐模型置顶，已下载模型紧随其后");
+  localModelField().click();
+  await until(() => localModelOption("Zipformer 中文"));
+  const missing = localModelOption("Zipformer 中文");
+  missing.click();
+  assert(missing.getAttribute("aria-disabled") === "true" &&
+    localModelOption("X-ASR 160 ms").getAttribute("aria-disabled") !== "true" &&
+    localModelField().textContent.includes("X-ASR 160 ms"),
+    "未下载选项置灰且无法选中，已下载模型可以选择");
+  await closeModelOptions();
   await select("meeting-microphone-device", "USB 麦克风");
   const savedAudioBeforeCheck = calls("meeting_append_audio").length;
   button("检测麦克风").click();
@@ -318,7 +354,8 @@
   document.querySelector(".meeting-speech-link").click();
   const uninstall = (model) => field(`卸载 ${model}`);
   const speakerModel = "Pyannote + CAM++";
-  await until(() => uninstall("X-ASR") && uninstall(speakerModel));
+  const legacyModel = "X-ASR 160 ms";
+  await until(() => uninstall(legacyModel) && uninstall(speakerModel));
   const modelPaths = [...document.querySelectorAll(".meeting-speech-model-path code")].map((element) => element.textContent);
   assert(modelPaths.includes(window.__speechModel.modelPath) && modelPaths.includes(window.__speakerModel.modelPath),
     "API 转录模式仍显示本机模型的独立存储目录和卸载入口");
@@ -343,12 +380,70 @@
   await until(() => !uninstall(speakerModel) && !button("确认卸载"));
   assert(calls("uninstall_meeting_speech_model").at(-1).args.model === "speaker" && window.__speechModel.state === "ready",
     "卸载说话人模型时保留 X-ASR");
-  uninstall("X-ASR").click();
+  uninstall(legacyModel).click();
   await until(() => button("确认卸载"));
   button("确认卸载").click();
-  await until(() => !uninstall("X-ASR") && button("下载模型"));
+  await until(() => !uninstall(legacyModel) && field(`下载 ${legacyModel}`));
   assert(calls("uninstall_meeting_speech_model").at(-1).args.model === "transcription" && window.__speechModel.runtime === "cold",
     "卸载 X-ASR 后可重新下载");
+
+  await select("meeting-speech-mode", "本机实时转录");
+  speakerToggle().click();
+  assert(speakerToggle().checked && window.__meetingSpeechPreferences.mode === "api",
+    "草稿中的说话人勾选不修改已保存模式");
+  field("下载 X-ASR 480 ms").click();
+  await until(() => modelCard("x-asr-480").querySelector("progress")?.value === 60);
+  assert(calls("install_meeting_speech_model").at(-1).args.model === "x-asr-480" &&
+    window.__speechModel.state === "missing", "仅下载指定的 X-ASR 480 ms，保留独立进度");
+  localModelField().click();
+  await until(() => localModelOption("X-ASR 480 ms"));
+  assert(localModelOption("X-ASR 480 ms").getAttribute("aria-disabled") === "true",
+    "下载中的模型仍不可选择");
+  const warmupCalls = calls("prepare_meeting_speech_model").length;
+  Object.assign(window.__speechModels["x-asr-480"], { state: "ready", canUninstall: true });
+  await until(() => localModelOption("X-ASR 480 ms")?.getAttribute("aria-disabled") !== "true" &&
+    modelCard("x-asr-480").textContent.includes("已安装"));
+  assert(cardOrder() === "r2t2,x-asr-480,transcription,zipformer-zh",
+    "下载完成后选项立即可用，卡片移到未下载模型前面");
+  assert(!selectedModel() && calls("prepare_meeting_speech_model").length === warmupCalls &&
+    window.__meetingSpeechPreferences.mode === "api", "下载安装完成不会自动选用或预加载模型");
+  localModelOption("X-ASR 480 ms").click();
+  await until(() => localModelField().textContent.includes("X-ASR 480 ms"));
+  button("保存设置").click();
+  await until(() => selectedModel() === "x-asr-480" && window.__speechModels["x-asr-480"].runtime === "ready");
+  const preferences = calls("save_meeting_speech_preferences").at(-1).args.value;
+  assert(preferences.localModelId === "x-asr-480" && preferences.localSpeakerDiarization === true &&
+    preferences.inputDeviceId === "fixture-usb", "保存分别提交本机模型、说话人开关和麦克风");
+
+  const beforeReturn = calls("meeting_speech_status").length;
+  [...document.querySelectorAll("a")].find((link) => link.textContent === "返回会议").click();
+  const recordingStatus = () => document.querySelector(".meeting-state")?.textContent ?? "";
+  await until(() => recordingStatus().includes("X-ASR 480 ms · 已就绪"));
+  const statusCalls = calls("meeting_speech_status").slice(beforeReturn);
+  assert(statusCalls.length > 0 && statusCalls.every((call) => call.args.model === "x-asr-480"),
+    "会议页查询已保存的模型，并显示同一模型名称");
+  const startCheckCount = calls("meeting_speech_status").length;
+  button("继续录音").click();
+  await until(() => !!button("结束录音"));
+  assert(calls("meeting_speech_status").slice(startCheckCount).some((call) => call.args.model === "x-asr-480") &&
+    recordingStatus().includes("X-ASR 480 ms"), "起录再次检查所选模型，录音状态显示其名称");
+  button("结束录音").click();
+  await until(() => !!button("继续录音") && !button("继续录音").disabled);
+  document.querySelector(".meeting-speech-link").click();
+  await until(() => uninstall("X-ASR 480 ms") && speakerToggle()?.checked);
+  assert(localModelField().textContent.includes("X-ASR 480 ms"), "重开设置恢复已保存的模型和说话人开关");
+  uninstall("X-ASR 480 ms").click();
+  await until(() => button("确认卸载"));
+  button("确认卸载").click();
+  await until(() => !uninstall("X-ASR 480 ms") && field("下载 X-ASR 480 ms"));
+  assert(calls("uninstall_meeting_speech_model").at(-1).args.model === "x-asr-480" && selectedModel() === "x-asr-480",
+    "按模型 ID 卸载，新录音偏好保持所选模型");
+  localModelField().click();
+  await until(() => localModelOption("X-ASR 480 ms"));
+  assert(localModelOption("X-ASR 480 ms").getAttribute("aria-disabled") === "true" &&
+    cardOrder() === "r2t2,transcription,x-asr-480,zipformer-zh",
+    "卸载后恢复禁选并回到未下载组");
+  await closeModelOptions();
   window.__workflowChecks = checks;
   return { passed: checks.length, checks, viewport: [innerWidth, innerHeight] };
 })();

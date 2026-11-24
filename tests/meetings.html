@@ -18,6 +18,19 @@
         modelPath: "/fixture/.perch/models/meeting-speech/x-asr",
         canUninstall: !new URLSearchParams(location.search).has("speech"),
       };
+      const missingModel = (directory, totalBytes) => ({
+        state: "missing", downloadedBytes: 0, totalBytes, runtime: "cold", canUninstall: false,
+        modelPath: `/fixture/.perch/models/meeting-speech/${directory}`,
+      });
+      window.__speechModels = {
+        transcription: window.__speechModel,
+        "x-asr-480": missingModel("x-asr-480", 133895136),
+        "zipformer-zh": missingModel("zipformer-zh", 167360920),
+        r2t2: {
+          ...missingModel("confucius4-r2t2-q4", 1_310_000_000),
+          unsupportedReason: "模拟设备缺少 Vulkan 支持",
+        },
+      };
       window.__meetingSpeechPreferences = { mode: "local" };
       window.__speakerModel = {
         state: "missing", downloadedBytes: 0, totalBytes: 34274078, canUninstall: false,
@@ -95,9 +108,12 @@
         unregisterCallback: (id) => delete window.__callbacks[id],
         invoke: async (name, args) => {
           window.__calls.push({ name, args });
-          if (name === "meeting_speech_status") return structuredClone(window.__speechModel);
+          if (name === "meeting_speech_status") return structuredClone(window.__speechModels[args.model ?? "transcription"]);
           if (name === "prepare_meeting_speech_model") {
-            window.__speechModel.runtime = "ready";
+            const preferences = window.__meetingSpeechPreferences;
+            if (preferences.mode === "local") {
+              window.__speechModels[preferences.localModelId ?? "transcription"].runtime = "ready";
+            }
             return;
           }
           if (name === "meeting_speech_preferences") return structuredClone(window.__meetingSpeechPreferences);
@@ -110,7 +126,7 @@
           }
           if (name === "uninstall_meeting_speech_model") {
             if (window.__modelUninstallFail) throw new Error("模拟模型正在使用");
-            const model = args.model === "transcription" ? window.__speechModel : window.__speakerModel;
+            const model = args.model === "speaker" ? window.__speakerModel : window.__speechModels[args.model];
             Object.assign(model, { state: "missing", downloadedBytes: 0, canUninstall: false, runtime: "cold" });
             return structuredClone(model);
           }
@@ -129,9 +145,11 @@
             return;
           }
           if (name === "install_meeting_speech_model") {
-            window.__speechModel.state = "downloading";
-            window.__speechModel.downloadedBytes = 80_000_000;
-            window.__speechModel.canUninstall = false;
+            const model = window.__speechModels[args.model ?? "transcription"];
+            if (model.unsupportedReason) throw new Error(model.unsupportedReason);
+            model.state = "downloading";
+            model.downloadedBytes = Math.ceil(model.totalBytes * 0.6);
+            model.canUninstall = false;
             return;
           }
           if (name === "meeting_list")

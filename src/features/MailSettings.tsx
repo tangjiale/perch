@@ -447,7 +447,7 @@ export default function MailSettings() {
                       }
                     }}
                   >
-                    <Trash2 size={15} />
+                    <Trash2 className="danger" size={15} />
                     移除邮箱
                   </button>
                 )}

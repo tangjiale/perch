@@ -1,6 +1,6 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import type { Meeting, MeetingSegment } from "./meetings";
-import type { MeetingSpeechPreferences } from "./meeting-speech";
+import type { LocalMeetingSpeechModelId, MeetingSpeechPreferences } from "./meeting-speech";
 import type { PromptEntry, PromptProgress, PromptRequest, PromptResult } from "./prompt-optimizer";
 import { version } from "../../package.json";
 import type { BackupSaveInput, BackupState } from "./backup-types";
@@ -53,6 +53,7 @@ export interface MeetingSpeechStatus {
   error?: string | null;
   runtime?: "cold" | "loading" | "ready" | "error";
   runtimeError?: string | null;
+  unsupportedReason?: string | null;
   modelPath: string;
   canUninstall: boolean;
 }
@@ -117,13 +118,15 @@ export const api = {
   deleteSharedTableGroup: (workspaceId: string, id: string, revision: number) =>
     command<void>("delete_shared_table_group", { workspaceId, id, revision }),
   meetingRealtimeStart: (workspaceId: string, id: string, modelId: string, sessionId: string, onEvent: Channel<MeetingRealtimeEvent>) => command<void>("meeting_realtime_start", {workspaceId, id, modelId, sessionId, onEvent}),
-  meetingSpeechStatus: () => command<MeetingSpeechStatus>("meeting_speech_status"),
+  meetingSpeechStatus: (model?: LocalMeetingSpeechModelId) =>
+    command<MeetingSpeechStatus>("meeting_speech_status", model ? { model } : undefined),
   meetingSpeechPrepare: (workspaceId: string) =>
     command<void>("prepare_meeting_speech_model", { workspaceId }),
-  meetingSpeechInstall: () => command<void>("install_meeting_speech_model"),
+  meetingSpeechInstall: (model?: LocalMeetingSpeechModelId) =>
+    command<void>("install_meeting_speech_model", model ? { model } : undefined),
   meetingSpeakerModelStatus: () => command<MeetingSpeechStatus>("meeting_speaker_model_status"),
   meetingSpeakerModelInstall: () => command<void>("install_meeting_speaker_model"),
-  meetingSpeechUninstall: (model: "transcription" | "speaker") =>
+  meetingSpeechUninstall: (model: LocalMeetingSpeechModelId | "speaker") =>
     command<MeetingSpeechStatus>("uninstall_meeting_speech_model", { model }),
   meetingDiarize: (workspaceId: string, id: string, revision: number) =>
     command<{ meeting: Meeting; assigned: number }>("meeting_diarize", { workspaceId, id, revision }),

@@ -164,7 +164,7 @@ export default function MailComposer({
                     })
                   }
                 >
-                  <X size={13} />
+                  <X className="danger" size={13} />
                 </button>
               </span>
             ))}

@@ -204,7 +204,8 @@ export default function BugComposer({ workspaceId, projects, bug, onClose, onSav
               {mailto.length > 0 && <div className="bug-mailto-list">
                 {mailto.map(account => <button type="button" key={account} disabled={locked}
                   aria-label={`移除抄送 ${account}`} onClick={() => setMailto(previous => previous.filter(item => item !== account))}>
-                  {users.find(item => item.value === account)?.label ?? account} ×
+                  {users.find(item => item.value === account)?.label ?? account}{" "}
+                  <span className="danger" aria-hidden="true">×</span>
                 </button>)}
               </div>}
             </div>

@@ -106,7 +106,7 @@ export default function SharedTableGroupManager({
                   disabled={busy}
                   onClick={() => selectAction({ kind: "delete", group })}
                 >
-                  <Trash2 size={15} aria-hidden="true" />
+                  <Trash2 className="danger" size={15} aria-hidden="true" />
                 </button>
               </li>
             ))}

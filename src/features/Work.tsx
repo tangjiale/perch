@@ -563,7 +563,7 @@ export function TaskEditor({
                 }
               }}
             >
-              <Trash2 size={15} />
+              <Trash2 className="danger" size={15} />
               删除任务
             </button>
           )}
@@ -1695,7 +1695,7 @@ export function Projects({
                     }
                   }}
                 >
-                  <Trash2 size={15} />
+                  <Trash2 className="danger" size={15} />
                   删除
                 </button>
               )}

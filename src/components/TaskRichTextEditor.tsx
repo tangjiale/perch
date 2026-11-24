@@ -250,7 +250,7 @@ function RichTextEditor({ task, bugId, bugDraft, initialStepsFormat, value, disa
         return <button type="button" key={String(label)} title={String(label)} aria-label={String(label)} disabled={disabled || uploading} onClick={action as () => void}><ButtonIcon size={15}/></button>;
       })}
       {(task || bugDraft) && <button type="button" title="插入图片" aria-label="插入图片" disabled={disabled || uploading || remoteDraft} onClick={() => fileInput.current?.click()}><ImagePlus size={16}/></button>}
-      <button type="button" title="删除选中的图片" aria-label="删除选中的图片" disabled={disabled || uploading || !editor.isActive("image")} onClick={() => editor.chain().focus().deleteSelection().run()}><Trash2 size={15}/></button>
+      <button type="button" title="删除选中的图片" aria-label="删除选中的图片" disabled={disabled || uploading || !editor.isActive("image")} onClick={() => editor.chain().focus().deleteSelection().run()}><Trash2 className="danger" size={15}/></button>
       {uploading && <span className="muted" role="status">{bugDraft ? "正在读取图片…" : "正在上传图片…"}</span>}
     </div>
     <input ref={fileInput} type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = ""; }}/>

@@ -308,7 +308,7 @@ export default function SharedTables({ workspaceId, dataRoot, notify }: SharedTa
                           disabled={writesDisabled}
                           onClick={() => openDialog({ kind: "delete", table })}
                         >
-                          <Trash2 size={15} aria-hidden="true" />
+                          <Trash2 className="danger" size={15} aria-hidden="true" />
                         </button>
                       </div>
                     </td>

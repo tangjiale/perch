@@ -4,7 +4,14 @@ import { AudioLines, CircleCheck, Download, Plus, RefreshCw, Settings2, Trash2, 
 import GlassSelect from "../../components/GlassSelect";
 import Modal from "../../components/Modal";
 import { api, native, type MeetingSpeechStatus } from "../../lib/api";
-import { eligibleMeetingSpeechModels, type MeetingSpeechPreferences } from "../../lib/meeting-speech";
+import {
+  defaultLocalMeetingSpeechModelId,
+  eligibleMeetingSpeechModels,
+  localMeetingSpeechModelIds,
+  localMeetingSpeechModels,
+  type LocalMeetingSpeechModelId,
+  type MeetingSpeechPreferences,
+} from "../../lib/meeting-speech";
 import type { Provider, Snapshot } from "../../lib/types";
 import MeetingMicrophoneSettings from "./MeetingMicrophoneSettings";
 import "./meeting-speech-settings.css";
@@ -27,7 +34,8 @@ function modelStatusLabel(status?: MeetingSpeechStatus) {
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
 }
 
 interface Props {
@@ -41,10 +49,7 @@ const modeOptions = [
   { value: "api", label: "API 转录" },
 ];
 
-const localModelOptions = [
-  { value: "zipformer", label: "X-ASR（实时转录）" },
-  { value: "zipformer-speakers", label: "X-ASR + 说话人识别" },
-];
+type ModelAvailability = { installed: boolean; selectable: boolean };
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -79,7 +84,7 @@ function ModelLocation({ path }: { path?: string }) {
 }
 
 function ModelUninstall({ model, name, status, disabled, busy, onBusyChange, onUninstalled }: {
-  model: "transcription" | "speaker";
+  model: LocalMeetingSpeechModelId | "speaker";
   name: string;
   status?: MeetingSpeechStatus;
   disabled: boolean;
@@ -118,7 +123,7 @@ function ModelUninstall({ model, name, status, disabled, busy, onBusyChange, onU
           setError("");
           setConfirming(true);
         }}>
-          <Trash2 size={15} /> 卸载
+          <Trash2 className="danger" size={15} /> 卸载
         </button>
       )}
       {confirming && (
@@ -207,7 +212,7 @@ function SpeakerModelDownload({ enabled }: { enabled: boolean }) {
         <span className="meeting-speech-model-icon"><Users size={20} /></span>
         <div className="meeting-speech-model-info">
           <h3>说话人模型 · Pyannote + CAM++</h3>
-          <p>与 X-ASR 分开下载，用于本机录音时区分说话人，也可为已有录音补标。</p>
+          <p>独立下载，用于本机录音时区分说话人，也可为已有录音补标。</p>
         </div>
         {checkingError && !installing && !uninstalling && (
           <button type="button" onClick={() => setCheckVersion((value) => value + 1)}>
@@ -251,19 +256,13 @@ function SpeakerModelDownload({ enabled }: { enabled: boolean }) {
   );
 }
 
-export default function MeetingSpeechSettings({ data, workspaceId, onConfigureProvider }: Props) {
-  const [mode, setMode] = useState<MeetingSpeechPreferences["mode"]>("local");
-  const [savedMode, setSavedMode] = useState<MeetingSpeechPreferences["mode"]>();
-  const [modelId, setModelId] = useState("");
-  const [localSpeakerDiarization, setLocalSpeakerDiarization] = useState(false);
-  const [inputDeviceId, setInputDeviceId] = useState("");
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState("");
-  const [loadVersion, setLoadVersion] = useState(0);
-  const [saveError, setSaveError] = useState("");
-  const [saved, setSaved] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const saveInFlight = useRef(false);
+function TranscriptionModelDownload({ model, workspaceId, selected, onAvailabilityChange }: {
+  model: LocalMeetingSpeechModelId;
+  workspaceId: string;
+  selected: boolean;
+  onAvailabilityChange: (model: LocalMeetingSpeechModelId, installed: boolean, selectable: boolean) => void;
+}) {
+  const { name, devices, speed, accuracy, sizeNote, recommended } = localMeetingSpeechModels[model];
   const [status, setStatus] = useState<MeetingSpeechStatus>();
   const [checkingError, setCheckingError] = useState("");
   const [installError, setInstallError] = useState("");
@@ -273,33 +272,22 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
   const [preparing, setPreparing] = useState(false);
   const [prepareError, setPrepareError] = useState("");
   const prepareInFlight = useRef(false);
-  const autoPrepareWorkspace = useRef<string | undefined>(undefined);
+  const autoPrepared = useRef(false);
+  const installed = status?.state === "ready";
+  const selectable = installed && !status.unsupportedReason && !checkingError && !installing && !uninstalling;
 
   useEffect(() => {
-    if (!native) return;
-    let cancelled = false;
-    void api.meetingSpeechPreferences(workspaceId).then((value) => {
-      if (cancelled) return;
-      setMode(value.mode);
-      setSavedMode(value.mode);
-      setModelId(value.mode === "api" ? value.modelId : "");
-      setLocalSpeakerDiarization(value.mode === "local" && value.localSpeakerDiarization === true);
-      setInputDeviceId(value.inputDeviceId ?? "");
-      setLoaded(true);
-    }).catch((error) => {
-      if (!cancelled) setLoadError(errorMessage(error));
-    });
-    return () => { cancelled = true; };
-  }, [workspaceId, loadVersion]);
+    onAvailabilityChange(model, installed, selectable);
+  }, [model, installed, selectable, onAvailabilityChange]);
 
   useEffect(() => {
-    if (!native || uninstalling) return;
+    if (!native || installing || uninstalling) return;
     let cancelled = false;
     let timer: number | undefined;
 
     async function refresh(keepPolling = false) {
       try {
-        const next = await api.meetingSpeechStatus();
+        const next = await api.meetingSpeechStatus(model);
         if (cancelled) return;
         setStatus(next);
         setCheckingError("");
@@ -316,7 +304,7 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [checkVersion, uninstalling]);
+  }, [checkVersion, installing, model, uninstalling]);
 
   const prepare = useCallback(async () => {
     if (prepareInFlight.current) return;
@@ -335,11 +323,165 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
   }, [workspaceId]);
 
   useEffect(() => {
-    if (uninstalling || checkingError || savedMode !== "local" || status?.state !== "ready" || status.runtime !== "cold"
-      || autoPrepareWorkspace.current === workspaceId) return;
-    autoPrepareWorkspace.current = workspaceId;
+    if (!selected) {
+      autoPrepared.current = false;
+      return;
+    }
+    if (uninstalling || checkingError || status?.unsupportedReason
+      || status?.state !== "ready" || status.runtime !== "cold" || autoPrepared.current) return;
+    autoPrepared.current = true;
     void prepare();
-  }, [checkingError, prepare, savedMode, status?.state, status?.runtime, uninstalling, workspaceId]);
+  }, [checkingError, prepare, selected, status?.state, status?.runtime, status?.unsupportedReason, uninstalling]);
+
+  const runtime = status?.state === "ready" ? status.runtime : undefined;
+  const loadingModel = preparing || runtime === "loading";
+  const runtimeError = !loadingModel && runtime !== "ready"
+    ? (selected && prepareError) || (runtime === "error" && (status?.runtimeError || "本机模型加载失败，请重试。"))
+    : "";
+  const canInstall = !checkingError && (status?.state === "missing" || status?.state === "error");
+  const canRetryPrepare = selected && status?.state === "ready" && !status.unsupportedReason
+    && !uninstalling && !checkingError && !!runtimeError;
+  const ready = !uninstalling && runtime === "ready" && !status?.unsupportedReason && !checkingError;
+  const modelError = status?.unsupportedReason || installError || checkingError || (status?.state === "error" && status.error)
+    || (status?.state === "ready" && runtimeError);
+
+  async function install() {
+    if (!canInstall || status?.unsupportedReason || installing || uninstalling) return;
+    setInstalling(true);
+    setInstallError("");
+    try {
+      await api.meetingSpeechInstall(model);
+      setStatus((current) => current && ({
+        ...current,
+        state: "downloading",
+        downloadedBytes: 0,
+        canUninstall: false,
+      }));
+    } catch (error) {
+      setInstallError(errorMessage(error));
+    } finally {
+      setInstalling(false);
+    }
+  }
+
+  let label = modelStatusLabel(status);
+  if (!native) label = "请在桌面应用中使用";
+  else if (status?.unsupportedReason) label = "当前设备不支持";
+  else if (uninstalling) label = "正在卸载…";
+  else if (installing) label = "正在启动下载…";
+  else if (checkingError) label = "读取状态失败";
+  else if (status?.state === "ready") {
+    if (loadingModel) label = "已安装 · 正在预加载…";
+    else if (runtime === "ready") label = selected ? "已加载 · 可实时转录" : "已加载";
+    else if (runtimeError) label = "已安装 · 加载失败";
+    else if (selected && runtime === "cold") label = "已安装 · 等待加载";
+    else label = "已安装";
+  }
+
+  return (
+    <div className="meeting-speech-model" data-model={model}>
+      <div className="meeting-speech-model-heading">
+        <span className="meeting-speech-model-icon"><AudioLines size={20} /></span>
+        <div className="meeting-speech-model-info">
+          <h3>{name} {recommended && <span className="meeting-speech-recommended">推荐</span>}</h3>
+          {selected && <span className="meeting-speech-saved"><CircleCheck size={14} /> 已保存的转录模型</span>}
+        </div>
+        {!uninstalling && !installing && checkingError && (
+          <button type="button" onClick={() => setCheckVersion((value) => value + 1)}>
+            <RefreshCw size={15} /> 刷新状态
+          </button>
+        )}
+        {canInstall && (
+          <button type="button" className="primary" aria-label={`下载 ${name}`}
+            disabled={installing || uninstalling || !!status?.unsupportedReason} onClick={() => void install()}>
+            <Download size={15} /> {status?.state === "error" ? "重新下载" : "下载模型"}
+          </button>
+        )}
+        {canRetryPrepare && (
+          <button type="button" onClick={() => void prepare()}>
+            <RefreshCw size={15} /> 重试加载
+          </button>
+        )}
+        {native && (
+          <ModelUninstall
+            model={model}
+            name={name}
+            status={status}
+            disabled={installing || loadingModel || !!checkingError || status?.state === "downloading"}
+            busy={uninstalling}
+            onBusyChange={setUninstalling}
+            onUninstalled={(next) => {
+              autoPrepared.current = false;
+              setPrepareError("");
+              setInstallError("");
+              setStatus(next);
+            }}
+          />
+        )}
+      </div>
+      <div className="meeting-speech-model-details">
+        <p>{devices}</p>
+        <p>{speed}</p>
+        <p>{accuracy}</p>
+        {sizeNote && <p>{sizeNote}</p>}
+      </div>
+      <ModelLocation path={status?.modelPath} />
+      <p className="meeting-speech-status" data-state={ready ? "ready" : undefined} role="status">
+        {ready && <CircleCheck size={15} />}
+        {label}
+        {!!status?.totalBytes && ` · 下载总量 ${formatSize(status.totalBytes)}`}
+      </p>
+      {status?.state === "downloading" && (
+        <ModelDownloadProgress
+          label={`${name} 下载进度`}
+          downloadedBytes={status.downloadedBytes}
+          totalBytes={status.totalBytes}
+        />
+      )}
+      {modelError && <p className="meeting-speech-error" role="alert">{modelError}</p>}
+    </div>
+  );
+}
+
+export default function MeetingSpeechSettings({ data, workspaceId, onConfigureProvider }: Props) {
+  const [mode, setMode] = useState<MeetingSpeechPreferences["mode"]>("local");
+  const [savedPreferences, setSavedPreferences] = useState<MeetingSpeechPreferences>();
+  const [modelId, setModelId] = useState("");
+  const [localModelId, setLocalModelId] = useState<LocalMeetingSpeechModelId>(defaultLocalMeetingSpeechModelId);
+  const [modelAvailability, setModelAvailability] = useState<Partial<Record<LocalMeetingSpeechModelId, ModelAvailability>>>({});
+  const [localSpeakerDiarization, setLocalSpeakerDiarization] = useState(false);
+  const [inputDeviceId, setInputDeviceId] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [loadVersion, setLoadVersion] = useState(0);
+  const [saveError, setSaveError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
+
+  const updateModelAvailability = useCallback((model: LocalMeetingSpeechModelId, installed: boolean, selectable: boolean) => {
+    setModelAvailability((current) => {
+      const previous = current[model];
+      return previous?.installed === installed && previous.selectable === selectable
+        ? current : { ...current, [model]: { installed, selectable } };
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!native) return;
+    let cancelled = false;
+    void api.meetingSpeechPreferences(workspaceId).then((value) => {
+      if (cancelled) return;
+      setSavedPreferences(value);
+      setMode(value.mode);
+      setLocalModelId(value.localModelId ?? defaultLocalMeetingSpeechModelId);
+      setModelId(value.mode === "api" ? value.modelId : "");
+      setLocalSpeakerDiarization(value.mode === "local" && value.localSpeakerDiarization === true);
+      setInputDeviceId(value.inputDeviceId ?? "");
+    }).catch((error) => {
+      if (!cancelled) setLoadError(errorMessage(error));
+    });
+    return () => { cancelled = true; };
+  }, [workspaceId, loadVersion]);
 
   const speechModels = eligibleMeetingSpeechModels(data);
   const selectedModel = speechModels.find((model) => model.id === modelId);
@@ -348,7 +490,21 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
     const providerName = data.providers.find((provider) => provider.id === model.providerId)?.name;
     return { value: model.id, label: providerName ? `${model.name} · ${providerName}` : model.name };
   });
-  const canSave = loaded && (mode === "local" || !!selectedModel);
+  const loaded = !!savedPreferences;
+  const savedLocalModelId = savedPreferences?.mode === "local"
+    ? savedPreferences.localModelId ?? defaultLocalMeetingSpeechModelId
+    : undefined;
+  const localModelOptions = localMeetingSpeechModelIds.map((value) => ({
+    value,
+    label: localMeetingSpeechModels[value].name,
+    disabled: !modelAvailability[value]?.selectable,
+  }));
+  const modelRank = (model: LocalMeetingSpeechModelId) =>
+    localMeetingSpeechModels[model].recommended ? 0 : modelAvailability[model]?.installed ? 1 : 2;
+  const orderedModels = [...localMeetingSpeechModelIds].sort((a, b) => modelRank(a) - modelRank(b));
+  const canSave = loaded && (mode === "local"
+    ? !!modelAvailability[localModelId]?.selectable || localModelId === savedLocalModelId
+    : !!selectedModel);
 
   function clearSaveResult() {
     setSaved(false);
@@ -359,16 +515,16 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
     event.preventDefault();
     if (!canSave || saveInFlight.current) return;
     const devicePreference = inputDeviceId ? { inputDeviceId } : {};
+    const savedModel = savedPreferences?.localModelId;
     const value: MeetingSpeechPreferences = mode === "api"
-      ? { mode: "api", modelId, ...devicePreference }
-      : { mode: "local", localSpeakerDiarization, ...devicePreference };
+      ? { mode: "api", modelId, ...(savedModel ? { localModelId: savedModel } : {}), ...devicePreference }
+      : { mode: "local", localModelId, localSpeakerDiarization, ...devicePreference };
     saveInFlight.current = true;
     setSaving(true);
     clearSaveResult();
     try {
       await api.saveMeetingSpeechPreferences(workspaceId, value);
-      setSavedMode(value.mode);
-      setCheckVersion((revision) => revision + 1);
+      setSavedPreferences(value);
       setSaved(true);
     } catch (error) {
       setSaveError(errorMessage(error));
@@ -377,48 +533,6 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
       setSaving(false);
     }
   }
-
-  async function install() {
-    setInstalling(true);
-    setInstallError("");
-    try {
-      await api.meetingSpeechInstall();
-      setStatus((current) => current && ({
-        ...current,
-        state: "downloading",
-        downloadedBytes: 0,
-        canUninstall: false,
-      }));
-      setCheckVersion((value) => value + 1);
-    } catch (error) {
-      setInstallError(errorMessage(error));
-    } finally {
-      setInstalling(false);
-    }
-  }
-
-  const runtime = status?.state === "ready" ? status.runtime : undefined;
-  const loadingModel = preparing || runtime === "loading";
-  const runtimeError = !loadingModel && runtime !== "ready"
-    ? prepareError || (runtime === "error" && (status?.runtimeError || "本机模型加载失败，请重试。"))
-    : "";
-  let label = modelStatusLabel(status);
-  if (!native) label = "请在桌面应用中使用";
-  else if (uninstalling) label = "正在卸载…";
-  else if (installing) label = "正在启动下载…";
-  else if (checkingError && !status) label = "读取状态失败";
-  else if (status?.state === "ready") {
-    if (loadingModel) label = "已下载 · 正在预加载…";
-    else if (runtime === "ready") label = "已加载 · 可实时转录";
-    else if (runtimeError) label = "已下载 · 加载失败";
-    else if (savedMode === "api" && mode === "local") label = "已下载 · 保存后自动加载";
-    else if (runtime === "cold") label = "已下载 · 等待加载";
-  }
-  const modelError = installError || checkingError || (status?.state === "error" && status.error)
-    || (status?.state === "ready" && runtimeError);
-  const canRetryPrepare = savedMode === "local" && mode === "local" && status?.state === "ready"
-    && !uninstalling && !checkingError && !!runtimeError;
-  const canInstall = !checkingError && (status?.state === "missing" || status?.state === "error");
 
   return (
     <section className="meeting-speech-settings" aria-labelledby="meeting-speech-heading">
@@ -465,22 +579,34 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
                 <label htmlFor="meeting-speech-local-model">本机语音模型</label>
                 <GlassSelect
                   id="meeting-speech-local-model"
-                  value={localSpeakerDiarization ? "zipformer-speakers" : "zipformer"}
+                  value={localModelId}
                   options={localModelOptions}
                   disabled={saving}
                   aria-describedby="meeting-speech-local-help"
                   onValueChange={(value) => {
-                    setLocalSpeakerDiarization(value === "zipformer-speakers");
+                    const model = localMeetingSpeechModelIds.find((id) => id === value);
+                    if (!model || !modelAvailability[model]?.selectable) return;
+                    setLocalModelId(model);
                     clearSaveResult();
                   }}
                 />
               </div>
-              <p id="meeting-speech-local-help">
-                {localSpeakerDiarization
-                  ? "录音时实时显示文字并在本机识别说话人。较短、重叠或暂时无法确认的发言可能先显示为未标记。已有录音可手动点击「识别说话人」补标，说话人标签可以改名。"
-                  : "录音时实时显示文字。"}
-              </p>
-              <p>模型下载后可离线使用，模型文件不随工作空间备份。</p>
+              <p id="meeting-speech-local-help">请先在下方下载模型，再选择并保存。新录音将使用所选模型离线转录。</p>
+              <label className="meeting-speech-speaker-toggle">
+                <input type="checkbox" checked={localSpeakerDiarization} disabled={saving}
+                  onChange={(event) => {
+                    setLocalSpeakerDiarization(event.target.checked);
+                    clearSaveResult();
+                  }} />
+                本机识别说话人
+              </label>
+              {localSpeakerDiarization && (
+                <p>
+                  {localModelId === "r2t2" && "有道模型按整段确认说话人。"}
+                  较短、重叠或暂时无法确认的发言可能先显示为未标记。已有录音可手动点击「识别说话人」补标，说话人标签可以改名。
+                </p>
+              )}
+              <p>模型文件不随工作空间备份。</p>
             </div>
           ) : (
             <div className="meeting-speech-api">
@@ -530,60 +656,10 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
           </div>
         </form>
       )}
-      <div className="meeting-speech-model">
-        <div className="meeting-speech-model-heading">
-          <span className="meeting-speech-model-icon"><AudioLines size={20} /></span>
-          <div className="meeting-speech-model-info">
-            <h3>本机模型 · X-ASR 160 ms（中英双语，INT8）</h3>
-            <p>下载约 128 MiB。模型按 160 ms 的音频块处理，实际出字时间取决于设备性能和语音内容。</p>
-          </div>
-          {!uninstalling && !installing && checkingError && status?.state !== "downloading" && (
-            <button type="button" onClick={() => setCheckVersion((value) => value + 1)}>
-              <RefreshCw size={15} /> 刷新状态
-            </button>
-          )}
-          {native && canInstall && (
-            <button type="button" className="primary" disabled={installing || uninstalling} onClick={() => void install()}>
-              <Download size={15} /> {status?.state === "error" ? "重新下载" : "下载模型"}
-            </button>
-          )}
-          {canRetryPrepare && (
-            <button type="button" onClick={() => void prepare()}>
-              <RefreshCw size={15} /> 重试加载
-            </button>
-          )}
-          {native && (
-            <ModelUninstall
-              model="transcription"
-              name="X-ASR"
-              status={status}
-              disabled={installing || loadingModel || !!checkingError || status?.state === "downloading"}
-              busy={uninstalling}
-              onBusyChange={setUninstalling}
-              onUninstalled={(next) => {
-                autoPrepareWorkspace.current = undefined;
-                setPrepareError("");
-                setInstallError("");
-                setStatus(next);
-              }}
-            />
-          )}
-        </div>
-        <ModelLocation path={status?.modelPath} />
-        <p className="meeting-speech-status" data-state={!uninstalling && runtime === "ready" ? "ready" : undefined} role="status">
-          {!uninstalling && runtime === "ready" && <CircleCheck size={15} />}
-          {label}
-          {status?.state === "missing" && status.totalBytes > 0 && ` · ${formatSize(status.totalBytes)}`}
-        </p>
-        {status?.state === "downloading" && (
-          <ModelDownloadProgress
-            label="会议语音模型下载进度"
-            downloadedBytes={status.downloadedBytes}
-            totalBytes={status.totalBytes}
-          />
-        )}
-        {modelError && <p className="meeting-speech-error" role="alert">{modelError}</p>}
-      </div>
+      {orderedModels.map((model) => (
+        <TranscriptionModelDownload key={model} model={model} workspaceId={workspaceId}
+          selected={savedLocalModelId === model} onAvailabilityChange={updateModelAvailability} />
+      ))}
       {native && <SpeakerModelDownload enabled={loaded && mode === "local" && localSpeakerDiarization} />}
     </section>
   );

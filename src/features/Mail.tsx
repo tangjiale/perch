@@ -566,7 +566,7 @@ export default function Mail({
                                 );
                             }}
                           >
-                            <Trash2 size={14} />
+                            <Trash2 className="danger" size={14} />
                           </button>
                         </div>
                       ))
@@ -807,7 +807,7 @@ export default function Mail({
                         });
                       }}
                     >
-                      <Trash2 size={17} />
+                      <Trash2 className="danger" size={17} />
                     </button>
                   )}
                 </div>

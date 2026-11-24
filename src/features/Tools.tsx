@@ -1126,7 +1126,7 @@ function NatappTool({
                         }
                         onClick={() => setDeleting(tunnel)}
                       >
-                        <Trash2 size={15} />
+                        <Trash2 className="danger" size={15} />
                       </button>
                     </div>
                     <div className="natapp-row-details">

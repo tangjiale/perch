@@ -12,6 +12,7 @@
 .meeting-speech-settings > p,
 .meeting-speech-form p,
 .meeting-speech-model-info > p,
+.meeting-speech-model-details > p,
 .meeting-speech-progress > p {
   margin: 5px 0 0;
   color: var(--muted);
@@ -38,6 +39,14 @@
 .meeting-speech-local {
   display: grid;
   gap: 6px;
+}
+.meeting-speech-speaker-toggle {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 13px;
 }
 .meeting-microphone-settings {
   display: grid;
@@ -139,6 +148,19 @@
 .meeting-speech-model-info {
   flex: 1 1 180px;
   min-width: 0;
+}
+.meeting-speech-model-info .meeting-speech-saved {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.meeting-speech-recommended {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--command) 12%, transparent);
+  color: var(--command);
+  font-size: 11px;
+  vertical-align: middle;
 }
 .meeting-speech-model-heading > button,
 .meeting-speech-status {

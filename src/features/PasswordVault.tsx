@@ -449,7 +449,7 @@ function VaultEntries({ workspaceId, dataRoot, kind, notify, actionsTarget }: Pr
                           clearRevealed();
                           openDialog({ type: "delete", entry });
                         }}>
-                        <Trash2 size={15} aria-hidden="true" />
+                        <Trash2 className="danger" size={15} aria-hidden="true" />
                       </button>
                     </div>
                   </td>

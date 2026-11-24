@@ -465,7 +465,7 @@ export function Apps({
                     }
                   }}
                 >
-                  <Trash2 size={15} />
+                  <Trash2 className="danger" size={15} />
                   移除
                 </button>
               )}
@@ -511,7 +511,7 @@ export function Apps({
                     await remove("category", c.id, c.revision);
                   }}
                 >
-                  <Trash2 size={15} />
+                  <Trash2 className="danger" size={15} />
                 </button>
               </div>
             ))}
@@ -786,7 +786,7 @@ export function Skills({
                     }
                   }}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 className="danger" size={14} />
                   删除
                 </button>
               )}
@@ -1060,7 +1060,7 @@ export function Agents({
                     }
                   }}
                 >
-                  <Trash2 size={15} />
+                  <Trash2 className="danger" size={15} />
                   删除
                 </button>
               )}
@@ -1303,7 +1303,7 @@ export function KnowledgePage({
                           }
                         }}
                       >
-                        <Trash2 size={15} />
+                        <Trash2 className="danger" size={15} />
                       </button>
                     </td>
                   </tr>
@@ -1423,7 +1423,7 @@ export function KnowledgePage({
                     }
                   }}
                 >
-                  <Trash2 size={15} />
+                  <Trash2 className="danger" size={15} />
                   删除知识库
                 </button>
               )}

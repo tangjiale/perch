@@ -212,7 +212,7 @@ export default function McpSettings({
                           setRemove(connection);
                         }}
                       >
-                        <Trash2 size={15} />
+                        <Trash2 className="danger" size={15} />
                       </button>
                     </div>
                   </td>
@@ -401,7 +401,7 @@ export default function McpSettings({
                 }
               }}
             >
-              <Trash2 size={14} />
+              <Trash2 className="danger" size={14} />
               {busy ? "正在删除…" : "删除连接"}
             </button>
           </div>

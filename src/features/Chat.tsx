@@ -490,7 +490,7 @@ export default function Chat({ data, refresh, notify }: PageProps) {
           aria-label={`删除会话“${conversation.title}”`}
           onClick={() => void deleteConversation(conversation)}
         >
-          <Trash2 size={14} />
+          <Trash2 className="danger" size={14} />
         </button>
         {movingConversation === conversation.id && (
           <div className="conversation-move-menu" role="menu">
@@ -795,7 +795,7 @@ export default function Chat({ data, refresh, notify }: PageProps) {
                     }
                 }}
               >
-                <Trash2 size={15} />
+                <Trash2 className="danger" size={15} />
               </button>
             </div>
           )}
@@ -1072,7 +1072,7 @@ function ImageGallery({
               aria-label={`移除图片 ${image.name}`}
               onClick={() => onRemove(index)}
             >
-              <X size={14} />
+              <X className="danger" size={14} />
             </button>
           )}
         </figure>

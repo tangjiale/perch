@@ -144,7 +144,7 @@ export default function ExchangeRateTool({ info, notify }: {
             </div>
             <button className="icon-button exchange-remove" aria-label={`移除 ${code}`} title={`移除 ${code}`}
               onClick={() => setPreferences(previous => ({ ...previous, targets: previous.targets.filter(target => target !== code) }))}>
-              <Trash2 size={16} />
+              <Trash2 className="danger" size={16} />
             </button>
           </div>;
         })}

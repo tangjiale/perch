@@ -30,7 +30,13 @@ import Modal from "../components/Modal";
 import MeetingContextFields from "./meetings/MeetingContext";
 import MeetingActions from "./meetings/MeetingActions";
 import { api, native } from "../lib/api";
-import { eligibleMeetingSpeechModels, type MeetingSpeechPreferences } from "../lib/meeting-speech";
+import {
+  defaultLocalMeetingSpeechModelId,
+  eligibleMeetingSpeechModels,
+  localMeetingSpeechModels,
+  type LocalMeetingSpeechModelId,
+  type MeetingSpeechPreferences,
+} from "../lib/meeting-speech";
 import type { Snapshot } from "../lib/types";
 import {
   layoutMindMap,
@@ -58,10 +64,10 @@ interface PendingTranscript {
 }
 
 const speechStatusLabels: Record<MeetingSpeechStatus["state"], string> = {
-  ready: "X-ASR 160 ms（中英文）已就绪",
-  downloading: "本机模型下载中，可先仅录音",
-  error: "本机模型安装失败，可先仅录音",
-  missing: "下载本机模型后可实时转录，也可先仅录音",
+  ready: "已就绪",
+  downloading: "下载中，可先仅录音",
+  error: "安装失败，可先仅录音",
+  missing: "安装后可实时转录，也可先仅录音",
 };
 
 function download(content: BlobPart, type: string, filename: string) {
@@ -234,14 +240,14 @@ export default function Meetings({
     let timer: number | undefined;
     let speakerTimer: number | undefined;
     let requestedWarmup = false;
-    async function refreshSpeechStatus(keepPolling = false) {
+    async function refreshSpeechStatus(model: LocalMeetingSpeechModelId, keepPolling = false) {
       try {
-        const status = await api.meetingSpeechStatus();
+        const status = await api.meetingSpeechStatus(model);
         if (cancelled) return;
         setSpeechStatus(status);
         setSpeechStatusFailed(false);
         keepPolling = status.state === "downloading" || status.runtime === "loading";
-        if (status.state === "ready" && status.runtime === "cold" && !requestedWarmup) {
+        if (!status.unsupportedReason && status.state === "ready" && status.runtime === "cold" && !requestedWarmup) {
           requestedWarmup = true;
           await api.meetingSpeechPrepare(workspaceId);
           keepPolling = true;
@@ -252,7 +258,7 @@ export default function Meetings({
         setSpeechStatusFailed(true);
       }
       if (!cancelled && keepPolling)
-        timer = window.setTimeout(() => void refreshSpeechStatus(true), 1000);
+        timer = window.setTimeout(() => void refreshSpeechStatus(model, true), 1000);
     }
     async function refreshSpeakerStatus() {
       try {
@@ -270,7 +276,7 @@ export default function Meetings({
         if (cancelled) return;
         setSpeechPreferences(preferences);
         if (preferences.mode === "local") {
-          void refreshSpeechStatus();
+          void refreshSpeechStatus(preferences.localModelId ?? defaultLocalMeetingSpeechModelId);
           if (preferences.localSpeakerDiarization) void refreshSpeakerStatus();
         }
       },
@@ -296,12 +302,15 @@ export default function Meetings({
     ? eligibleMeetingSpeechModels(data).find((model) => model.id === apiSpeechId)
     : undefined;
   const selectedSpeech = speechModel?.id ?? "";
+  const localModelId = (speechPreferences?.mode === "local" ? speechPreferences.localModelId : undefined)
+    ?? defaultLocalMeetingSpeechModelId;
+  const localModelName = localMeetingSpeechModels[localModelId].name;
   const localDiarization = speechPreferences?.mode === "local" && !!speechPreferences.localSpeakerDiarization;
   const speakerModelReady = speakerStatus?.state === "ready";
   const configuredMode = speechPreferences?.mode === "api" ? "chunks" : "realtime";
   const configuredReady = speechPreferences?.mode === "api"
     ? !!speechModel
-    : speechPreferences?.mode === "local" && speechStatus?.state === "ready";
+    : speechPreferences?.mode === "local" && speechStatus?.state === "ready" && !speechStatus.unsupportedReason;
   const mode = activeMode ?? (!onlyRecord && configuredReady ? configuredMode : "record");
   const recordingModes = [
     {
@@ -311,7 +320,7 @@ export default function Meetings({
     },
     { value: "record", label: "仅录音" },
   ];
-  useEffect(() => setOnlyRecord(false), [configuredMode, apiSpeechId]);
+  useEffect(() => setOnlyRecord(false), [configuredMode, apiSpeechId, localModelId]);
   const chats = data.models.filter(
       (m) =>
         m.enabled &&
@@ -324,11 +333,14 @@ export default function Meetings({
       : chats[0]?.id || "";
   const canStartMode = (!!speechPreferences || speechPreferencesError) &&
     (mode === "record" || configuredReady);
-  const localSpeechLabel = speechStatus?.state === "ready" && speechStatus.runtime === "loading"
-    ? "正在后台预加载本机语音模型…"
-    : speechStatus?.state === "ready" && speechStatus.runtime === "error"
-      ? "本机模型预加载失败，可在设置中重试"
-      : speechStatus ? speechStatusLabels[speechStatus.state] : "正在检查本机模型…";
+  let localSpeechLabel = "正在检查模型…";
+  if (speechStatusFailed) localSpeechLabel = "无法读取模型状态，可先仅录音";
+  else if (speechStatus?.unsupportedReason) localSpeechLabel = `${speechStatus.unsupportedReason}，可先仅录音`;
+  else if (speechStatus?.state === "ready" && speechStatus.runtime === "loading")
+    localSpeechLabel = "正在后台预加载…";
+  else if (speechStatus?.state === "ready" && speechStatus.runtime === "error")
+    localSpeechLabel = "预加载失败，可在设置中重试";
+  else if (speechStatus) localSpeechLabel = speechStatusLabels[speechStatus.state];
   const speechStatusLabel = speechPreferencesError
     ? "无法读取会议语音设置，可用系统默认麦克风仅录音"
     : !speechPreferences
@@ -337,9 +349,7 @@ export default function Meetings({
         ? speechModel
           ? `${speechModel.name} · API 分片转录`
           : "所选语音 API 已不可用，可先仅录音"
-        : speechStatusFailed
-          ? "无法读取本机模型状态，可先仅录音"
-          : localSpeechLabel;
+        : `${localModelName} · ${localSpeechLabel}`;
   function accept(m: Meeting) {
     if (!mounted.current) return;
     if (
@@ -541,8 +551,8 @@ export default function Meetings({
     const duration = current.durationMs;
     setActiveMode(method);
     setBusy(
-      method === "realtime" && speechStatus?.runtime !== "ready"
-        ? "正在等候本机语音模型就绪…"
+      method === "realtime"
+        ? `正在确认 ${localModelName} 状态…`
         : "正在打开麦克风…",
     );
     setError("");
@@ -554,6 +564,13 @@ export default function Meetings({
     const valid = () => mounted.current && token === epoch.current;
     try {
       if (method === "realtime") {
+        const status = await api.meetingSpeechStatus(localModelId);
+        if (!valid()) return;
+        setSpeechStatus(status);
+        setSpeechStatusFailed(false);
+        if (status.unsupportedReason) throw new Error(status.unsupportedReason);
+        if (status.state !== "ready") throw new Error(`${localModelName} 尚未安装完成。`);
+        if (status.runtime !== "ready") setBusy(`正在等候 ${localModelName} 就绪…`);
         const channel = new Channel<MeetingRealtimeEvent>();
         active = {
           workspaceId,
@@ -995,7 +1012,7 @@ export default function Meetings({
         : !action.completed,
     ).length ?? 0;
   const recordingStatus = {
-    realtime: realtimeStatus || "录音中 · 本机实时转录",
+    realtime: `${localModelName} · ${realtimeStatus || "本机实时转录中"}`,
     chunks: "录音中 · 每约 10 秒通过 API 转录",
     record: "录音中 · 仅保存音频",
   }[mode];
@@ -1132,7 +1149,7 @@ export default function Meetings({
                   disabled={locked || dirty}
                   onClick={() => setDeleting(true)}
                 >
-                  <Trash2 size={16} />
+                  <Trash2 className="danger" size={16} />
                 </button>
               </div>
             </header>

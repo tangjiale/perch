@@ -401,7 +401,7 @@ export default function Settings({
                                   setRemoveModel(m);
                                 }}
                               >
-                                <Trash2 size={15} />
+                                <Trash2 className="danger" size={15} />
                               </button>
                             </td>
                           </tr>
@@ -634,7 +634,7 @@ export default function Settings({
                         }
                     }}
                   >
-                    <Trash2 size={15} />
+                    <Trash2 className="danger" size={15} />
                     删除
                   </button>
                 )}
@@ -737,7 +737,7 @@ export default function Settings({
                       }
                   }}
                 >
-                  <Trash2 size={15} />
+                  <Trash2 className="danger" size={15} />
                   删除
                 </button>
               )}
