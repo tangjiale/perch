@@ -1,0 +1,1031 @@
+/* ==========================================================================
+   栖点 · Perch — Balanced macOS Liquid Glass & Spring Motion Layer
+   参考最新 macOS 液态玻璃层次与物理阻尼动效，融合 Lucian UX/UI 交互微细节。
+   保留既有青灰色品牌调、紧凑办公信息密度及完整深浅色与无障碍兼容。
+   ========================================================================== */
+
+:root {
+  /* 物理阻尼与响应曲线 */
+  --ease-spring: cubic-bezier(0.22, 1.12, 0.36, 1);
+  --ease-snappy: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --ease-smooth: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --dur-fast: 150ms;
+  --dur-mid: 220ms;
+  --dur-slow: 320ms;
+
+  /* Liquid Glass 浅色层级令牌 */
+  --lg-shell-bg:
+    radial-gradient(1200px 760px at 8% -10%, rgba(164, 211, 224, 0.36), transparent 62%),
+    radial-gradient(920px 680px at 94% 108%, rgba(177, 218, 210, 0.34), transparent 58%),
+    linear-gradient(135deg, #e7eff4 0%, #f5f8fa 52%, #e6f0ee 100%);
+  --lg-sidebar-bg: rgba(240, 246, 250, 0.68);
+  --lg-workspace-bg: rgba(255, 255, 255, 0.54);
+  --lg-bar-bg: rgba(251, 253, 255, 0.66);
+  --lg-card-bg: rgba(255, 255, 255, 0.78);
+  --lg-card-hover-bg: rgba(255, 255, 255, 0.94);
+  --lg-pill-active-bg: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.92),
+    rgba(242, 248, 251, 0.78)
+  );
+  --lg-popover-bg: rgba(248, 252, 254, 0.88);
+  --lg-rim: rgba(255, 255, 255, 0.94);
+  --lg-border: rgba(84, 112, 130, 0.14);
+  --lg-border-strong: rgba(54, 108, 128, 0.28);
+  --lg-focus-ring: rgba(48, 126, 150, 0.22);
+  --lg-shadow-shell:
+    0 10px 30px rgba(31, 55, 72, 0.08),
+    0 1px 3px rgba(31, 55, 72, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  --lg-shadow-card:
+    0 2px 8px rgba(34, 58, 74, 0.04),
+    0 1px 2px rgba(34, 58, 74, 0.025),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --lg-shadow-card-hover:
+    0 10px 26px rgba(34, 58, 74, 0.095),
+    0 2px 6px rgba(34, 58, 74, 0.045),
+    inset 0 1px 0 rgba(255, 255, 255, 0.98);
+  --lg-shadow-popover:
+    0 20px 54px rgba(24, 46, 62, 0.18),
+    0 4px 14px rgba(24, 46, 62, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  --lg-radius-shell: 18px;
+  --lg-radius-card: 14px;
+  --lg-radius-control: 10px;
+  --lg-radius-pill: 999px;
+}
+
+html[data-theme="dark"] {
+  --lg-shell-bg:
+    radial-gradient(1100px 700px at 10% -8%, rgba(74, 132, 148, 0.16), transparent 60%),
+    radial-gradient(880px 640px at 92% 106%, rgba(64, 118, 112, 0.13), transparent 58%),
+    linear-gradient(135deg, #212326 0%, #1c1e20 54%, #202526 100%);
+  --lg-sidebar-bg: rgba(38, 41, 45, 0.78);
+  --lg-workspace-bg: rgba(29, 31, 34, 0.56);
+  --lg-bar-bg: rgba(39, 41, 45, 0.72);
+  --lg-card-bg: rgba(48, 51, 56, 0.72);
+  --lg-card-hover-bg: rgba(58, 62, 68, 0.88);
+  --lg-pill-active-bg: linear-gradient(
+    180deg,
+    rgba(80, 86, 94, 0.78),
+    rgba(62, 67, 74, 0.68)
+  );
+  --lg-popover-bg: rgba(44, 47, 52, 0.9);
+  --lg-rim: rgba(255, 255, 255, 0.14);
+  --lg-border: rgba(226, 232, 240, 0.11);
+  --lg-border-strong: rgba(138, 200, 214, 0.34);
+  --lg-focus-ring: rgba(128, 192, 208, 0.26);
+  --lg-shadow-shell:
+    0 14px 36px rgba(0, 0, 0, 0.34),
+    0 1px 3px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --lg-shadow-card:
+    0 3px 10px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --lg-shadow-card-hover:
+    0 12px 28px rgba(0, 0, 0, 0.3),
+    0 2px 6px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --lg-shadow-popover:
+    0 24px 64px rgba(0, 0, 0, 0.48),
+    0 4px 16px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+/* ==========================================================================
+   核心动效 Keyframes
+   ========================================================================== */
+
+@keyframes lg-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes lg-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.955) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes lg-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes lg-popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes lg-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes lg-msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes lg-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes lg-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(48, 126, 150, 0.42);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(48, 126, 150, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(48, 126, 150, 0);
+  }
+}
+
+@keyframes lg-record-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(212, 68, 68, 0.45);
+  }
+  50% {
+    opacity: 0.72;
+    box-shadow: 0 0 0 6px rgba(212, 68, 68, 0);
+  }
+}
+
+/* ==========================================================================
+   桌面应用壳层：macOS 悬浮圆角液态玻璃侧栏 + 折叠交互（Lucian #417）
+   ========================================================================== */
+
+body {
+  background: var(--lg-shell-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-shell {
+  padding: 10px;
+  gap: 10px;
+  background: transparent;
+}
+
+.sidebar {
+  width: 222px;
+  padding: 16px 12px 12px;
+  border-radius: var(--lg-radius-shell);
+  border: 1px solid var(--lg-rim);
+  background: var(--lg-sidebar-bg);
+  box-shadow: var(--lg-shadow-shell);
+  backdrop-filter: blur(30px) saturate(165%);
+  -webkit-backdrop-filter: blur(30px) saturate(165%);
+  transition:
+    width var(--dur-slow) var(--ease-snappy),
+    padding var(--dur-slow) var(--ease-snappy);
+  overflow: hidden;
+}
+
+html[data-theme="dark"] .sidebar {
+  border-color: var(--lg-border);
+  border-top-color: var(--lg-rim);
+}
+
+.sidebar.collapsed {
+  width: 72px;
+  padding: 16px 10px 12px;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 0 2px 18px;
+}
+
+.sidebar .brand {
+  margin: 0;
+  min-width: 0;
+  flex: 1;
+  gap: 10px;
+}
+
+.sidebar.collapsed .sidebar-header {
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.sidebar.collapsed .brand {
+  justify-content: center;
+}
+
+.sidebar.collapsed .brand > div {
+  display: none;
+}
+
+.sidebar-collapse-btn {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  border-radius: 9px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition:
+    background var(--dur-fast) var(--ease-snappy),
+    color var(--dur-fast) var(--ease-snappy),
+    transform var(--dur-fast) var(--ease-spring);
+}
+
+.sidebar-collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.55);
+  color: inherit;
+}
+
+html[data-theme="dark"] .sidebar-collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 1px;
+}
+
+.sidebar nav a,
+.sidebar-bottom > a {
+  position: relative;
+  height: 36px;
+  border-radius: 11px;
+  padding: 0 11px;
+  margin-bottom: 3px;
+  font-weight: 450;
+  transition:
+    background var(--dur-fast) var(--ease-snappy),
+    color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-mid) var(--ease-snappy),
+    transform var(--dur-fast) var(--ease-spring);
+}
+
+.sidebar nav a svg,
+.sidebar-bottom > a svg {
+  flex-shrink: 0;
+  transition:
+    transform var(--dur-mid) var(--ease-spring),
+    color var(--dur-fast) var(--ease-snappy);
+}
+
+.sidebar nav a:hover,
+.sidebar-bottom > a:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+html[data-theme="dark"] .sidebar nav a:hover,
+html[data-theme="dark"] .sidebar-bottom > a:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sidebar nav a:hover svg,
+.sidebar-bottom > a:hover svg {
+  transform: scale(1.06);
+}
+
+.sidebar nav a:active,
+.sidebar-bottom > a:active {
+  transform: scale(0.98);
+}
+
+.sidebar nav a.active,
+.sidebar-bottom > a.active {
+  font-weight: 600;
+  background: var(--lg-pill-active-bg);
+  box-shadow:
+    0 4px 14px rgba(32, 62, 80, 0.09),
+    inset 0 1px 0 var(--lg-rim),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+
+html[data-theme="dark"] .sidebar nav a.active,
+html[data-theme="dark"] .sidebar-bottom > a.active {
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.sidebar nav a small {
+  border-radius: var(--lg-radius-pill);
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  transition: background var(--dur-fast) var(--ease-snappy);
+}
+
+.sidebar.collapsed nav a,
+.sidebar.collapsed .sidebar-bottom > a {
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar.collapsed nav a > span,
+.sidebar.collapsed nav a > small,
+.sidebar.collapsed .sidebar-bottom > a > span {
+  display: none;
+}
+
+.sidebar.collapsed nav a .assignment-nav-dot {
+  position: absolute;
+  top: 7px;
+  right: 11px;
+}
+
+.sidebar-bottom {
+  padding-top: 8px;
+}
+
+.identity {
+  margin-top: 10px;
+  padding: 12px 6px 4px;
+  border-top: 1px solid var(--lg-border);
+  transition: padding var(--dur-mid) var(--ease-snappy);
+}
+
+.identity > span {
+  background: var(--lg-pill-active-bg);
+  border-color: var(--lg-border);
+  box-shadow: inset 0 1px 0 var(--lg-rim);
+  font-weight: 600;
+}
+
+.sidebar.collapsed .identity {
+  justify-content: center;
+  padding: 12px 0 4px;
+}
+
+.sidebar.collapsed .identity > div {
+  display: none;
+}
+
+/* 右侧主工作区液态玻璃窗口容器 */
+.workspace {
+  border-radius: var(--lg-radius-shell);
+  border: 1px solid var(--lg-rim);
+  background: var(--lg-workspace-bg);
+  box-shadow: var(--lg-shadow-shell);
+  overflow: hidden;
+}
+
+html[data-theme="dark"] .workspace {
+  border-color: var(--lg-border);
+  border-top-color: var(--lg-rim);
+}
+
+.topbar,
+.statusbar,
+.chat-main > header {
+  background: var(--lg-bar-bg);
+  backdrop-filter: blur(26px) saturate(155%);
+  -webkit-backdrop-filter: blur(26px) saturate(155%);
+}
+
+.topbar {
+  height: 54px;
+  border-bottom: 1px solid var(--lg-border);
+}
+
+.statusbar {
+  border-top: 1px solid var(--lg-border);
+}
+
+.global-search {
+  border-radius: var(--lg-radius-pill);
+  border: 1px solid var(--lg-border);
+  background: rgba(255, 255, 255, 0.56);
+  box-shadow:
+    inset 0 1px 2px rgba(34, 58, 74, 0.04),
+    0 1px 0 rgba(255, 255, 255, 0.8);
+  transition:
+    background var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-mid) var(--ease-snappy);
+}
+
+.global-search:focus-within {
+  outline: none;
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--lg-border-strong);
+  box-shadow:
+    0 0 0 3px var(--lg-focus-ring),
+    0 4px 12px rgba(34, 58, 74, 0.06);
+}
+
+html[data-theme="dark"] .global-search {
+  background: rgba(22, 24, 27, 0.5);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.22);
+}
+
+html[data-theme="dark"] .global-search:focus-within {
+  background: rgba(30, 33, 38, 0.86);
+  border-color: var(--lg-border-strong);
+  box-shadow: 0 0 0 3px var(--lg-focus-ring);
+}
+
+/* 路由页面轻量淡入过渡：常规页面保持块级文档流，聊天/邮件分栏页占满高度 */
+.route-stage {
+  min-height: 100%;
+  animation: lg-view-in var(--dur-mid) var(--ease-snappy);
+}
+
+.chat-page .route-stage,
+.mail-page .route-stage {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-tabs {
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   基础控件：macOS 液态玻璃按钮、输入框、分段控件与 Tabs
+   ========================================================================== */
+
+button {
+  border-radius: var(--lg-radius-control);
+  border-color: var(--lg-border);
+  transition:
+    background var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy),
+    color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-mid) var(--ease-snappy),
+    transform var(--dur-fast) var(--ease-spring);
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--lg-border-strong);
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
+button.primary {
+  background: linear-gradient(180deg, #3c869c 0%, #27697e 100%);
+  border-color: rgba(18, 74, 92, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    0 4px 12px rgba(38, 93, 112, 0.22);
+}
+
+button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #4390a7 0%, #2b7188 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 6px 16px rgba(38, 93, 112, 0.28);
+  transform: translateY(-0.5px);
+}
+
+button.primary:active:not(:disabled) {
+  transform: scale(0.975);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.14),
+    0 2px 6px rgba(38, 93, 112, 0.16);
+}
+
+html[data-theme="dark"] button.primary {
+  background: linear-gradient(180deg, #9ed5e0 0%, #74b4c4 100%);
+  color: #10242a;
+  border-color: rgba(190, 238, 248, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 4px 14px rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme="dark"] button.primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ade0ea 0%, #83c2d2 100%);
+}
+
+button.icon-button {
+  border-radius: 9px;
+}
+
+input,
+select,
+textarea {
+  border-radius: var(--lg-radius-control);
+  border-color: var(--lg-border);
+  transition:
+    background var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-mid) var(--ease-snappy);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--lg-border-strong);
+  box-shadow: 0 0 0 3px var(--lg-focus-ring);
+}
+
+/* Segmented Control 与标签组（macOS 液态玻璃胶囊） */
+.segmented,
+.tabs:not(.settings-tabs),
+.mail-list-filters {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 12px;
+  background: rgba(114, 142, 160, 0.11);
+  border: 1px solid rgba(114, 142, 160, 0.1);
+  box-shadow: inset 0 1px 2px rgba(26, 48, 64, 0.06);
+  padding: 3px;
+}
+
+.tabs:not(.settings-tabs) {
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 20px;
+}
+
+html[data-theme="dark"] .segmented,
+html[data-theme="dark"] .tabs:not(.settings-tabs),
+html[data-theme="dark"] .mail-list-filters {
+  background: rgba(18, 20, 23, 0.46);
+  border-color: var(--lg-border);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.24);
+}
+
+.segmented button,
+.tabs:not(.settings-tabs) button,
+.mail-list-filters button {
+  border: 0;
+  border-bottom: 0;
+  background: transparent;
+  border-radius: 9px;
+  box-shadow: none;
+}
+
+.tabs:not(.settings-tabs) button {
+  padding: 6px 14px;
+  min-height: 32px;
+  gap: 6px;
+}
+
+.segmented button.active,
+.tabs:not(.settings-tabs) button.active,
+.mail-list-filters button.active {
+  border-bottom: 0;
+  color: var(--command);
+  background: var(--lg-pill-active-bg);
+  box-shadow:
+    0 2px 8px rgba(26, 52, 68, 0.1),
+    inset 0 1px 0 var(--lg-rim);
+}
+
+html[data-theme="dark"] .segmented button.active,
+html[data-theme="dark"] .tabs:not(.settings-tabs) button.active,
+html[data-theme="dark"] .mail-list-filters button.active {
+  color: var(--theme-accent);
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.password-vault-header {
+  align-items: center;
+  padding-bottom: 12px;
+}
+
+.password-vault-header .password-vault-tabs {
+  margin-bottom: 0;
+}
+
+.password-vault-header .password-vault-actions {
+  padding-bottom: 0;
+}
+
+/* ==========================================================================
+   弹层、对话框、下拉菜单与弹性 Toast（Lucian #435 / #436）
+   ========================================================================== */
+
+.modal {
+  border-radius: 22px;
+  border: 1px solid var(--lg-rim);
+  box-shadow: var(--lg-shadow-popover);
+}
+
+html[data-theme="dark"] .modal {
+  border-color: var(--lg-border);
+  border-top-color: var(--lg-rim);
+}
+
+.modal[open] {
+  animation: lg-modal-in 240ms var(--ease-spring);
+}
+
+.modal[open]::backdrop {
+  animation: lg-backdrop-in 200ms var(--ease-smooth);
+}
+
+.glass-select-trigger {
+  border-radius: var(--lg-radius-control);
+  transition:
+    background var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-mid) var(--ease-snappy);
+}
+
+.glass-select-content,
+.update-popover,
+.assignment-popover,
+.date-range-popover,
+.conversation-move-menu,
+.conversation-group-context {
+  border-radius: 16px;
+  background: var(--lg-popover-bg);
+  border-color: var(--lg-rim);
+  box-shadow: var(--lg-shadow-popover);
+  animation: lg-popover-in 180ms var(--ease-spring);
+}
+
+html[data-theme="dark"] .glass-select-content,
+html[data-theme="dark"] .update-popover,
+html[data-theme="dark"] .assignment-popover,
+html[data-theme="dark"] .date-range-popover,
+html[data-theme="dark"] .conversation-move-menu,
+html[data-theme="dark"] .conversation-group-context {
+  border-color: var(--lg-border);
+  border-top-color: var(--lg-rim);
+}
+
+.glass-select-item {
+  border-radius: 9px;
+  transition:
+    background 120ms var(--ease-snappy),
+    color 120ms var(--ease-snappy);
+}
+
+.toast {
+  border-radius: 14px;
+  padding: 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  box-shadow:
+    0 14px 36px rgba(16, 36, 48, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+  animation: lg-toast-in 260ms var(--ease-spring);
+  cursor: pointer;
+}
+
+.toast:hover {
+  transform: translateY(-1px);
+}
+
+/* ==========================================================================
+   核心工作区与全业务页面卡片、列表、聊天、邮件、会议质感统一
+   ========================================================================== */
+
+.task-card,
+.app-card,
+.resource-card,
+.tool-card,
+.project-card,
+.metric,
+.stat-card,
+.backup-card,
+.prompt-card,
+.meeting-card,
+.settings-card {
+  border-radius: var(--lg-radius-card);
+  border-color: var(--lg-border);
+  background: var(--lg-card-bg);
+  box-shadow: var(--lg-shadow-card);
+  transition:
+    transform var(--dur-mid) var(--ease-spring),
+    background var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-mid) var(--ease-snappy);
+}
+
+.task-card:hover,
+.app-card:hover,
+.resource-card:hover,
+.tool-card:hover,
+.project-card:hover {
+  background: var(--lg-card-hover-bg);
+  border-color: var(--lg-border-strong);
+  box-shadow: var(--lg-shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+.tool-card .tool-icon {
+  transition: transform var(--dur-mid) var(--ease-spring);
+}
+
+.tool-card:hover .tool-icon {
+  transform: scale(1.07);
+}
+
+/* 看板列与拖拽槽位弹性反馈 */
+.board-column {
+  border-radius: 16px;
+  border: 1px solid var(--lg-border);
+  transition:
+    background var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy);
+}
+
+.board-column.drop-over {
+  border-color: var(--lg-border-strong);
+  box-shadow: inset 0 0 0 1px var(--lg-focus-ring);
+}
+
+.board-slot {
+  transition:
+    height var(--dur-fast) var(--ease-spring),
+    background var(--dur-fast) var(--ease-snappy),
+    opacity var(--dur-fast) var(--ease-snappy);
+}
+
+/* 表格容器与行悬浮微亮 */
+.table-wrap {
+  border-radius: var(--lg-radius-card);
+  border-color: var(--lg-border);
+  background: var(--lg-card-bg);
+  box-shadow: var(--lg-shadow-card);
+  overflow: auto;
+}
+
+.table-wrap tbody tr {
+  transition: background var(--dur-fast) var(--ease-snappy);
+}
+
+.table-wrap tbody tr:hover {
+  background: rgba(48, 126, 150, 0.055);
+}
+
+html[data-theme="dark"] .table-wrap tbody tr:hover {
+  background: rgba(138, 200, 214, 0.07);
+}
+
+/* 聊天：消息平滑显现、思考态微光（Lucian #453）、悬浮 Prompt Dock（Lucian #452） */
+.message {
+  animation: lg-msg-in 200ms var(--ease-snappy);
+}
+
+.message.user {
+  border-radius: 16px 16px 6px 16px;
+  border: 1px solid var(--lg-border);
+  box-shadow: inset 0 1px 0 var(--lg-rim);
+}
+
+.message.assistant > strong:first-child {
+  display: inline-block;
+}
+
+.chat-thinking-label {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    var(--command) 50%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: lg-shimmer 2.1s linear infinite;
+}
+
+.chat-composer {
+  border-radius: 20px;
+  border: 1px solid var(--lg-rim);
+  background: var(--lg-card-hover-bg);
+  box-shadow:
+    0 10px 30px rgba(32, 58, 76, 0.1),
+    inset 0 1px 0 var(--lg-rim);
+  transition:
+    border-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-mid) var(--ease-snappy);
+}
+
+.chat-composer:focus-within {
+  border-color: var(--lg-border-strong);
+  box-shadow:
+    0 12px 34px rgba(32, 58, 76, 0.13),
+    0 0 0 3px var(--lg-focus-ring),
+    inset 0 1px 0 var(--lg-rim);
+}
+
+html[data-theme="dark"] .chat-composer {
+  border-color: var(--lg-border);
+  border-top-color: var(--lg-rim);
+}
+
+/* 邮件与会议实时指示器动效 */
+.mail-message-item,
+.mail-tree-folders button,
+.conversation-row > button:first-child {
+  border-radius: 10px;
+  transition:
+    background var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-fast) var(--ease-snappy);
+}
+
+.mail-sync-indicator.syncing {
+  animation: lg-pulse-ring 1.6s ease-out infinite;
+}
+
+.meeting-recording-badge,
+.sidebar nav a[href="#/meetings"] small {
+  animation: lg-record-pulse 1.6s ease-in-out infinite;
+}
+
+/* 设置横向标签平滑高亮 */
+.settings-tabs button {
+  border-radius: 10px 10px 0 0;
+  transition:
+    color var(--dur-fast) var(--ease-snappy),
+    background var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-mid) var(--ease-snappy);
+}
+
+.settings-tabs button:hover {
+  background: rgba(48, 126, 150, 0.06);
+}
+
+/* 全业务页面面板、工具栏、列表项与空状态统一液态玻璃质感 */
+.statistics-panel,
+.tool-panel,
+.totp-panel {
+  border-radius: var(--lg-radius-card);
+  border-color: var(--lg-border);
+  background: var(--lg-card-bg);
+  box-shadow: var(--lg-shadow-card);
+}
+
+.statistics-tabs,
+.bookmark-import-tabs {
+  border-radius: 12px;
+  background: rgba(114, 142, 160, 0.11);
+  border: 1px solid rgba(114, 142, 160, 0.1);
+  padding: 3px;
+}
+
+html[data-theme="dark"] .statistics-tabs,
+html[data-theme="dark"] .bookmark-import-tabs {
+  background: rgba(18, 20, 23, 0.46);
+  border-color: var(--lg-border);
+}
+
+.meeting-list-item,
+.mail-draft-row,
+.natapp-row,
+.general-setting-row,
+.close-behavior-row,
+.exchange-row {
+  border-radius: 11px;
+  transition:
+    background var(--dur-fast) var(--ease-snappy),
+    border-color var(--dur-fast) var(--ease-snappy),
+    box-shadow var(--dur-fast) var(--ease-snappy);
+}
+
+.meeting-list-item:hover,
+.mail-draft-row:hover {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+html[data-theme="dark"] .meeting-list-item:hover,
+html[data-theme="dark"] .mail-draft-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.meeting-list-item.active,
+.mail-message-item.active {
+  background: var(--lg-pill-active-bg);
+  box-shadow:
+    0 3px 10px rgba(28, 54, 70, 0.08),
+    inset 0 1px 0 var(--lg-rim);
+}
+
+html[data-theme="dark"] .meeting-list-item.active,
+html[data-theme="dark"] .mail-message-item.active {
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.wb-calendar-toolbar,
+.bugs-toolbar,
+.projects-toolbar,
+.mail-reader-toolbar {
+  border-radius: 12px;
+}
+
+.empty,
+.mail-empty,
+.mail-reader-empty,
+.meeting-empty,
+.tool-empty,
+.backup-empty,
+.statistics-chart-empty,
+.task-completion-empty {
+  animation: lg-view-in var(--dur-mid) var(--ease-snappy);
+}
+
+/* 窄屏 900px 紧凑兼容 */
+@media (max-width: 960px) {
+  .app-shell {
+    padding: 6px;
+    gap: 6px;
+  }
+  .sidebar {
+    width: 196px;
+    border-radius: 14px;
+  }
+  .workspace {
+    border-radius: 14px;
+  }
+}
+
+/* ==========================================================================
+   无障碍与系统偏好降级保护
+   ========================================================================== */
+
+@media (prefers-reduced-transparency: reduce) {
+  .sidebar,
+  .workspace,
+  .topbar,
+  .statusbar,
+  .chat-main > header,
+  .glass-select-content,
+  .update-popover,
+  .assignment-popover,
+  .date-range-popover {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  button:active:not(:disabled),
+  .task-card:hover,
+  .app-card:hover,
+  .resource-card:hover,
+  .tool-card:hover,
+  .project-card:hover,
+  .toast:hover {
+    transform: none !important;
+  }
+}

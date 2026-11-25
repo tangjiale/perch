@@ -864,7 +864,7 @@ export default function Chat({
             )}
           {run && (
             <article className="message assistant">
-              <strong>正在生成…</strong>
+              <strong className="chat-thinking-label">正在生成…</strong>
               <SafeMarkdown onError={notify}>{stream}</SafeMarkdown>
               {!!refs.length && (
                 <div className="citations">

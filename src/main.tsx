@@ -34,6 +34,8 @@ import {
   ChartNoAxesCombined,
   Mail as MailIcon,
   Mic,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { api, native, emptySnapshot, appVersion } from "./lib/api";
 import {
@@ -65,6 +67,7 @@ const Tools = lazy(() => import("./features/Tools"));
 import "./styles.css";
 import "./glass.css";
 import "./theme.css";
+import "./liquid-motion.css";
 let nativeAppearance: AppearanceMode | undefined;
 const disposeAppearance = initializeAppearance(() => {
   const mode = getAppearance().mode;
@@ -116,6 +119,24 @@ function App() {
   } = useQuery({ queryKey: ["storage"], queryFn: api.info });
   const [search, setSearch] = useState(""),
     [toast, setToast] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("perch:sidebar-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebar = () => {
+    setSidebarCollapsed((previous) => {
+      const next = !previous;
+      try {
+        localStorage.setItem("perch:sidebar-collapsed", next ? "1" : "0");
+      } catch {
+        // 存储不可用时仍允许当前会话折叠。
+      }
+      return next;
+    });
+  };
   const toastTimer = useRef<number | undefined>(undefined);
   useEffect(
     () => () => {
@@ -215,20 +236,32 @@ function App() {
   const { data: assignmentInbox } = useQuery({queryKey: assignmentKey(info.workspaceId), queryFn: () => assignmentApi.list(info.workspaceId), enabled: !!info.workspaceId});
   return (
     <div className="app-shell" onDragOver={preventFileNavigation} onDrop={preventFileNavigation}>
-      <aside className="sidebar">
-        <div className="brand">
-          <NavLink to="/" aria-label="栖点首页">
-            <span className="brandmark">
-              <img src="/workbench-logo.svg" alt="" />
-            </span>
-          </NavLink>
-          <div>
-            <div className="brand-title">
-              <NavLink to="/">栖点</NavLink>{" "}
-              <UpdatePopover version={info.version} />
+      <aside className={sidebarCollapsed ? "sidebar collapsed" : "sidebar"}>
+        <div className="sidebar-header">
+          <div className="brand">
+            <NavLink to="/" aria-label="栖点首页" title="栖点首页">
+              <span className="brandmark">
+                <img src="/workbench-logo.svg" alt="" />
+              </span>
+            </NavLink>
+            <div>
+              <div className="brand-title">
+                <NavLink to="/">栖点</NavLink>{" "}
+                <UpdatePopover version={info.version} />
+              </div>
+              <small>PERCH</small>
             </div>
-            <small>PERCH</small>
           </div>
+          <button
+            type="button"
+            className="icon-button sidebar-collapse-btn"
+            aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            aria-expanded={!sidebarCollapsed}
+            onClick={toggleSidebar}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
         </div>
         <nav>
           {navigation.map(([path, label, Icon]) => (
@@ -237,6 +270,7 @@ function App() {
               to={path}
               key={path}
               aria-label={label}
+              title={sidebarCollapsed ? label : undefined}
               onClick={() => setSearch("")}
             >
               <Icon size={18} />
@@ -272,7 +306,10 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <NavLink to="/settings">
+          <NavLink
+            to="/settings"
+            title={sidebarCollapsed ? "设置与连接" : undefined}
+          >
             <Settings2 size={18} />
             <span>设置与连接</span>
           </NavLink>
@@ -371,7 +408,9 @@ function App() {
                   />
                 </div>
               )}
-              <Routes>
+              {location.pathname !== "/meetings" && (
+                <div className="route-stage" key={location.pathname}>
+                  <Routes>
                 <Route path="/meetings" element={null} />
                 <Route
                   path="/"
@@ -457,7 +496,9 @@ function App() {
                     />
                   }
                 />
-              </Routes>
+                  </Routes>
+                </div>
+              )}
             </Suspense>
             </ErrorBoundary>
           </main>

@@ -309,3 +309,47 @@ MCP 以连接列表和新增/编辑弹框呈现，包含名称、传输方式、
 预览仅在会话内保存修改，刷新重置。禅道状态文字与颜色分别由远端状态派生，不随个人状态变化。正式设计目标中的排序、跨日时区处理、数据库、安全存储、同步日志、真实远端操作与原生系统能力尚未实现，不纳入本轮完成声明。
 
 正式实现待确认：产品命名、禅道 22.0 认证/账号权限/筛选规则、通知、重复任务、多设备同步。以上不阻塞本轮设计。
+
+---
+
+## 9. 平衡版 macOS Liquid Glass 视觉与动效规范（2026-11 · 当前前端开发基线）
+
+本节定义正式 React + Tauri 应用的现行视觉、材质与动效规范（实现于 `src/glass.css`、`src/theme.css`、`src/liquid-motion.css`），后续所有新增页面、组件与交互改动均须严格遵守本规范。
+
+### 9.1 设计原则与品牌基调
+- **平衡版 Liquid Glass**：对标最新 macOS 液态玻璃层次与物理阻尼反馈，同时保持桌面效率工具的紧凑信息密度；克制使用装饰性动画与过度透明，确保文字与数据在浅色、深色、跟随系统三种模式下均具备高可读性。
+- **品牌色延续**：保留栖点青灰色主调（浅色主命令色 `--command: #286d84`，深色 `--command: #80c0d0` / `--theme-accent: #9bd5e1`）；不引入无关的强饱和霓虹渐变。
+- **Lucian UX/UI 交互微细节**：吸收无依赖桌面微交互（可折叠悬浮侧栏、胶囊分段控件、弹性 Toast、AI 思考态流光、轻量化空状态淡入），所有交互保持中文语义与键盘可访问性。
+
+### 9.2 材质层级与语义 Token（`src/liquid-motion.css`）
+新增界面与组件**禁止硬编码不透明纯白/纯黑背景或生硬直角边框**，统一引用以下语义变量：
+
+| 层次 | 语义变量 | 适用对象与约束 |
+| --- | --- | --- |
+| 环境底布 | `--lg-shell-bg` | 窗口根背景 `body`，提供轻微青灰环境光，供上层玻璃折射 |
+| 悬浮壳层 | `--lg-sidebar-bg`、`--lg-workspace-bg`、`--lg-bar-bg`、`--lg-shadow-shell`、`--lg-radius-shell (18px)` | 悬浮圆角侧栏（支持折叠至 `72px`）、右侧主工作区、顶栏与状态栏 |
+| 卡片与面板 | `--lg-card-bg`、`--lg-card-hover-bg`、`--lg-shadow-card`、`--lg-shadow-card-hover`、`--lg-radius-card (14px)` | 任务/应用/项目/工具/统计/设置卡片、表格容器 `.table-wrap` |
+| 激活胶囊 | `--lg-pill-active-bg`、`--lg-rim` | 侧栏当前项、分段控件与列表选中态，含顶部镜面高光 `inset 0 1px 0` |
+| 浮层与弹窗 | `--lg-popover-bg`、`--lg-shadow-popover` | `Modal`（圆角 `22px`）、`GlassSelect`、`UpdatePopover`、日期与通知浮层 |
+| 边框与焦环 | `--lg-border`、`--lg-border-strong`、`--lg-focus-ring` | 统一细边框与柔和外发光焦环 `0 0 0 3px var(--lg-focus-ring)` |
+
+### 9.3 物理阻尼动效规范
+- **统一缓动与时长**：
+  - `--ease-spring: cubic-bezier(0.22, 1.12, 0.36, 1)`（弹层、弹窗、卡片微浮、图标微缩放）
+  - `--ease-snappy: cubic-bezier(0.2, 0.9, 0.3, 1)`（按钮、导航悬浮、分段切换、路由淡入）
+  - `--dur-fast: 150ms`、`--dur-mid: 220ms`、`--dur-slow: 320ms`；高频办公交互严禁超过 `320ms`。
+- **关键微交互约定**：
+  - **按钮**：按压微缩 `scale(0.975)`；主按钮悬浮微抬 `translateY(-0.5px)` 并增强顶部镜面高光。
+  - **卡片**：可交互卡片（任务/应用/项目/工具）悬浮微浮 `translateY(-2px)` 并过渡到 `--lg-shadow-card-hover`。
+  - **弹窗与浮层**：`Modal` 使用 `@keyframes lg-modal-in`（`scale(0.955) translateY(8px) -> 1`）与遮罩淡入；下拉/气泡使用 `lg-popover-in`；Toast 使用 `lg-toast-in` 弹性上滑。
+  - **实时状态反馈**：AI 生成中标签使用 `.chat-thinking-label` 柔和流光；邮件同步与会议录音使用脉冲光环。
+  - **系统无障碍降级**：必须保留 `@media (prefers-reduced-motion: reduce)` 与 `@media (prefers-reduced-transparency: reduce)` 降级规则。
+
+### 9.4 布局与 WebKit / 兼容性红线（必守）
+1. **原生 `<dialog>` 模糊层分离**：macOS WKWebView 中直接在 `.modal` 上设置 `backdrop-filter` 会改变内部 `fixed` 子元素（如 Radix `GlassSelect`）的定位坐标；模糊效果**必须**放在 `.modal::before` 独立伪元素层上。
+2. **路由容器文档流区分**：`.route-stage` 默认保持块级文档流（`min-height: 100%`），仅对需要 100% 满高分栏的 `.chat-page .route-stage` 与 `.mail-page .route-stage` 启用 `display: flex; flex-direction: column; height: 100%`，防止常规长页面的顶部标签栏在 Flex 容器中被压缩消失。
+3. **两类 Tab 样式严格区分**：
+   - 紧凑分类切换（`.segmented`、`.tabs:not(.settings-tabs)`、`.mail-list-filters`、`.statistics-tabs`）：使用 macOS 液态玻璃胶囊分段控件，`border-bottom: 0`，禁止残留底部下划线。
+   - 多项横向宽标签栏（`.settings-tabs`）：保留全宽横向滚动条、`flex-shrink: 0` 与底部激活指示线，不强行压缩进窄胶囊。
+4. **窄屏与性能控制**：窗口最小宽度 `900px`（`≤ 960px` 自动收紧外边距与侧栏宽度）无横向溢出或遮挡；避免在高频滚动列表内部多层嵌套 `backdrop-filter`，保证 WKWebView 与 WebView2 流畅度。
+
