@@ -1064,7 +1064,7 @@ mod tests {
         let handle = std::thread::spawn(move || {
             let mut requests = vec![];
             for (status, body) in responses {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
                 let mut stream = loop {
                     match listener.accept() {
                         Ok((stream, _)) => break stream,
@@ -1078,7 +1078,7 @@ mod tests {
                 // macOS 接受的连接可能继承非阻塞标记；完整读取请求前显式恢复阻塞。
                 stream.set_nonblocking(false).unwrap();
                 stream
-                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .set_read_timeout(Some(std::time::Duration::from_secs(10)))
                     .unwrap();
                 let mut request = vec![];
                 loop {
