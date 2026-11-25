@@ -424,7 +424,7 @@ pub async fn meeting_realtime_start(
             first_sequence: sequence,
             tx,
             result: Mutex::new(Transcript {
-                coarse_timing: model == MeetingSpeechModel::R2t2,
+                coarse_timing: model.audio_cpp_model().is_some(),
                 ..Transcript::default()
             }),
             stopping: AtomicBool::new(false),
@@ -481,8 +481,8 @@ enum RecognitionEngine {
 
 impl RecognitionEngine {
     fn start(model: MeetingSpeechModel, path: &Path) -> Result<Self, String> {
-        if model == MeetingSpeechModel::R2t2 {
-            return r2t2::Stream::start(path).map(Self::R2t2);
+        if let Some(engine_model) = model.audio_cpp_model() {
+            return r2t2::Stream::start(engine_model, path).map(Self::R2t2);
         }
         let recognizer = meeting_speech::acquire(model, path)?;
         Ok(Self::Sherpa {

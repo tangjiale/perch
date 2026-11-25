@@ -264,6 +264,7 @@ static DOWNLOAD: Mutex<Download> = Mutex::new(Download::Idle);
 static DOWNLOAD_480: Mutex<Download> = Mutex::new(Download::Idle);
 static ZIPFORMER_ZH_DOWNLOAD: Mutex<Download> = Mutex::new(Download::Idle);
 static R2T2_DOWNLOAD: Mutex<Download> = Mutex::new(Download::Idle);
+static QWEN3_ASR_06B_DOWNLOAD: Mutex<Download> = Mutex::new(Download::Idle);
 static SPEAKER_DOWNLOAD: Mutex<Download> = Mutex::new(Download::Idle);
 const SPEAKER_FILES: [ModelFile; 2] = [
     ModelFile {
@@ -338,16 +339,27 @@ pub enum MeetingSpeechModel {
     #[serde(rename = "zipformer-zh")]
     ZipformerZh,
     R2t2,
+    #[serde(rename = "qwen3-asr-0.6b")]
+    Qwen3Asr06b,
     Speaker,
 }
 
 impl MeetingSpeechModel {
+    pub(crate) fn audio_cpp_model(self) -> Option<r2t2::AudioCppModel> {
+        match self {
+            Self::R2t2 => Some(r2t2::AudioCppModel::R2t2),
+            Self::Qwen3Asr06b => Some(r2t2::AudioCppModel::Qwen3Asr06b),
+            _ => None,
+        }
+    }
+
     fn directory(self) -> &'static str {
         match self {
             Self::Transcription => RELEASE,
             Self::XAsr480 => RELEASE_480,
             Self::ZipformerZh => ZIPFORMER_ZH_RELEASE,
             Self::R2t2 => "confucius4-r2t2-q4",
+            Self::Qwen3Asr06b => "qwen3-asr-0.6b-q8",
             Self::Speaker => SPEAKER_RELEASE,
         }
     }
@@ -358,6 +370,7 @@ impl MeetingSpeechModel {
             Self::XAsr480 => &DOWNLOAD_480,
             Self::ZipformerZh => &ZIPFORMER_ZH_DOWNLOAD,
             Self::R2t2 => &R2T2_DOWNLOAD,
+            Self::Qwen3Asr06b => &QWEN3_ASR_06B_DOWNLOAD,
             Self::Speaker => &SPEAKER_DOWNLOAD,
         }
     }
@@ -367,7 +380,7 @@ impl MeetingSpeechModel {
             Self::Transcription => &FILES,
             Self::XAsr480 => &ASR_480_FILES,
             Self::ZipformerZh => &ZIPFORMER_ZH_FILES,
-            Self::R2t2 => &[],
+            Self::R2t2 | Self::Qwen3Asr06b => &[],
             Self::Speaker => &SPEAKER_FILES,
         }
     }
@@ -381,8 +394,8 @@ impl MeetingSpeechModel {
     }
 
     fn total_bytes(self) -> u64 {
-        if self == Self::R2t2 {
-            return r2t2::total_bytes();
+        if let Some(engine_model) = self.audio_cpp_model() {
+            return r2t2::total_bytes(engine_model);
         }
         self.archive().map_or_else(
             || self.files().iter().map(|file| file.bytes).sum(),
@@ -391,8 +404,8 @@ impl MeetingSpeechModel {
     }
 
     fn unsupported_reason(self) -> Option<&'static str> {
-        if self == Self::R2t2 {
-            return r2t2::unsupported_reason();
+        if let Some(engine_model) = self.audio_cpp_model() {
+            return r2t2::unsupported_reason(engine_model);
         }
         None
     }
@@ -410,8 +423,8 @@ impl MeetingSpeechModel {
     }
 
     fn installed(self, path: &Path) -> bool {
-        if self == Self::R2t2 {
-            return r2t2::is_installed(path);
+        if let Some(engine_model) = self.audio_cpp_model() {
+            return r2t2::is_installed(engine_model, path);
         }
         has_files(path, self.files())
     }
@@ -558,6 +571,172 @@ pub(crate) fn load_live_speaker_models(
     Ok((diarizer, extractor))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechRecommendation {
+    pub model: MeetingSpeechModel,
+    pub device_summary: String,
+    pub reason: String,
+    pub cpu_cores: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_gib: Option<u64>,
+    pub accelerator: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeviceProfile {
+    os: &'static str,
+    arch: &'static str,
+    cpu_cores: usize,
+    memory_gib: Option<u64>,
+}
+
+fn detect_memory_gib() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut memsize: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        let ok = unsafe {
+            libc::sysctlbyname(
+                c"hw.memsize".as_ptr(),
+                (&mut memsize as *mut u64).cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        (ok == 0 && memsize > 0).then(|| (memsize + (1 << 29)) / (1 << 30))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        #[repr(C)]
+        struct MemoryStatusEx {
+            dw_length: u32,
+            dw_memory_load: u32,
+            ull_total_phys: u64,
+            ull_avail_phys: u64,
+            ull_total_page_file: u64,
+            ull_avail_page_file: u64,
+            ull_total_virtual: u64,
+            ull_avail_virtual: u64,
+            ull_avail_extended_virtual: u64,
+        }
+        extern "system" {
+            fn GlobalMemoryStatusEx(lp_buffer: *mut MemoryStatusEx) -> i32;
+        }
+        let mut status = MemoryStatusEx {
+            dw_length: std::mem::size_of::<MemoryStatusEx>() as u32,
+            dw_memory_load: 0,
+            ull_total_phys: 0,
+            ull_avail_phys: 0,
+            ull_total_page_file: 0,
+            ull_avail_page_file: 0,
+            ull_total_virtual: 0,
+            ull_avail_virtual: 0,
+            ull_avail_extended_virtual: 0,
+        };
+        let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
+        (ok != 0 && status.ull_total_phys > 0)
+            .then(|| (status.ull_total_phys + (1 << 29)) / (1 << 30))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if pages > 0 && page_size > 0 {
+            let total = (pages as u64).saturating_mul(page_size as u64);
+            Some((total + (1 << 29)) / (1 << 30))
+        } else {
+            None
+        }
+    }
+}
+
+fn detect_device_profile() -> DeviceProfile {
+    DeviceProfile {
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+        cpu_cores: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1),
+        memory_gib: detect_memory_gib(),
+    }
+}
+
+fn format_device_summary(profile: &DeviceProfile, accelerator: &str) -> String {
+    let platform = match (profile.os, profile.arch) {
+        ("macos", "aarch64") => "Apple 芯片 Mac",
+        ("macos", _) => "Intel Mac",
+        ("windows", "x86_64") => "Windows x64",
+        ("windows", "aarch64") => "Windows ARM64",
+        ("windows", _) => "Windows",
+        ("linux", "x86_64") => "Linux x64",
+        ("linux", "aarch64") => "Linux ARM64",
+        _ => "本机设备",
+    };
+    let accel_label = if accelerator == "metal" {
+        "Metal 加速"
+    } else {
+        "CPU 推理"
+    };
+    match profile.memory_gib {
+        Some(mem) => format!("{platform} · {} 核 · {mem} GB 内存 · {accel_label}", profile.cpu_cores),
+        None => format!("{platform} · {} 核 · {accel_label}", profile.cpu_cores),
+    }
+}
+
+fn recommend_for_device(profile: &DeviceProfile) -> SpeechRecommendation {
+    let is_apple_silicon = profile.os == "macos" && profile.arch == "aarch64";
+    let is_windows_x64 = profile.os == "windows" && profile.arch == "x86_64";
+    let accelerator = if is_apple_silicon { "metal" } else { "cpu" };
+    let device_summary = format_device_summary(profile, accelerator);
+
+    let (model, reason) = if is_apple_silicon {
+        if profile.memory_gib.is_none_or(|mem| mem >= 16) {
+            (
+                MeetingSpeechModel::R2t2,
+                "检测到 Apple 芯片（Metal 加速）与充足内存，推荐有道 Confucius4-R2T2，兼顾 320 ms 低延迟与高准确率；若需多语种或中文方言识别，也可选 Qwen3-ASR-0.6B。",
+            )
+        } else {
+            (
+                MeetingSpeechModel::Qwen3Asr06b,
+                "检测到 Apple 芯片（Metal 加速）但统一内存小于 16 GB，推荐更轻量的 Qwen3-ASR-0.6B，在 8 GB 内存下更省资源且支持多语种与中文方言。",
+            )
+        }
+    } else if is_windows_x64 {
+        if profile.cpu_cores >= 8 && profile.memory_gib.unwrap_or(0) >= 16 {
+            (
+                MeetingSpeechModel::Qwen3Asr06b,
+                "检测到 Windows x64 多核与 16 GB 以上内存；当前运行包使用 CPU 推理，0.6B 规模的 Qwen3-ASR-0.6B 较 1.7B 的有道模型更轻快，且支持多语种与中文方言。",
+            )
+        } else {
+            (
+                MeetingSpeechModel::Transcription,
+                "当前设备 CPU 核心数或内存偏紧，推荐轻量的 X-ASR 160 ms（INT8 CPU，约 134 MB），可稳定保持实时转录速度。",
+            )
+        }
+    } else {
+        (
+            MeetingSpeechModel::Transcription,
+            "当前系统架构不支持 audio.cpp 运行包，推荐跨平台轻量的 X-ASR 160 ms（INT8 CPU，约 134 MB）。",
+        )
+    };
+
+    SpeechRecommendation {
+        model,
+        device_summary,
+        reason: reason.into(),
+        cpu_cores: profile.cpu_cores,
+        memory_gib: profile.memory_gib,
+        accelerator,
+    }
+}
+
+#[tauri::command]
+pub fn meeting_speech_recommendation() -> SpeechRecommendation {
+    recommend_for_device(&detect_device_profile())
+}
+
 #[tauri::command]
 pub fn meeting_speech_status(
     app: AppHandle,
@@ -685,8 +864,8 @@ pub fn install_meeting_speech_model(
     tauri::async_runtime::spawn(async move {
         let result = if let Some(archive) = model.archive() {
             install_stream_model(&path, model, archive).await
-        } else if model == MeetingSpeechModel::R2t2 {
-            r2t2::install(&path, status).await
+        } else if let Some(engine_model) = model.audio_cpp_model() {
+            r2t2::install(engine_model, &path, status).await
         } else {
             install(&path, model.files(), status).await
         };
@@ -1001,7 +1180,7 @@ fn verify(path: &Path, file: &ModelFile) -> bool {
 }
 
 fn prepare_in_background(model: MeetingSpeechModel, path: PathBuf) -> Result<(), String> {
-    if model == MeetingSpeechModel::R2t2 {
+    if model.audio_cpp_model().is_some() {
         return Ok(());
     }
     if !matches!(
@@ -1199,7 +1378,13 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(saved).unwrap(), expected);
 
-        for id in ["transcription", "x-asr-480", "zipformer-zh", "r2t2"] {
+        for id in [
+            "transcription",
+            "x-asr-480",
+            "zipformer-zh",
+            "r2t2",
+            "qwen3-asr-0.6b",
+        ] {
             let expected = serde_json::json!({
                 "mode": "local", "localModelId": id, "localSpeakerDiarization": true
             });
@@ -1208,6 +1393,53 @@ mod tests {
             assert_eq!(serde_json::to_value(saved).unwrap(), expected);
         }
         assert!(MeetingSpeechModel::Speaker.transcription().is_err());
+    }
+
+    #[test]
+    fn device_recommendation_selects_best_model_for_hardware() {
+        let mac_16g = recommend_for_device(&DeviceProfile {
+            os: "macos",
+            arch: "aarch64",
+            cpu_cores: 10,
+            memory_gib: Some(16),
+        });
+        assert_eq!(mac_16g.model, MeetingSpeechModel::R2t2);
+        assert_eq!(mac_16g.accelerator, "metal");
+        assert!(mac_16g.device_summary.contains("16 GB"));
+
+        let mac_8g = recommend_for_device(&DeviceProfile {
+            os: "macos",
+            arch: "aarch64",
+            cpu_cores: 8,
+            memory_gib: Some(8),
+        });
+        assert_eq!(mac_8g.model, MeetingSpeechModel::Qwen3Asr06b);
+        assert_eq!(mac_8g.accelerator, "metal");
+
+        let win_strong = recommend_for_device(&DeviceProfile {
+            os: "windows",
+            arch: "x86_64",
+            cpu_cores: 12,
+            memory_gib: Some(16),
+        });
+        assert_eq!(win_strong.model, MeetingSpeechModel::Qwen3Asr06b);
+        assert_eq!(win_strong.accelerator, "cpu");
+
+        let win_light = recommend_for_device(&DeviceProfile {
+            os: "windows",
+            arch: "x86_64",
+            cpu_cores: 4,
+            memory_gib: Some(8),
+        });
+        assert_eq!(win_light.model, MeetingSpeechModel::Transcription);
+
+        let intel_mac = recommend_for_device(&DeviceProfile {
+            os: "macos",
+            arch: "x86_64",
+            cpu_cores: 8,
+            memory_gib: Some(32),
+        });
+        assert_eq!(intel_mac.model, MeetingSpeechModel::Transcription);
     }
 
     #[test]

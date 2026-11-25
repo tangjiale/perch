@@ -262,10 +262,10 @@
   };
   const speakerToggle = () => document.querySelector(".meeting-speech-speaker-toggle input");
   const recommended = modelCard("r2t2").querySelector("h3");
-  assert(modelCard("x-asr-480") && modelCard("zipformer-zh") &&
+  assert(modelCard("qwen3-asr-0.6b") && modelCard("x-asr-480") && modelCard("zipformer-zh") &&
     recommended.textContent.includes("有道 Confucius4-R2T2") &&
     recommended.querySelector(".meeting-speech-recommended")?.textContent === "推荐",
-    "四款模型分别展示，推荐标签位于有道 Confucius4-R2T2 标题旁");
+    "五款模型分别展示，推荐标签位于有道 Confucius4-R2T2 标题旁");
   assert(localModelField().textContent.includes("X-ASR 160 ms") && selectedModel() === "transcription" &&
     !window.__meetingSpeechPreferences.localModelId && calls("save_meeting_speech_preferences").length === 0,
     "打开旧设置时仍使用 X-ASR 160 ms，推荐标签不写入偏好");
@@ -274,7 +274,7 @@
   r2t2Download().click();
   assert(modelCard("r2t2").textContent.includes("模拟设备缺少 Vulkan 支持") &&
     calls("install_meeting_speech_model").length === 0, "不支持的设备显示原因并禁用 R2T2 下载");
-  assert(cardOrder() === "r2t2,transcription,x-asr-480,zipformer-zh",
+  assert(cardOrder() === "r2t2,transcription,qwen3-asr-0.6b,x-asr-480,zipformer-zh",
     "推荐模型置顶，已下载模型紧随其后");
   localModelField().click();
   await until(() => localModelOption("Zipformer 中文"));
@@ -345,7 +345,7 @@
   assert(meeting().markers.length === 2, "串行打点与分片识别都完成且无丢失");
   assert(
     window.__calls
-      .filter((call) => !["meeting_speech_status", "meeting_speaker_model_status"].includes(call.name))
+      .filter((call) => !["meeting_speech_status", "meeting_speech_recommendation", "meeting_speaker_model_status"].includes(call.name))
       .every((call) => call.args.workspaceId === "fixture"),
     "新增领域操作均绑定当前工作空间",
   );
@@ -403,7 +403,7 @@
   Object.assign(window.__speechModels["x-asr-480"], { state: "ready", canUninstall: true });
   await until(() => localModelOption("X-ASR 480 ms")?.getAttribute("aria-disabled") !== "true" &&
     modelCard("x-asr-480").textContent.includes("已安装"));
-  assert(cardOrder() === "r2t2,x-asr-480,transcription,zipformer-zh",
+  assert(cardOrder() === "r2t2,x-asr-480,qwen3-asr-0.6b,transcription,zipformer-zh",
     "下载完成后选项立即可用，卡片移到未下载模型前面");
   assert(!selectedModel() && calls("prepare_meeting_speech_model").length === warmupCalls &&
     window.__meetingSpeechPreferences.mode === "api", "下载安装完成不会自动选用或预加载模型");
@@ -441,7 +441,7 @@
   localModelField().click();
   await until(() => localModelOption("X-ASR 480 ms"));
   assert(localModelOption("X-ASR 480 ms").getAttribute("aria-disabled") === "true" &&
-    cardOrder() === "r2t2,transcription,x-asr-480,zipformer-zh",
+    cardOrder() === "r2t2,qwen3-asr-0.6b,transcription,x-asr-480,zipformer-zh",
     "卸载后恢复禁选并回到未下载组");
   await closeModelOptions();
   window.__workflowChecks = checks;

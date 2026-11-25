@@ -1,8 +1,23 @@
 import type { Snapshot } from "./types";
 
-export const localMeetingSpeechModelIds = ["transcription", "x-asr-480", "zipformer-zh", "r2t2"] as const;
+export const localMeetingSpeechModelIds = [
+  "r2t2",
+  "qwen3-asr-0.6b",
+  "transcription",
+  "x-asr-480",
+  "zipformer-zh",
+] as const;
 export type LocalMeetingSpeechModelId = typeof localMeetingSpeechModelIds[number];
 export const defaultLocalMeetingSpeechModelId: LocalMeetingSpeechModelId = "transcription";
+
+export type MeetingSpeechRecommendation = {
+  model: LocalMeetingSpeechModelId;
+  deviceSummary: string;
+  reason: string;
+  cpuCores: number;
+  memoryGib?: number;
+  accelerator: "metal" | "cpu";
+};
 
 export const localMeetingSpeechModels: Record<LocalMeetingSpeechModelId, {
   name: string;
@@ -12,6 +27,21 @@ export const localMeetingSpeechModels: Record<LocalMeetingSpeechModelId, {
   sizeNote?: string;
   recommended?: boolean;
 }> = {
+  r2t2: {
+    name: "有道 Confucius4-R2T2",
+    devices: "Apple 芯片 Mac · Metal / Windows x64 · CPU",
+    speed: "按 320 ms 音频块处理，出字速度取决于设备性能和语音内容。",
+    accuracy: "支持中英文流式转录。有道公开会议评测的字错误率为 6.74%，与本机量化版的实际结果可能不同。",
+    sizeNote: "模型权重约 1.19 GB，另需下载运行包。",
+    recommended: true,
+  },
+  "qwen3-asr-0.6b": {
+    name: "Qwen3-ASR-0.6B",
+    devices: "Apple 芯片 Mac · Metal / Windows x64 · CPU",
+    speed: "按约 4 秒音频窗口流式输出，0.6B 参数量在 CPU 与 8 GB 内存设备上更轻快。",
+    accuracy: "支持 30 种语言与 22 种中文方言识别，适合中英混说、方言及复杂会议场景。",
+    sizeNote: "模型权重约 1.15 GB（Q8_0），另需下载运行包。",
+  },
   transcription: {
     name: "X-ASR 160 ms",
     devices: "macOS / Windows · INT8，CPU 推理",
@@ -29,14 +59,6 @@ export const localMeetingSpeechModels: Record<LocalMeetingSpeechModelId, {
     devices: "macOS / Windows · CPU 推理",
     speed: "中文首字快，适合优先查看实时文字。",
     accuracy: "已测普通话样本的准确率低于 X-ASR，含专有名词的场景需实测。",
-  },
-  r2t2: {
-    name: "有道 Confucius4-R2T2",
-    devices: "Apple 芯片 Mac · Metal / Windows x64 · CPU",
-    speed: "按 320 ms 音频块处理，出字速度取决于设备性能和语音内容。",
-    accuracy: "支持中英文流式转录。有道公开会议评测的字错误率为 6.74%，与本机量化版的实际结果可能不同。",
-    sizeNote: "模型权重约 1.19 GB，另需下载运行包。",
-    recommended: true,
   },
 };
 

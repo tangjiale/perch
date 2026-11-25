@@ -23,13 +23,25 @@
         modelPath: `/fixture/.perch/models/meeting-speech/${directory}`,
       });
       window.__speechModels = {
-        transcription: window.__speechModel,
-        "x-asr-480": missingModel("x-asr-480", 133895136),
-        "zipformer-zh": missingModel("zipformer-zh", 167360920),
         r2t2: {
           ...missingModel("confucius4-r2t2-q4", 1_310_000_000),
           unsupportedReason: "模拟设备缺少 Vulkan 支持",
         },
+        "qwen3-asr-0.6b": {
+          ...missingModel("qwen3-asr-0.6b-q8", 1_191_703_709),
+          unsupportedReason: "模拟设备缺少 Vulkan 支持",
+        },
+        transcription: window.__speechModel,
+        "x-asr-480": missingModel("x-asr-480", 133895136),
+        "zipformer-zh": missingModel("zipformer-zh", 167360920),
+      };
+      window.__speechRecommendation = {
+        model: "r2t2",
+        deviceSummary: "Apple 芯片 Mac · 10 核 · 16 GB 内存 · Metal 加速",
+        reason: "检测到 Apple 芯片（Metal 加速）与充足内存，推荐有道 Confucius4-R2T2。",
+        cpuCores: 10,
+        memoryGib: 16,
+        accelerator: "metal",
       };
       window.__meetingSpeechPreferences = { mode: "local" };
       window.__speakerModel = {
@@ -109,6 +121,7 @@
         invoke: async (name, args) => {
           window.__calls.push({ name, args });
           if (name === "meeting_speech_status") return structuredClone(window.__speechModels[args.model ?? "transcription"]);
+          if (name === "meeting_speech_recommendation") return structuredClone(window.__speechRecommendation);
           if (name === "prepare_meeting_speech_model") {
             const preferences = window.__meetingSpeechPreferences;
             if (preferences.mode === "local") {

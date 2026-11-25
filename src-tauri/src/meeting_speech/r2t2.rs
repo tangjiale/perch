@@ -1,4 +1,4 @@
-//! Confucius4-R2T2 的权重和运行包随需下载。录音只通过子进程的匿名管道传递。
+//! 基于 audio.cpp 的本机流式语音模型（Confucius4-R2T2、Qwen3-ASR-0.6B）权重和运行包随需下载。录音只通过子进程的匿名管道传递。
 use super::{download_file, model_installer, report_progress, verify, Download, ModelFile};
 use std::{
     fs,
@@ -14,11 +14,66 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AudioCppModel {
+    R2t2,
+    Qwen3Asr06b,
+}
+
+impl AudioCppModel {
+    fn weights(self) -> &'static ModelFile {
+        match self {
+            Self::R2t2 => &MODEL,
+            Self::Qwen3Asr06b => &QWEN3_ASR_06B_MODEL,
+        }
+    }
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::R2t2 => "Confucius4-R2T2",
+            Self::Qwen3Asr06b => "Qwen3-ASR-0.6B",
+        }
+    }
+
+    fn family(self) -> &'static str {
+        match self {
+            Self::R2t2 => "confucius4_r2t2",
+            Self::Qwen3Asr06b => "qwen3_asr",
+        }
+    }
+
+    fn extra_args(self) -> &'static [&'static str] {
+        match self {
+            Self::R2t2 => &[
+                "--session-option",
+                "confucius4_r2t2.chunk_size_ms=320",
+                "--session-option",
+                "confucius4_r2t2.unfixed_token_num=1",
+            ],
+            Self::Qwen3Asr06b => &["--request-option", "audio_chunk_duration_sec=4"],
+        }
+    }
+
+    fn unsupported_message(self) -> &'static str {
+        match self {
+            Self::R2t2 => "Confucius4-R2T2 支持 Apple 芯片 macOS 和 Windows x64",
+            Self::Qwen3Asr06b => "Qwen3-ASR-0.6B 支持 Apple 芯片 macOS 和 Windows x64",
+        }
+    }
+}
+
 static MODEL: ModelFile = ModelFile {
     source: Some("https://huggingface.co/Nairod785/Confucius4-R2T2-Q4_K_M-GGUF/resolve/b1ea19256fb77a8d8ab7b091dc75378e15952605"),
     name: "r2t2-q4_k_m.gguf",
     bytes: 1_186_939_968,
     sha256: "d740d6636f2ea2f3736800c3c88a6e22ecb6c0f26c567fe22b0572ae9c2c4ec8",
+};
+
+static QWEN3_ASR_06B_MODEL: ModelFile = ModelFile {
+    source: Some("https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/047ec541cc3f7e50c583acd56e0177ae286c4078/Qwen3-ASR-0.6B-GGUF"),
+    name: "qwen3-asr-0.6b-q8_0.gguf",
+    bytes: 1_151_279_968,
+    sha256: "5c53bbb9a6b2ade85c16c290c560658ca18b78a23c323378528f1f945683fcbe",
 };
 
 #[cfg(any(test, all(target_os = "macos", target_arch = "aarch64"), all(target_os = "windows", target_arch = "x86_64")))]
@@ -53,37 +108,42 @@ fn runtime() -> Option<(&'static ModelFile, &'static str)> {
     return None;
 }
 
-pub(crate) fn unsupported_reason() -> Option<&'static str> {
-    runtime()
-        .is_none()
-        .then_some("Confucius4-R2T2 支持 Apple 芯片 macOS 和 Windows x64")
+pub(crate) fn unsupported_reason(model: AudioCppModel) -> Option<&'static str> {
+    runtime().is_none().then_some(model.unsupported_message())
 }
 
-pub(crate) fn total_bytes() -> u64 {
-    runtime().map_or(0, |(archive, _)| MODEL.bytes + archive.bytes)
+pub(crate) fn total_bytes(model: AudioCppModel) -> u64 {
+    runtime().map_or(0, |(archive, _)| model.weights().bytes + archive.bytes)
 }
 
-pub(crate) fn is_installed(path: &Path) -> bool {
+pub(crate) fn is_installed(model: AudioCppModel, path: &Path) -> bool {
+    let weights = model.weights();
     runtime().is_some_and(|(archive, _)| {
-        [archive, &MODEL].iter().all(|file| {
+        [archive, weights].iter().all(|file| {
             fs::symlink_metadata(path.join(file.name))
                 .is_ok_and(|meta| meta.is_file() && meta.len() == file.bytes)
         })
     })
 }
 
-pub(super) async fn install(path: &Path, status: &Mutex<Download>) -> Result<(), String> {
-    let (archive, _) = runtime().ok_or("当前设备不支持 Confucius4-R2T2")?;
+pub(super) async fn install(
+    model: AudioCppModel,
+    path: &Path,
+    status: &Mutex<Download>,
+) -> Result<(), String> {
+    let name = model.display_name();
+    let weights = model.weights();
+    let (archive, _) = runtime().ok_or_else(|| format!("当前设备不支持 {name}"))?;
     let (_lock, client) = model_installer(path).await?;
     let mut completed = 0;
-    for file in [archive, &MODEL] {
+    for file in [archive, weights] {
         let target = path.join(file.name);
         let verified = tokio::task::spawn_blocking({
             let target = target.clone();
             move || verify(&target, file)
         })
         .await
-        .map_err(|_| "无法校验 Confucius4-R2T2 文件")?;
+        .map_err(|_| format!("无法校验 {name} 文件"))?;
         if !verified {
             download_file(&client, path, &target, file, |bytes| {
                 report_progress(status, completed + bytes);
@@ -148,21 +208,31 @@ pub(crate) struct Stream {
 
 impl Stream {
     // 调用方持有模型目录读锁直到会话结束，避免使用中的文件被移除。
-    pub(crate) fn start(path: &Path) -> Result<Self, String> {
-        let (archive, backend) = runtime().ok_or("当前设备不支持 Confucius4-R2T2")?;
-        if !is_installed(path) {
-            return Err("请先在会议语音设置中下载 Confucius4-R2T2".into());
+    pub(crate) fn start(engine_model: AudioCppModel, path: &Path) -> Result<Self, String> {
+        let name = engine_model.display_name();
+        let weights = engine_model.weights();
+        let (archive, backend) = runtime().ok_or_else(|| format!("当前设备不支持 {name}"))?;
+        if !is_installed(engine_model, path) {
+            return Err(format!("请先在会议语音设置中下载 {name}"));
         }
-        if !verify(&path.join(MODEL.name), &MODEL) || !verify(&path.join(archive.name), archive) {
-            return Err("Confucius4-R2T2 文件校验失败，请重新下载".into());
+        if !verify(&path.join(weights.name), weights) || !verify(&path.join(archive.name), archive)
+        {
+            return Err(format!("{name} 文件校验失败，请重新下载"));
         }
-        let model =
-            fs::canonicalize(path.join(MODEL.name)).map_err(|_| "无法定位 Confucius4-R2T2 权重")?;
+        let model = fs::canonicalize(path.join(weights.name))
+            .map_err(|_| format!("无法定位 {name} 权重"))?;
         let directory = tempfile::tempdir().map_err(|_| "无法创建语音运行临时目录")?;
         unpack_runtime(&path.join(archive.name), directory.path())?;
         let exe = find_executable(directory.path(), 3)?;
         Self::start_with(move |cancelled| {
-            create_process(&exe, &model, backend, directory.path(), cancelled)
+            create_process(
+                engine_model,
+                &exe,
+                &model,
+                backend,
+                directory.path(),
+                cancelled,
+            )
         })
     }
 
@@ -364,6 +434,7 @@ struct Process {
 }
 
 fn create_process(
+    engine_model: AudioCppModel,
     exe: &Path,
     model: &Path,
     backend: &str,
@@ -379,7 +450,7 @@ fn create_process(
             "--mode",
             "streaming",
             "--family",
-            "confucius4_r2t2",
+            engine_model.family(),
             "--backend",
             backend,
             "--input-format",
@@ -390,12 +461,9 @@ fn create_process(
             "1",
             "--audio",
             "-",
-            "--session-option",
-            "confucius4_r2t2.chunk_size_ms=320",
-            "--session-option",
-            "confucius4_r2t2.unfixed_token_num=1",
-            "--model",
         ])
+        .args(engine_model.extra_args())
+        .arg("--model")
         .arg(model)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -626,7 +694,7 @@ mod tests {
 
     #[test]
     fn locked_asset_sha256_digests_are_valid_64_char_hex() {
-        for file in [&MODEL, &MACOS_RUNTIME, &WINDOWS_RUNTIME] {
+        for file in [&MODEL, &QWEN3_ASR_06B_MODEL, &MACOS_RUNTIME, &WINDOWS_RUNTIME] {
             assert_eq!(
                 file.sha256.len(),
                 64,
@@ -696,7 +764,7 @@ mod tests {
         let root = PathBuf::from(std::env::var_os("PERCH_TEST_R2T2_DIR").unwrap());
         let pcm = fs::read(std::env::var_os("PERCH_TEST_R2T2_PCM").unwrap()).unwrap();
         assert!(pcm.len() > WINDOW_LIMIT_BYTES + 5 * PCM_BYTES_PER_SECOND);
-        let mut stream = Stream::start(&root).unwrap();
+        let mut stream = Stream::start(AudioCppModel::R2t2, &root).unwrap();
         let started = Instant::now();
         let mut transcript = String::new();
         let mut first = None;

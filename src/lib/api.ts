@@ -1,6 +1,6 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import type { Meeting, MeetingSegment } from "./meetings";
-import type { LocalMeetingSpeechModelId, MeetingSpeechPreferences } from "./meeting-speech";
+import type { LocalMeetingSpeechModelId, MeetingSpeechPreferences, MeetingSpeechRecommendation } from "./meeting-speech";
 import type { PromptEntry, PromptProgress, PromptRequest, PromptResult } from "./prompt-optimizer";
 import { version } from "../../package.json";
 import type { BackupSaveInput, BackupState } from "./backup-types";
@@ -120,6 +120,8 @@ export const api = {
   meetingRealtimeStart: (workspaceId: string, id: string, modelId: string, sessionId: string, onEvent: Channel<MeetingRealtimeEvent>) => command<void>("meeting_realtime_start", {workspaceId, id, modelId, sessionId, onEvent}),
   meetingSpeechStatus: (model?: LocalMeetingSpeechModelId) =>
     command<MeetingSpeechStatus>("meeting_speech_status", model ? { model } : undefined),
+  meetingSpeechRecommendation: () =>
+    command<MeetingSpeechRecommendation>("meeting_speech_recommendation"),
   meetingSpeechPrepare: (workspaceId: string) =>
     command<void>("prepare_meeting_speech_model", { workspaceId }),
   meetingSpeechInstall: (model?: LocalMeetingSpeechModelId) =>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { AudioLines, CircleCheck, Download, Plus, RefreshCw, Settings2, Trash2, Users } from "lucide-react";
+import { AudioLines, CircleCheck, Cpu, Download, Plus, RefreshCw, Settings2, Trash2, Users } from "lucide-react";
 import GlassSelect from "../../components/GlassSelect";
 import Modal from "../../components/Modal";
 import { api, native, type MeetingSpeechStatus } from "../../lib/api";
@@ -11,6 +11,7 @@ import {
   localMeetingSpeechModels,
   type LocalMeetingSpeechModelId,
   type MeetingSpeechPreferences,
+  type MeetingSpeechRecommendation,
 } from "../../lib/meeting-speech";
 import type { Provider, Snapshot } from "../../lib/types";
 import MeetingMicrophoneSettings from "./MeetingMicrophoneSettings";
@@ -256,13 +257,14 @@ function SpeakerModelDownload({ enabled }: { enabled: boolean }) {
   );
 }
 
-function TranscriptionModelDownload({ model, workspaceId, selected, onAvailabilityChange }: {
+function TranscriptionModelDownload({ model, workspaceId, selected, recommended, onAvailabilityChange }: {
   model: LocalMeetingSpeechModelId;
   workspaceId: string;
   selected: boolean;
+  recommended: boolean;
   onAvailabilityChange: (model: LocalMeetingSpeechModelId, installed: boolean, selectable: boolean) => void;
 }) {
-  const { name, devices, speed, accuracy, sizeNote, recommended } = localMeetingSpeechModels[model];
+  const { name, devices, speed, accuracy, sizeNote } = localMeetingSpeechModels[model];
   const [status, setStatus] = useState<MeetingSpeechStatus>();
   const [checkingError, setCheckingError] = useState("");
   const [installError, setInstallError] = useState("");
@@ -449,6 +451,7 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
   const [modelId, setModelId] = useState("");
   const [localModelId, setLocalModelId] = useState<LocalMeetingSpeechModelId>(defaultLocalMeetingSpeechModelId);
   const [modelAvailability, setModelAvailability] = useState<Partial<Record<LocalMeetingSpeechModelId, ModelAvailability>>>({});
+  const [recommendation, setRecommendation] = useState<MeetingSpeechRecommendation>();
   const [localSpeakerDiarization, setLocalSpeakerDiarization] = useState(false);
   const [inputDeviceId, setInputDeviceId] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -483,6 +486,17 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
     return () => { cancelled = true; };
   }, [workspaceId, loadVersion]);
 
+  useEffect(() => {
+    if (!native) return;
+    let cancelled = false;
+    void api.meetingSpeechRecommendation().then((value) => {
+      if (!cancelled && localMeetingSpeechModelIds.includes(value.model)) {
+        setRecommendation(value);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const speechModels = eligibleMeetingSpeechModels(data);
   const selectedModel = speechModels.find((model) => model.id === modelId);
   const selectedProvider = data.providers.find((provider) => provider.id === selectedModel?.providerId);
@@ -499,8 +513,11 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
     label: localMeetingSpeechModels[value].name,
     disabled: !modelAvailability[value]?.selectable,
   }));
+  const recommendedModelId = recommendation?.model
+    ?? localMeetingSpeechModelIds.find((id) => localMeetingSpeechModels[id].recommended)
+    ?? "r2t2";
   const modelRank = (model: LocalMeetingSpeechModelId) =>
-    localMeetingSpeechModels[model].recommended ? 0 : modelAvailability[model]?.installed ? 1 : 2;
+    model === recommendedModelId ? 0 : modelAvailability[model]?.installed ? 1 : 2;
   const orderedModels = [...localMeetingSpeechModelIds].sort((a, b) => modelRank(a) - modelRank(b));
   const canSave = loaded && (mode === "local"
     ? !!modelAvailability[localModelId]?.selectable || localModelId === savedLocalModelId
@@ -602,7 +619,7 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
               </label>
               {localSpeakerDiarization && (
                 <p>
-                  {localModelId === "r2t2" && "有道模型按整段确认说话人。"}
+                  {(localModelId === "r2t2" || localModelId === "qwen3-asr-0.6b") && "大模型流式转录按整段确认说话人。"}
                   较短、重叠或暂时无法确认的发言可能先显示为未标记。已有录音可手动点击「识别说话人」补标，说话人标签可以改名。
                 </p>
               )}
@@ -656,9 +673,22 @@ export default function MeetingSpeechSettings({ data, workspaceId, onConfigurePr
           </div>
         </form>
       )}
+      {recommendation && (
+        <div className="meeting-speech-recommendation" role="status">
+          <span className="meeting-speech-model-icon"><Cpu size={18} /></span>
+          <div className="meeting-speech-recommendation-body">
+            <div className="meeting-speech-recommendation-title">
+              <strong>本机配置推荐：{localMeetingSpeechModels[recommendation.model].name}</strong>
+              <span className="meeting-speech-device-pill">{recommendation.deviceSummary}</span>
+            </div>
+            <p>{recommendation.reason}</p>
+          </div>
+        </div>
+      )}
       {orderedModels.map((model) => (
         <TranscriptionModelDownload key={model} model={model} workspaceId={workspaceId}
-          selected={savedLocalModelId === model} onAvailabilityChange={updateModelAvailability} />
+          selected={savedLocalModelId === model} recommended={recommendedModelId === model}
+          onAvailabilityChange={updateModelAvailability} />
       ))}
       {native && <SpeakerModelDownload enabled={loaded && mode === "local" && localSpeakerDiarization} />}
     </section>

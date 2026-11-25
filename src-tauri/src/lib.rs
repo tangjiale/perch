@@ -352,6 +352,7 @@ pub fn run() {
             meeting_realtime::meeting_realtime_push,
             meeting_realtime::meeting_realtime_stop,
             meeting_speech::meeting_speech_status,
+            meeting_speech::meeting_speech_recommendation,
             meeting_speech::install_meeting_speech_model,
             meeting_speech::uninstall_meeting_speech_model,
             meeting_speech::meeting_speech_preferences,

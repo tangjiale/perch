@@ -123,6 +123,44 @@
   color: var(--command);
   font-size: 13px;
 }
+.meeting-speech-recommendation {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--command) 24%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--command) 6%, var(--surface));
+}
+.meeting-speech-recommendation-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.meeting-speech-recommendation-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 13px;
+}
+.meeting-speech-device-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.meeting-speech-recommendation-body > p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .meeting-speech-model {
   margin-top: 14px;
   padding: 16px;
